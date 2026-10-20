@@ -115,6 +115,8 @@ def build_environment(profile, name, password, settings_env, snapshot):
 
 
 def main():
+    if (ROOT / ".save-import.lock").exists():
+        raise ValueError("存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。")
     for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
                          ("NOTICE.txt", "github.com/Classmg22/BBSC"),
                          ("SUPPORTERS.txt", "BBSC SUPPORTERS")):

@@ -108,6 +108,12 @@ class SessionTests(unittest.TestCase):
             client.main()
         self.assertFalse((self.root / "data").exists())
 
+    def test_interrupted_import_blocks_startup_before_game_or_save_access(self):
+        (self.root / ".save-import.lock").write_text("unfinished import")
+        with self.assertRaisesRegex(ValueError, "存档导入"):
+            client.main()
+        self.assertFalse((self.root / "data").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

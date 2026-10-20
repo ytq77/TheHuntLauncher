@@ -12,7 +12,8 @@ from isolate_patches import patched_script
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "__pycache__", ".git"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
-                 "last-exit.json", "bbport.ini", "input.ini", "mods.json", "patches.json"}
+                 "last-exit.json", "save-transfer-result.json", ".save-import.lock",
+                 "bbport.ini", "input.ini", "mods.json", "patches.json"}
 
 
 def digest(path):
@@ -25,7 +26,8 @@ def check_public(files):
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or ":" in name or "\\" in name:
             raise ValueError("Unsafe archive path: " + name)
-        if {part.lower() for part in path.parts} & PRIVATE_PARTS or path.name.lower() in PRIVATE_FILES:
+        if ({part.lower() for part in path.parts} & PRIVATE_PARTS or path.name.lower() in PRIVATE_FILES or
+                any(part.startswith(".savedata-import-") for part in path.parts)):
             raise ValueError("Private state in release: " + name)
 
 
@@ -68,6 +70,7 @@ def main():
     ):
         subprocess.run([str(binary_dir / "llvm-strip.exe"), "--strip-debug", "-o", str(dest / target), str(source)], check=True)
     shutil.copy2(ROOT / ".build/BBSC-Launcher.exe", dest)
+    shutil.copy2(ROOT / ".build/TheHunt.ico", dest)
     for path in (ROOT / "launcher").iterdir():
         if path.suffix in (".ps1", ".xaml", ".py"):
             shutil.copy2(path, dest / path.name)
@@ -153,7 +156,7 @@ def main():
                     continue
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
-    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher"],
+    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup"],
             "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll")}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")

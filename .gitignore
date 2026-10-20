@@ -15,4 +15,9 @@ __pycache__/
 *.clixml
 /settings-snapshot.json
 /launcher-state.json
+/save-transfer-result.json
+/save-backups/
+/.save-import.lock
+/.savedata-import-*/
+/TheHunt.ico
 /.vs/

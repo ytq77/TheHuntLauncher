@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="The Hunt · BBSC Launcher by iytq" Width="1040" Height="740" MinWidth="920" MinHeight="680"
+        Title="The Hunt · by iytq" Width="1040" Height="740" MinWidth="920" MinHeight="680"
         WindowStartupLocation="CenterScreen" Background="#111214" Foreground="#D7D5CE"
         FontFamily="Microsoft YaHei UI" FontSize="13">
   <Window.Resources>
@@ -30,6 +30,72 @@
         </ControlTemplate>
       </Setter.Value></Setter>
     </Style>
+    <Style x:Key="NavigationButton" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#91928F"/><Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="18,12"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Grid>
+            <Border x:Name="Body" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="1">
+              <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="Center" RecognizesAccessKey="True"/>
+            </Border>
+            <Border x:Name="Hover" Background="White" Opacity="0" IsHitTestVisible="False" CornerRadius="1"/>
+            <Border x:Name="SelectedMark" Width="3" HorizontalAlignment="Left" Background="#D0CDC2"
+                    Margin="0,8" Visibility="Collapsed" IsHitTestVisible="False"/>
+            <Border x:Name="KeyboardFocus" BorderBrush="#AAA89F" BorderThickness="1" Margin="4"
+                    Visibility="Collapsed" IsHitTestVisible="False"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter Property="Background" Value="#2C2D30"/><Setter Property="Foreground" Value="#ECE9DF"/>
+              <Setter Property="BorderBrush" Value="#4C4D4D"/><Setter Property="FontWeight" Value="SemiBold"/>
+              <Setter TargetName="SelectedMark" Property="Visibility" Value="Visible"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Hover" Property="Opacity" Value="0.05"/></Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="KeyboardFocus" Property="Visibility" Value="Visible"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Body" Property="Opacity" Value="0.4"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="10"/><Setter Property="Background" Value="#17181A"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="ScrollBar">
+          <Border Background="{TemplateBinding Background}">
+            <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="{TemplateBinding Orientation}">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False">
+                  <RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template>
+                </RepeatButton>
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Background="#555653" Margin="2,0">
+                  <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                      <Border x:Name="Grip" Background="{TemplateBinding Background}" CornerRadius="3"/>
+                      <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Grip" Property="Background" Value="#85857E"/></Trigger>
+                        <Trigger Property="IsDragging" Value="True"><Setter TargetName="Grip" Property="Background" Value="#B7B5AD"/></Trigger>
+                      </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False">
+                  <RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template>
+                </RepeatButton>
+              </Track.IncreaseRepeatButton>
+            </Track>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
     <Style x:Key="Caption" TargetType="TextBlock">
       <Setter Property="Foreground" Value="#9DA5A8"/><Setter Property="FontSize" Value="12"/>
     </Style>
@@ -44,15 +110,16 @@
         <StackPanel DockPanel.Dock="Top">
           <TextBlock Text="THE HUNT" FontFamily="Georgia" FontSize="23" Foreground="#BDBBB3"/>
           <TextBlock Text="B B S C   L A U N C H E R" FontSize="9" Foreground="#7F8284" Margin="0,10,0,36"/>
-          <Button x:Name="HomeNav" Content="启动" HorizontalContentAlignment="Left" Margin="0,0,0,10"/>
-          <Button x:Name="SettingsNav" Content="游戏与联机" Background="Transparent" BorderThickness="0"/>
+          <RadioButton x:Name="HomeNav" GroupName="Navigation" Content="启动" Style="{StaticResource NavigationButton}" IsChecked="True" Margin="0,0,0,8"/>
+          <RadioButton x:Name="SettingsNav" GroupName="Navigation" Content="游戏与联机" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
+          <RadioButton x:Name="SaveNav" GroupName="Navigation" Content="存档" Style="{StaticResource NavigationButton}"/>
         </StackPanel>
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
           <Border Height="1" Background="#343B3F" Margin="0,0,0,20"/>
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.2" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.1" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.2" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -60,7 +127,9 @@
     <Grid Grid.Column="1" Margin="34,28,34,24">
       <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <Grid x:Name="HomePage">
-        <Grid.RowDefinitions><RowDefinition Height="244"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="244"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
           <Border BorderBrush="#474644" BorderThickness="0,1,0,1" Margin="0,11,0,13"/>
           <Path Data="M 0,0 L 6,6 0,12 -6,6 Z" Fill="#7B7972" Width="12" Height="12"
@@ -139,8 +208,10 @@
           <TextBlock Text="准备事项" Foreground="#B4B0A6" Margin="0,0,0,10"/>
           <TextBlock Text="首次启动会复制本机存档。之后无缝版的进度独立保存。&#x0a;两位猎人使用不同的账号，并连接同一个 BBSC 服务。"
                      Foreground="#9CA9AF" TextWrapping="Wrap" LineHeight="24"/>
-          <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Foreground="#8B8E86" Margin="0,16,0,0"/>
+          <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Foreground="#8B8E86" Margin="0,16,0,0" TextWrapping="Wrap"/>
         </StackPanel>
+        </Grid>
+        </ScrollViewer>
       </Grid>
       <Grid x:Name="SettingsPage" Visibility="Collapsed">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
@@ -148,7 +219,7 @@
           <TextBlock Text="游戏与联机" FontSize="26"/>
           <TextBlock Text="一次设置，之后从这里直接启动游戏。" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
         </StackPanel>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,14,0">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
           <StackPanel>
             <TextBlock Text="普通版启动程序  ·  Bloodborne.exe" Style="{StaticResource FieldLabel}"/>
             <DockPanel><Button x:Name="PickInstall" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="InstallPath" IsReadOnly="True"/></DockPanel>
@@ -179,6 +250,40 @@
             </Grid>
             <TextBlock Text="以上地址由服务器管理员提供。密码使用当前 Windows 用户加密保存在本机。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,8"/>
             <Button x:Name="SaveSettings" Content="保存设置" HorizontalAlignment="Left" Margin="0,8,0,18"/>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+      <Grid x:Name="SavePage" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,20">
+          <TextBlock Text="存档" FontSize="26"/>
+          <TextBlock Text="把普通版的新进度带入无缝版。" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+          <StackPanel>
+            <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="20">
+              <StackPanel>
+                <TextBlock Text="普通版 → 无缝版" FontSize="18" Foreground="#D3D0C5"/>
+                <TextBlock Text="首次启动会自动复制普通版存档；之后两边的进度独立保存。普通版进度增加后，可以在这里重新导入。"
+                           Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,12,0,0"/>
+              </StackPanel>
+            </Border>
+            <TextBlock Text="来源 · 普通版存档" Style="{StaticResource FieldLabel}"/>
+            <TextBlock x:Name="SourceSavePath" Text="请先在「游戏与联机」选择普通版启动程序。" Foreground="#B8BCB8" TextWrapping="Wrap" LineHeight="22"/>
+            <TextBlock Text="目标 · 无缝版独立存档" Style="{StaticResource FieldLabel}"/>
+            <TextBlock x:Name="DestinationSavePath" Text="等待读取无缝版存档位置。" Foreground="#B8BCB8" TextWrapping="Wrap" LineHeight="22"/>
+            <Border Height="1" Background="#30383C" Margin="0,22,0,20"/>
+            <TextBlock Text="导入前请退出两边游戏。" Foreground="#D3D0C5"/>
+            <TextBlock Text="导入会替换无缝版的全部角色与进度，不会合并。已有无缝存档会先自动备份，普通版存档保持原样。"
+                       Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,8,0,0"/>
+            <TextBlock x:Name="SaveSummary" Text="选择普通版程序后，将显示可导入的存档。" Foreground="#B8B5A9"
+                       TextWrapping="Wrap" LineHeight="23" Margin="0,18,0,12"/>
+            <WrapPanel Margin="0,4,0,12">
+              <Button x:Name="ImportSaves" Content="从普通版导入" Background="#B7B5AD" Foreground="#151618"
+                      BorderBrush="#D5D2C8" FontWeight="SemiBold" Margin="0,0,10,10"/>
+              <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
+              <Button x:Name="OpenSaveBackups" Content="打开备份目录" Margin="0,0,0,10"/>
+            </WrapPanel>
           </StackPanel>
         </ScrollViewer>
       </Grid>
