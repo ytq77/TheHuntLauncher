@@ -13,6 +13,12 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
 - Some online components carry GPL-3.0 notices. Binary distributions retain these
   notices in `licenses/`, alongside the GPL-2.0-or-later application notices.
 - shadPS4 and shadp2p: their respective authors and contributors.
+- The server recipe pins Wozzardman/shadnet-p2p and its Protobuf/Abseil
+  dependencies, preserves the STUN source notices, and downloads the pinned BBSC
+  game service together with its LICENSE, NOTICE, CREDITS and SUPPORTERS files.
+  The service also retains LICENSE.NoDreamForHunter (fhody125, MIT).
+  Exact source hashes and recipe limitations are documented in
+  `docs/server/recipe/sources.json` and `docs/server/recipe/SOURCES.md`.
 - FSR4 assets: AMD FidelityFX SDK MIT license; asset builds by FireBurn/Q2RTX,
   pinned by BBport's fetch script. Included assets carry LICENSE-FSR4-v07.txt.
 - MSYS2 runtime DLLs and Python: original licenses are copied into

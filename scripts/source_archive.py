@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import zipfile
-from package import ROOT, digest
+from package import ROOT, digest, public_docs
 
 
 def tracked(path):
@@ -19,7 +19,8 @@ def main():
     out = ROOT / "dist/BBSC-Launcher-sources.zip"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for folder in ("launcher", "scripts", "patches", "locales", "tests", "docs", ".github"):
-            for path in (ROOT / folder).rglob("*"):
+            paths = public_docs(ROOT / folder) if folder == "docs" else (ROOT / folder).rglob("*")
+            for path in paths:
                 if path.is_file() and "__pycache__" not in path.parts:
                     archive.write(path, "bbsc-launcher/" + path.relative_to(ROOT).as_posix())
         for name in ("README.md", "LICENSE", "NOTICE.md", "CONTRIBUTING.md", "upstream.lock.json", ".gitignore", ".gitattributes"):

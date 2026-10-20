@@ -10,10 +10,25 @@ import zipfile
 from isolate_patches import patched_script
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "__pycache__", ".git"}
+PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "__pycache__", ".git",
+                 ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
-                 "bbport.ini", "input.ini", "mods.json", "patches.json"}
+                 "bbport.ini", "input.ini", "mods.json", "patches.json", ".env"}
+DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
+
+
+def public_docs(folder):
+    """Keep deployment templates, excluding any locally initialized server state."""
+    return sorted(path for path in folder.rglob("*") if path.is_file()
+                  and not (set(path.relative_to(folder).parts) & DOC_PRIVATE_NAMES))
+
+
+def copy_public_docs(source, destination):
+    for path in public_docs(source):
+        target = destination / path.relative_to(source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def digest(path):
@@ -82,7 +97,7 @@ def main():
         b'@echo off\r\nstart "" "%~dp0BBSC-Launcher.exe"\r\n')
     for name in ("README.md", "LICENSE", "NOTICE.md", "CONTRIBUTING.md", "upstream.lock.json"):
         shutil.copy2(ROOT / name, dest / name)
-    shutil.copytree(ROOT / "docs", dest / "docs")
+    copy_public_docs(ROOT / "docs", dest / "docs")
     bbsc = ROOT / ".build/bbsc"
     shutil.copy2(bbsc / "emulator/mod/mod.json", dest / "mod/mod.json")
     for source, target in (("LICENSE", "LICENSE.txt"), ("NOTICE.md", "NOTICE.txt"),

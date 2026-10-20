@@ -39,7 +39,7 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 
 ## 联机
 
-需要支持 BBSC 的 **shadNet + BBSC 游戏服务/Relay**。单有普通 shadNet 服务不等于已经具备无缝联机服务。地址字段的意义及配置示例见 [联机配置](docs/network.md)。
+需要支持 BBSC 的 **shadNet + BBSC 游戏服务/Relay**。单有普通 shadNet 服务不等于已经具备无缝联机服务。地址字段的意义及配置示例见 [联机配置](docs/network.md)；自行部署、维护与排错见 [Ubuntu / Docker / Tailscale 服务端教程](docs/server/README.md)。
 
 两端使用兼容版本、同一个服务器和不同账号。服务端与路由环境仍由服务器管理员维护；本启动器不会自动修改路由器、防火墙或部署服务器。
 
