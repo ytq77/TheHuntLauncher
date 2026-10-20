@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import re
+from localize_windows import generate as generate_windows
 
 import sys
 WORK = Path(sys.argv[1]).resolve() / "emulator/src/core"
@@ -78,7 +79,10 @@ def main():
     report = {"entries": translated_rows, "literal_changes": changes,
               "dynamic_boss_notice": "UTF-16 with original npcNameId tag; names supplied by game's own language"}
     (WORK / "zh-cn-validation.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    windows = generate_windows(WORK.parents[1] / "mod", Path(__file__).resolve().parents[1] / "locales/windows-zh-CN.json")
+    (WORK / "windows-zh-cn-validation.json").write_text(json.dumps(windows, indent=2), encoding="utf-8")
     print(f"Generated {len(rows)} message entries; {len(changes)} on-screen literals; all original IDs/tags preserved.")
+    print(f"Generated {windows['catalog_entries']} Windows text entries ({windows['translated_occurrences']} occurrences).")
 
 
 if __name__ == "__main__":

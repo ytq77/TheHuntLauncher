@@ -26,12 +26,12 @@ def sync_settings(root, profile, settings_path=None):
     root = Path(root).resolve()
     source = Path(profile["graphics_source"]).resolve()
     if source == root or root in source.parents:
-        raise ValueError("Choose the NORMAL install's bbport.ini, outside the test folder.")
+        raise ValueError("请选择本机普通版的 bbport.ini，不能选择无缝版目录内的配置。")
     raw = source.read_bytes()
     ini = dict(line.split("=", 1) for line in raw.decode("utf-8-sig").splitlines()
                if "=" in line and not line.lstrip().startswith(("#", ";")))
     if not all(key in ini for key in ("output_res", "upscaler", "preset")):
-        raise ValueError("Selected bbport.ini lacks output_res/upscaler/preset; game not started.")
+        raise ValueError("所选 bbport.ini 缺少分辨率、超分辨率或预设字段（output_res、upscaler、preset），已停止启动。")
     if settings_path is None:
         settings_path = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
     settings_path = Path(settings_path)

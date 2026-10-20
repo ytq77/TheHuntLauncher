@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import shutil
+from banner_diagnostics import apply as banner_diagnostics
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,7 +78,7 @@ def main():
     args = parser.parse_args()
     core = args.source / "emulator/src/core"
     path = core / "bloodborne_re.cpp"
-    edits = {path: early_items(path.read_text(encoding="utf-8"))}
+    edits = {path: banner_diagnostics(early_items(path.read_text(encoding="utf-8")))}
     for name in ("bbsc_http.cpp", "bbsc_relay.cpp"):
         path = args.source / "emulator/mod" / name
         text = path.read_text(encoding="utf-8")
@@ -89,7 +90,8 @@ def main():
     for path, text in edits.items():
         path.write_text(text, encoding="utf-8")
     shutil.copy2(ROOT / "patches/bbsc_memscan.cpp", core / "bbsc_memscan.cpp")
-    print("Applied early item initialization, safe scan, and CLANG64 path fixes.")
+    shutil.copy2(ROOT / "patches/bbsc_banner_diagnostics.inc", core / "bbsc_banner_diagnostics.inc")
+    print("Applied early item initialization, safe scan, banner text handling, and CLANG64 path fixes.")
 
 
 if __name__ == "__main__":

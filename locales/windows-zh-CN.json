@@ -1,0 +1,16 @@
+{
+  "Please pick your Bloodborne game file.\n\nIt is the file eboot.bin in your Bloodborne folder (the one named CUSA03173).\nYou only have to do this once.": "请选择 Bloodborne 游戏文件。\n\n它是 CUSA03173 游戏目录中的 eboot.bin。\n仅需选择一次。",
+  "BBSC - pick Bloodborne's eboot.bin": "BBSC · 选择 Bloodborne 的 eboot.bin",
+  "That folder does not look like Bloodborne CUSA03173 (no sce_sys\\param.sfo with CUSA03173 next to it).\n\nUse it anyway?": "所选文件旁未找到标识为 CUSA03173 的 sce_sys\\param.sfo。\n\n是否仍要继续？",
+  "Please pick the shadPS4.exe you play BBSC with.\n\nYou only have to do this once.": "请选择用于运行 BBSC 的模拟器程序 shadPS4.exe。\n\n仅需选择一次。",
+  "BBSC - pick shadPS4.exe": "BBSC · 选择 shadPS4.exe",
+  "All files": "所有文件",
+  "\n\n(Windows error ": "\n\n(Windows 错误码：",
+  "mod DLL not found: ": "找不到模组 DLL：",
+  "emulator not found: ": "找不到模拟器程序：",
+  "could not start the emulator": "无法启动模拟器程序。",
+  "could not pass the DLL path to the emulator": "无法向模拟器传入模组 DLL 路径。",
+  "could not load the mod into the emulator": "无法将模组加载到模拟器。",
+  "the emulator refused the mod DLL (LoadLibraryW returned 0)": "系统未能载入模组 DLL（LoadLibraryW 返回 0）。",
+  "LICENSE.txt, NOTICE.txt or SUPPORTERS.txt is missing from the BBSC mod folder (or was changed), so BBSC is off.\n\nThese files have to travel with BBSC.\nDownload the full package again from:\nhttps://github.com/Classmg22/BBSC": "BBSC 模组目录中的 LICENSE.txt、NOTICE.txt 或 SUPPORTERS.txt 缺失或内容不符，BBSC 已停用。\n\n请重新解压完整安装包，并保留这些许可与署名文件。\nBBSC 上游项目：\nhttps://github.com/Classmg22/BBSC"
+}
