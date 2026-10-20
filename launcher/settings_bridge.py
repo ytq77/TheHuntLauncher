@@ -1,0 +1,72 @@
+"""Read this PC's normal settings; write only the isolated test configuration."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+
+# Match launcher/bbport_launcher_win.py game_environment, excluding online/save paths.
+VALUES = {
+    "fps_mode": ("BB_FPS", "uncap"), "frame_cap": ("BB_FPS_LIMIT", ""),
+    "present_mode": ("BB_PRESENT_MODE", "Mailbox"), "language": ("BB_LANGUAGE", "1"),
+    "voice_language": ("BB_VOICE_LANGUAGE", "auto"), "draw_pipe": ("BB_DRAW_PIPE", ""),
+    "readbacks": ("BB_READBACKS", ""), "frames_ahead": ("BB_FRAMES_AHEAD", ""),
+}
+FLAGS = {
+    "fullscreen": ("BB_FULLSCREEN", False), "hdr": ("BB_HDR", False),
+    "mods_enabled": ("BB_MODS_ENABLED", True), "frame_stats": ("BB_FRAME_STATS", False),
+    "gpu_profile": ("BB_GPU_PROFILE", False), "vk_validation": ("BB_VK_VALIDATION", False),
+}
+EXTRA_KEYS = {name for name, _ in (*VALUES.values(), *FLAGS.values())} | {
+    "BB_UPSCALER", "BB_UPSCALE_PRESET", "BB_RENDER_RES", "BB_OUTPUT_RES", "BB_LIVE_RES",
+}
+
+
+def sync_settings(root, profile, settings_path=None):
+    root = Path(root).resolve()
+    source = Path(profile["graphics_source"]).resolve()
+    if source == root or root in source.parents:
+        raise ValueError("Choose the NORMAL install's bbport.ini, outside the test folder.")
+    raw = source.read_bytes()
+    ini = dict(line.split("=", 1) for line in raw.decode("utf-8-sig").splitlines()
+               if "=" in line and not line.lstrip().startswith(("#", ";")))
+    if not all(key in ini for key in ("output_res", "upscaler", "preset")):
+        raise ValueError("Selected bbport.ini lacks output_res/upscaler/preset; game not started.")
+    if settings_path is None:
+        settings_path = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
+    settings_path = Path(settings_path)
+    settings = json.loads(settings_path.read_text(encoding="utf-8-sig")) if settings_path.exists() else {}
+    env = {}
+    for key, (name, default) in VALUES.items():
+        value = settings.get(key, default)
+        if value is not None and str(value) != "":
+            env[name] = str(value)
+    for key, (name, default) in FLAGS.items():
+        enabled = bool(settings.get(key, default))
+        if enabled or key in ("fullscreen", "mods_enabled"):
+            env[name] = "1" if enabled else "0"
+    for item in str(settings.get("extra_env", "")).split():
+        if "=" in item:
+            key, value = item.split("=", 1)
+            if key in EXTRA_KEYS:
+                env[key] = value
+
+    target = root / "data/bbport.ini"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    backup = target.with_name("bbport.before-settings-sync.ini")
+    if target.exists() and not backup.exists():
+        shutil.copy2(target, backup)
+    temporary = target.with_suffix(".ini.tmp")
+    temporary.write_bytes(raw)
+    temporary.replace(target)
+    snapshot = {
+        "source": str(source), "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "target": str(target), "settings_file": str(settings_path),
+        "settings_file_exists": settings_path.exists(),
+        "graphics": {key: ini[key] for key in ("output_res", "upscaler", "preset")},
+        "launch_options": env,
+        "patches_dir": str(Path(settings.get("patches_dir") or source.parent / "patches").expanduser().resolve()),
+        "patches_config": str(source.parent / "patches.json"),
+    }
+    (root / "settings-snapshot.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    return env, snapshot

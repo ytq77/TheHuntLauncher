@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0-preview.1",
+  "bbport": {
+    "url": "https://github.com/Supermedo/bloodborne_pc.git",
+    "commit": "de2e38af055f09f819946951075c6bb119e62ae6",
+    "version": "1.9.2"
+  },
+  "bbsc": {
+    "url": "https://github.com/CLSAMG22/BBSC.git",
+    "commit": "315f76c38b1ca5843b082f93f47927a9193ad94a",
+    "version": "0.0.1_items"
+  },
+  "game": {
+    "title_id": "CUSA03173",
+    "version": "1.09",
+    "eboot_sha256": "d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9"
+  }
+}
