@@ -96,7 +96,7 @@
           <TextBlock Text="猎前须知" Foreground="#D1B47C" Margin="0,0,0,10"/>
           <TextBlock Text="首次启动会复制本机存档。之后无缝版的进度独立保存。&#x0a;两位猎人使用不同的账号，并连接同一个 BBSC 服务。"
                      Foreground="#9CA9AF" TextWrapping="Wrap" LineHeight="24"/>
-          <TextBlock x:Name="KitStatus" Text="道具初始化优化版 · 等待实测" Foreground="#83969D" Margin="0,16,0,0"/>
+          <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Foreground="#83969D" Margin="0,16,0,0"/>
         </StackPanel>
       </Grid>
       <Grid x:Name="SettingsPage" Visibility="Collapsed">

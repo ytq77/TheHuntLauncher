@@ -82,6 +82,15 @@ def main():
     shutil.copytree(ROOT / "docs", dest / "docs")
     bbsc = ROOT / ".build/bbsc"
     shutil.copy2(bbsc / "emulator/mod/mod.json", dest / "mod/mod.json")
+    for source, target in (("LICENSE", "LICENSE.txt"), ("NOTICE.md", "NOTICE.txt"),
+                           ("SUPPORTERS.txt", "SUPPORTERS.txt"), ("CREDITS.txt", "CREDITS.txt")):
+        shutil.copy2(bbsc / source, dest / "mod" / target)
+    # BBSC checks these exact filenames and sentinel strings before installing any hooks.
+    for name, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
+                         ("NOTICE.txt", "github.com/Classmg22/BBSC"),
+                         ("SUPPORTERS.txt", "BBSC SUPPORTERS")):
+        if marker not in (dest / "mod" / name).read_text(encoding="utf-8"):
+            raise ValueError("BBSC startup notice check would fail: " + name)
     for name in ("LICENSE", "NOTICE.md", "CREDITS.txt", "SUPPORTERS.txt"):
         shutil.copy2(bbsc / name, dest / "licenses" / ("BBSC-" + name))
     shutil.copy2(args.port / "LICENSE", dest / "licenses/BBport-LICENSE")
@@ -145,7 +154,7 @@ def main():
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
     info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher"],
-            "gameplay_validation": "initialization timing and new launcher: pending user test",
+            "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll")}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")

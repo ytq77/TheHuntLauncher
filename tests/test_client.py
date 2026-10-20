@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -91,6 +92,20 @@ class SessionTests(unittest.TestCase):
         (self.game / "eboot.bin").write_bytes(b"wrong")
         with self.assertRaises(ValueError):
             client.prepare(self.profile)
+        self.assertFalse((self.root / "data").exists())
+
+    def test_chinese_status_does_not_crash_english_windows_console(self):
+        buffer = io.BytesIO()
+        console = io.TextIOWrapper(buffer, encoding="cp1252")
+        with patch.object(client.sys, "stdout", console):
+            client.state("preparing", "正在准备猎具…")
+        state = json.loads((self.root / "launcher-state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["message"], "正在准备猎具…")
+        self.assertIn(b"\\u", buffer.getvalue())
+
+    def test_missing_notices_stop_before_launch_or_profile_access(self):
+        with self.assertRaisesRegex(ValueError, "署名"):
+            client.main()
         self.assertFalse((self.root / "data").exists())
 
 

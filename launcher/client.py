@@ -20,7 +20,9 @@ def state(phase, message):
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps({"phase": phase, "message": message}, ensure_ascii=False), encoding="utf-8")
     temp.replace(path)
-    print(message, flush=True)
+    # Console encoding varies by Windows locale; status JSON always remains UTF-8.
+    encoding = sys.stdout.encoding or "utf-8"
+    print(message.encode(encoding, errors="backslashreplace").decode(encoding), flush=True)
 
 
 def validate_network(network):
@@ -113,6 +115,12 @@ def build_environment(profile, name, password, settings_env, snapshot):
 
 
 def main():
+    for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
+                         ("NOTICE.txt", "github.com/Classmg22/BBSC"),
+                         ("SUPPORTERS.txt", "BBSC SUPPORTERS")):
+        path = ROOT / "mod" / file
+        if not path.is_file() or marker not in path.read_text(encoding="utf-8")[:65536]:
+            raise ValueError("模组署名文件缺失或不完整，请重新解压完整安装包。")
     profile = json.loads((ROOT / "profile.json").read_text(encoding="utf-8-sig"))
     validate_network(profile["network"])
     name = os.environ["BBSC_ACCOUNT"]

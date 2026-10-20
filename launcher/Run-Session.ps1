@@ -5,6 +5,7 @@ try {
     $env:BBSC_ACCOUNT = $credential.UserName
     $env:BBSC_PASSWORD = $credential.GetNetworkCredential().Password
     $env:PYTHONHOME = Join-Path $taskRoot 'runtime'
+    $env:PYTHONUTF8 = '1'
     $env:PATH = (Join-Path $taskRoot 'runtime\bin') + ';' + $env:PATH
     & (Join-Path $taskRoot 'runtime\bin\python.exe') (Join-Path $taskRoot 'client.py') *> (Join-Path $taskRoot 'startup.log')
     exit $LASTEXITCODE
