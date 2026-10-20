@@ -25,7 +25,7 @@ function Show-Home {
 }
 function Show-Error([string]$message) {
     $controls.StatusText.Text = $message
-    [void][Windows.MessageBox]::Show($window, $message, 'BBSC Launcher', 'OK', 'Warning')
+    [void][Windows.MessageBox]::Show($window, $message, 'The Hunt', 'OK', 'Warning')
 }
 function Pick-File([string]$title, [string]$filter) {
     $dialog = New-Object Microsoft.Win32.OpenFileDialog
@@ -96,7 +96,7 @@ if (Test-Path -LiteralPath $profilePath) {
             $controls.Account.Text = (Import-Clixml -LiteralPath $credentialPath).UserName
         }
         Update-Summary
-        $controls.StatusText.Text = '已加载本机配置。准备好后开始狩猎。'
+        $controls.StatusText.Text = '已加载本机配置，可以启动游戏。'
     } catch { $controls.StatusText.Text = '配置无法读取，请重新填写；原存档仍保存在 data 目录。' }
 }
 $controls.HomeNav.Add_Click({ Show-Home })
@@ -148,7 +148,7 @@ $controls.Launch.Add_Click({
         $controls.Launch.IsEnabled = $false
         $controls.SaveSettings.IsEnabled = $false
         $controls.SettingsNav.IsEnabled = $false
-        $controls.Launch.Content = '狩猎进行中'
+        $controls.Launch.Content = '游戏运行中'
         $controls.KitStatus.Text = '正在等待模组加载…'
         Show-Home
     } catch { Show-Settings; Show-Error $_.Exception.Message }
@@ -182,7 +182,7 @@ $timer.Add_Tick({
             $controls.Launch.IsEnabled = $true
             $controls.SaveSettings.IsEnabled = $true
             $controls.SettingsNav.IsEnabled = $true
-            $controls.Launch.Content = '开始狩猎  →'
+            $controls.Launch.Content = '启动游戏  →'
         }
     } catch { } # A partially-written status file is retried on the next tick.
 })
@@ -218,7 +218,7 @@ try { $mutexName = 'Local\BBSCLauncher-' + [BitConverter]::ToString($hasher.Comp
 finally { $hasher.Dispose() }
 $mutex = New-Object Threading.Mutex($false, $mutexName)
 if (-not $mutex.WaitOne(0)) {
-    [void][Windows.MessageBox]::Show('这个目录的 BBSC Launcher 已经打开，请从任务栏切换。', 'BBSC Launcher')
+    [void][Windows.MessageBox]::Show('这个目录的 The Hunt 已经打开，请从任务栏切换。', 'The Hunt')
     exit 0
 }
 try { $timer.Start(); [void]$window.ShowDialog() }

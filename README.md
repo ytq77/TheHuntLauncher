@@ -1,6 +1,6 @@
-# BBSC Launcher · 共赴猎夜
+# The Hunt — BBSC Launcher
 
-适用于 Bloodborne PC 移植版的 BBSC 无缝联机启动器，提供独立运行环境、中文文本、本机配置同步与自动构建。
+由 **iytq** 维护，适用于 Bloodborne PC 移植版的 BBSC 无缝联机启动器，提供独立运行环境、中文文本、本机配置同步与自动构建。
 
 A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. This is a community project, independent of the original BBSC, BBport, Sony and FromSoftware projects.
 
@@ -23,7 +23,7 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 1. 从 [Actions](https://github.com/ytq77/bbsc-launcher/actions) 下载构建产物，或从 [Releases](https://github.com/ytq77/bbsc-launcher/releases) 下载预览版。完整解压到新目录。
 2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。
 3. 在「游戏与联机」选择本机普通版 `Bloodborne.exe`、游戏 `eboot.bin` 以及普通版的 `bbport.ini`。
-4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「开始狩猎」。
+4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「启动游戏」。
 
 需要先有能正常运行的 BBport 普通版。首次启动会复制本机存档、输入配置与模组设置，此后无缝版存档保存在本包 `data/user` 中独立发展。普通版画质和帧率设置在每次启动时重新读取，因此低配置电脑不会继承其他电脑的画质。
 
@@ -45,7 +45,7 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 
 ## 本仓库的改动
 
-- 独立的深色图形启动器，显示当前配置、启动状态和猎具准备耗时。
+- The Hunt 图形启动器：旧银色、铃铛蚀刻纹样与 iytq 署名，显示当前配置、启动状态和猎具准备耗时。
 - 把猎具初始化从读档后的首次游戏循环提前到安装钩子阶段，取消首次 5 秒等待；保留失败重试与未就绪保护。
 - 用安全的内存快照扫描处理页面权限变化，避免扫描时触发宿主的致命异常处理。
 - 排除独立环境下重复加载的内置补丁 XML，保留玩家选择的其他补丁。

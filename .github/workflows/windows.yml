@@ -104,4 +104,4 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 -c 'import json,os; assert os.environ["RELEASE_TAG"] == "v"+json.load(open("upstream.lock.json"))["version"]'
-          gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --generate-notes --title "BBSC Launcher $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --generate-notes --title "The Hunt - BBSC Launcher $RELEASE_TAG"

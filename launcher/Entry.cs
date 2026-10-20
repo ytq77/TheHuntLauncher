@@ -4,6 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
+[assembly: System.Reflection.AssemblyTitle("The Hunt")]
+[assembly: System.Reflection.AssemblyProduct("The Hunt - BBSC Launcher")]
+[assembly: System.Reflection.AssemblyCompany("iytq")]
+[assembly: System.Reflection.AssemblyCopyright("The Hunt launcher contributions: iytq (2026)")]
+
 internal static class Entry
 {
     [STAThread]
@@ -13,7 +18,7 @@ internal static class Entry
         var script = Path.Combine(root, "Launcher.ps1");
         if (!File.Exists(script))
         {
-            MessageBox.Show("请完整解压 BBSC Launcher 后再启动。", "BBSC Launcher");
+            MessageBox.Show("请完整解压 The Hunt 启动器后再启动。", "The Hunt");
             return;
         }
         try
@@ -28,6 +33,6 @@ internal static class Entry
                 WindowStyle = ProcessWindowStyle.Hidden
             });
         }
-        catch (Exception e) { MessageBox.Show(e.Message, "BBSC Launcher"); }
+        catch (Exception e) { MessageBox.Show(e.Message, "The Hunt"); }
     }
 }

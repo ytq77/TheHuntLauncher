@@ -1,6 +1,7 @@
 # Notices and provenance
 
 BBSC Launcher is an independent community launcher and compatibility patch set.
+The Hunt launcher design, integration and compatibility work: iytq (2026).
 
 This project's original launcher code and patches are provided under
 SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices.
