@@ -19,7 +19,7 @@ def translate(text):
         return catalog[text]
     match = re.fullmatch(r'The host started the battle against\n(<\?npcNameId@\d+\?>)\.', text)
     if match:
-        return "唤你而来的猎人\n正与" + match[1] + "交战。"
+        return "召集者已与" + match[1] + "交战。"
     match = re.fullmatch(r'(<\?npcNameId@\d+\?>) defeated\.', text)
     if match:
         return "已猎杀" + match[1] + "。"
@@ -61,9 +61,9 @@ def main():
     before = '''        const std::string text = name != nullptr
                                      ? fmt::format("The host started the battle against\\n{}.", name)
                                      : std::string{"The host started a boss battle."};'''
-    after = '''        std::u16string text = u"唤你而来的猎人已与强敌交战。";
+    after = '''        std::u16string text = u"召集者已与强敌交战。";
         if (name != nullptr) {
-            text = u"唤你而来的猎人\\n正与";
+            text = u"召集者已与";
             const std::string tag = fmt::format("<?npcNameId@{}?>", boss);
             for (const unsigned char ch : tag) {
                 text.push_back(ch);
