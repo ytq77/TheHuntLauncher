@@ -10,6 +10,7 @@ import sys
 import uuid
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
+from feature_settings import environment as feature_environment
 
 ROOT = Path(__file__).resolve().parent
 EBOOT_SHA256 = "d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9"
@@ -110,7 +111,9 @@ def build_environment(profile, name, password, settings_env, snapshot):
     for setting in json.loads((ROOT / "mod/mod.json").read_text(encoding="utf-8"))["settings"]:
         value = setting["default"]
         env.setdefault(setting["env"], str(int(value)) if isinstance(value, bool) else str(value))
-    env.update(SHADPS4_BBSC_SHARED_PROGRESS="0", SHADPS4_BBSC_DISCORD="0")
+    feature_env, feature_values = feature_environment(ROOT)
+    env.update(feature_env)
+    snapshot["features"] = feature_values
     return env, network
 
 
@@ -129,10 +132,12 @@ def main():
     password = os.environ["BBSC_PASSWORD"]
     if not name or not password:
         raise ValueError("请先填写联机账号与密码。")
+    feature_environment(ROOT)  # Reject invalid preferences before preparing saves.
     prepare(profile)
     state("preparing", "正在同步这台电脑的画质与操作设置…")
     settings_env, snapshot = sync_settings(ROOT, profile)
     env, network = build_environment(profile, name, password, settings_env, snapshot)
+    (ROOT / "settings-snapshot.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     user = ROOT / "data/user"
     user.mkdir(parents=True, exist_ok=True)
     (user / "host_overrides.custom.json").write_text(json.dumps({

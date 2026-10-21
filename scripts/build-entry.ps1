@@ -9,3 +9,5 @@ $icon = Join-Path $repo '.build\TheHunt.ico'
 if ($LASTEXITCODE -ne 0) { throw 'Native launcher build failed.' }
 & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $repo 'launcher\Launcher.ps1') -Validate
 if ($LASTEXITCODE -ne 0) { throw 'WPF validation failed.' }
+& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $repo 'tests\test-feature-ui.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'WPF feature persistence checks failed.' }

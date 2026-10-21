@@ -99,6 +99,33 @@
     <Style x:Key="Caption" TargetType="TextBlock">
       <Setter Property="Foreground" Value="#9DA5A8"/><Setter Property="FontSize" Value="12"/>
     </Style>
+    <Style TargetType="Expander">
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Expander">
+          <StackPanel>
+            <ToggleButton IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}"
+                          Background="#191A1C" Foreground="{TemplateBinding Foreground}" Cursor="Hand">
+              <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+                <Border Background="{TemplateBinding Background}" BorderBrush="#37383A" BorderThickness="1" Padding="14,12">
+                  <Grid>
+                    <ContentPresenter Margin="0,0,24,0"/>
+                    <Path x:Name="Arrow" Data="M0,0 L5,5 0,10" Stroke="#BDBBB3" StrokeThickness="1.3"
+                          HorizontalAlignment="Right" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"/>
+                  </Grid>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsChecked" Value="True"><Setter TargetName="Arrow" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger>
+                  <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#27282A"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate></ToggleButton.Template>
+              <ContentPresenter ContentSource="Header"/>
+            </ToggleButton>
+            <ContentPresenter x:Name="Expansion" Visibility="Collapsed"/>
+          </StackPanel>
+          <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Expansion" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
     <Style x:Key="FieldLabel" TargetType="TextBlock">
       <Setter Property="Margin" Value="0,16,0,7"/><Setter Property="Foreground" Value="#C2C6C5"/>
     </Style>
@@ -112,6 +139,8 @@
           <TextBlock Text="B B S C   L A U N C H E R" FontSize="9" Foreground="#7F8284" Margin="0,10,0,36"/>
           <RadioButton x:Name="HomeNav" GroupName="Navigation" Content="启动" Style="{StaticResource NavigationButton}" IsChecked="True" Margin="0,0,0,8"/>
           <RadioButton x:Name="SettingsNav" GroupName="Navigation" Content="游戏与联机" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
+          <RadioButton x:Name="FeatureNav" GroupName="Navigation" Content="功能与玩法" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
+          <RadioButton x:Name="ServerNav" GroupName="Navigation" Content="服务器管理" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
           <RadioButton x:Name="SaveNav" GroupName="Navigation" Content="存档" Style="{StaticResource NavigationButton}"/>
         </StackPanel>
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
@@ -119,7 +148,7 @@
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.2" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.2" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.3" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -209,6 +238,7 @@
           <TextBlock Text="首次启动会复制本机存档。之后无缝版的进度独立保存。&#x0a;两位猎人使用不同的账号，并连接同一个 BBSC 服务。"
                      Foreground="#9CA9AF" TextWrapping="Wrap" LineHeight="24"/>
           <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Foreground="#8B8E86" Margin="0,16,0,0" TextWrapping="Wrap"/>
+          <TextBlock x:Name="FeatureSummary" Foreground="#8B8E86" Margin="0,10,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         </Grid>
         </ScrollViewer>
@@ -250,6 +280,73 @@
             </Grid>
             <TextBlock Text="以上地址由服务器管理员提供。密码使用当前 Windows 用户加密保存在本机。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,8"/>
             <Button x:Name="SaveSettings" Content="保存设置" HorizontalAlignment="Left" Margin="0,8,0,18"/>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+      <Grid x:Name="FeaturePage" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,18">
+          <TextBlock Text="功能与玩法" FontSize="26"/>
+          <TextBlock Text="保存后下次启动生效。难度数值跟随房主；进度合并会写入客机存档。"
+                     Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+          <WrapPanel>
+            <Button x:Name="SaveFeatures" Content="保存功能设置" Margin="0,0,10,8"/>
+            <Button x:Name="RecommendFeatures" Content="恢复推荐" Margin="0,0,10,8"/>
+            <Button x:Name="ExpandFeatures" Content="展开全部" Margin="0,0,0,8"/>
+          </WrapPanel>
+          <TextBlock x:Name="FeatureStatus" Text="推荐保留完整合作功能，暂时关闭永久共享进度与敌对 NPC 猎人强化。"
+                     Foreground="#B8B2A2" TextWrapping="Wrap" LineHeight="22"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+          <StackPanel x:Name="FeatureItems"/>
+        </ScrollViewer>
+      </Grid>
+      <Grid x:Name="ServerPage" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,14">
+          <TextBlock Text="服务器管理" FontSize="26"/>
+          <TextBlock Text="管理员专用 · 使用已有 SSH 密钥，不开放额外管理端口。"
+                     Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+          <Button x:Name="AdminRefresh" Content="刷新状态与账号" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+          <StackPanel>
+            <StackPanel x:Name="AdminFields">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock Text="SSH 别名或 用户@主机" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminTarget"/></StackPanel>
+                <StackPanel Grid.Column="2"><TextBlock Text="SSH 端口" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminPort" Text="22"/></StackPanel>
+              </Grid>
+              <TextBlock Text="BBSC Compose 部署目录 · 服务器上的 /opt 路径" Style="{StaticResource FieldLabel}"/>
+              <TextBox x:Name="AdminDirectory"/>
+              <TextBlock Text="本机 SSH 私钥路径 · 留空使用 SSH 配置／代理" Style="{StaticResource FieldLabel}"/>
+              <DockPanel><Button x:Name="PickAdminIdentity" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="AdminIdentity"/></DockPanel>
+              <TextBlock Text="可信 known_hosts 文件 · 留空使用 SSH 默认记录" Style="{StaticResource FieldLabel}"/>
+              <DockPanel><Button x:Name="PickAdminKnownHosts" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="AdminKnownHosts"/></DockPanel>
+              <CheckBox x:Name="AdminSudo" Content="远端使用 sudo -n（root 通常无需勾选）" Foreground="#D7D5CE" Margin="0,12,0,4"/>
+              <TextBlock Text="首次使用请先在终端连接并核对主机指纹。加密私钥需先加入 ssh-agent。不会自动接受未知或变化的指纹。"
+                         Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,6,0,0"/>
+              <TextBlock Text="账号名 · 3–16 位字母、数字、下划线或连字符" Style="{StaticResource FieldLabel}"/>
+              <TextBox x:Name="AdminName"/>
+              <TextBlock Text="密码 · 仅用于本次新建／验证，不保存" Style="{StaticResource FieldLabel}"/>
+              <PasswordBox x:Name="AdminPassword"/>
+              <TextBlock Text="邮箱标识 · 新建账号时填写，不能与已有账号重复" Style="{StaticResource FieldLabel}"/>
+              <TextBox x:Name="AdminEmail"/>
+            </StackPanel>
+            <WrapPanel Margin="0,18,0,0">
+              <Button x:Name="AdminCreate" Content="新建账号" Margin="0,0,10,8"/>
+              <Button x:Name="AdminVerify" Content="验证账号密码" Margin="0,0,0,8"/>
+            </WrapPanel>
+            <TextBlock Text="本版支持查看、新建和验证。暂不提供删号、改名或重置密码；验证前请退出该账号的所有游戏。"
+                       Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22"/>
+            <TextBlock x:Name="AdminStatus" Text="尚未连接服务器。查看状态不会修改服务或账号。"
+                       Foreground="#B8B2A2" TextWrapping="Wrap" LineHeight="22" Margin="0,18,0,12"/>
+            <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="16" Margin="0,0,0,14">
+              <StackPanel>
+                <TextBlock Text="联机账号 · ID / 名称 / 状态" Foreground="#D3D0C5" Margin="0,0,0,8"/>
+                <TextBlock x:Name="AdminAccounts" Text="刷新后显示；不读取密码、盐值或令牌。" TextWrapping="Wrap" Foreground="#A6AAA8" LineHeight="24"/>
+              </StackPanel>
+            </Border>
           </StackPanel>
         </ScrollViewer>
       </Grid>

@@ -14,7 +14,7 @@ PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
-                 "bbport.ini", "input.ini", "mods.json", "patches.json", ".env"}
+                 "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json"}
 DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
 
 
@@ -89,6 +89,7 @@ def main():
     for path in (ROOT / "launcher").iterdir():
         if path.suffix in (".ps1", ".xaml", ".py"):
             shutil.copy2(path, dest / path.name)
+    shutil.copy2(ROOT / "launcher/feature-catalog.json", dest / "feature-catalog.json")
     # Windows PowerShell 5.1 requires a BOM for Chinese source text.
     for path in dest.glob("*.ps1"):
         text = path.read_text(encoding="utf-8-sig")
@@ -171,7 +172,7 @@ def main():
                     continue
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
-    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup"],
+    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page"],
             "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll")}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")

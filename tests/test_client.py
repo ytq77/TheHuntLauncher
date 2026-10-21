@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -23,6 +24,7 @@ class SessionTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.root = self.base / "package"
         self.root.mkdir()
+        shutil.copy2(Path(__file__).resolve().parents[1] / "launcher/feature-catalog.json", self.root)
         self.install = self.base / "normal"
         self.install.mkdir()
         (self.install / "Bloodborne.exe").write_bytes(b"test-launcher")
@@ -87,6 +89,22 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn("BBSC_PASSWORD", actual)
         self.assertNotIn("BB_RENDER_RES", actual)
         self.assertEqual(actual["SHADPS4_BBSC_DISCORD"], "0")
+        self.assertEqual(actual["SHADPS4_BBSC_SHARED_PROGRESS"], "0")
+
+    def test_feature_preferences_reach_session_and_snapshot_without_changing_server(self):
+        (self.root / "mod").mkdir()
+        (self.root / "mod/mod.json").write_text('{"settings":[]}')
+        (self.root / "features.json").write_text(json.dumps({"schema": 1, "values": {
+            "shared_progress": True, "discord": True, "scale_boss_hp": 60, "invasions": False}}))
+        settings_env, snapshot = sync_settings(self.root, self.profile, self.settings)
+        actual, network = client.build_environment(self.profile, "test-user", "test-pass", settings_env, snapshot)
+        self.assertEqual(actual["SHADPS4_BBSC_SHARED_PROGRESS"], "1")
+        self.assertEqual(actual["SHADPS4_BBSC_DISCORD"], "1")
+        self.assertEqual(actual["BBSC_SCALE_BOSS_HP"], "60")
+        self.assertEqual(actual["SHADPS4_BBSC_INVADE_ANYWHERE"], "0")
+        self.assertEqual(network, NETWORK)
+        self.assertEqual(snapshot["features"]["scale_boss_hp"], 60)
+        self.assertNotIn("test-pass", json.dumps(snapshot))
 
     def test_wrong_game_stops_before_creating_data(self):
         (self.game / "eboot.bin").write_bytes(b"wrong")

@@ -24,6 +24,8 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。
 3. 在「游戏与联机」选择本机普通版 `Bloodborne.exe`、游戏 `eboot.bin` 以及普通版的 `bbport.ini`。
 4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「启动游戏」。
+5. 「功能与玩法」提供完整中文功能说明、开关与难度数值，支持恢复推荐。保存后下次启动生效，详见[功能与玩法说明](docs/features.md)。
+6. 自建服务管理员可在「服务器管理」通过 SSH 查看状态与账号、新建及验证账号；普通玩家不需要填写，见[管理说明](docs/server/client-admin.md)。
 
 需要先有能正常运行的 BBport 普通版。首次启动会复制本机存档、输入配置与模组设置，此后无缝版存档保存在本包 `data/user` 中独立发展。普通版画质和帧率设置在每次启动时重新读取，因此低配置电脑不会继承其他电脑的画质。
 

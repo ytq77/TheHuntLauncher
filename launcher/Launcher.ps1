@@ -1,4 +1,4 @@
-﻿param([string]$Preview, [switch]$PreviewSettings, [switch]$PreviewSaves, [switch]$Validate)
+﻿param([string]$Preview, [switch]$PreviewSettings, [switch]$PreviewSaves, [switch]$PreviewFeatures, [switch]$PreviewServer, [switch]$Validate)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml
 $taskRoot = $PSScriptRoot
@@ -14,29 +14,51 @@ $saveResultPath = Join-Path $taskRoot 'save-transfer-result.json'
 $utf8 = New-Object Text.UTF8Encoding $false
 $window = [Windows.Markup.XamlReader]::Parse([IO.File]::ReadAllText((Join-Path $taskRoot 'Launcher.xaml')))
 $controls = @{}
-@('HomeNav','SettingsNav','SaveNav','HomePage','SettingsPage','SavePage','GraphicsSummary','AccountSummary','ServerSummary',
+@('HomeNav','SettingsNav','SaveNav','FeatureNav','HomePage','SettingsPage','SavePage','FeaturePage','GraphicsSummary','AccountSummary','ServerSummary',
   'KitStatus','InstallPath','GamePath','GraphicsPath','PickInstall','PickGame','PickGraphics',
   'Shadnet','Webapi','Community','Relay','Account','Password','SaveSettings','StatusText','OpenLogs','Launch',
-  'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups') |
+  'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups',
+  'FeatureItems','FeatureSummary','FeatureStatus','SaveFeatures','RecommendFeatures','ExpandFeatures',
+  'ServerNav','ServerPage','AdminTarget','AdminPort','AdminDirectory','AdminIdentity','AdminKnownHosts','AdminSudo','PickAdminIdentity','PickAdminKnownHosts',
+  'AdminRefresh','AdminCreate','AdminVerify','AdminName','AdminPassword','AdminEmail','AdminAccounts','AdminStatus','AdminFields') |
   ForEach-Object { $controls[$_] = $window.FindName($_) }
 
 function Show-Settings {
+    $controls.ServerPage.Visibility = 'Collapsed'
+    $controls.FeaturePage.Visibility = 'Collapsed'
     $controls.HomePage.Visibility = 'Collapsed'
     $controls.SettingsPage.Visibility = 'Visible'
     $controls.SavePage.Visibility = 'Collapsed'
     $controls.SettingsNav.IsChecked = $true
 }
 function Show-Home {
+    $controls.ServerPage.Visibility = 'Collapsed'
+    $controls.FeaturePage.Visibility = 'Collapsed'
     $controls.HomePage.Visibility = 'Visible'
     $controls.SettingsPage.Visibility = 'Collapsed'
     $controls.SavePage.Visibility = 'Collapsed'
     $controls.HomeNav.IsChecked = $true
 }
 function Show-Saves {
+    $controls.ServerPage.Visibility = 'Collapsed'
+    $controls.FeaturePage.Visibility = 'Collapsed'
     $controls.HomePage.Visibility = 'Collapsed'
     $controls.SettingsPage.Visibility = 'Collapsed'
     $controls.SavePage.Visibility = 'Visible'
     $controls.SaveNav.IsChecked = $true
+}
+function Show-Features {
+    $controls.ServerPage.Visibility = 'Collapsed'
+    $controls.HomePage.Visibility = 'Collapsed'
+    $controls.SettingsPage.Visibility = 'Collapsed'
+    $controls.SavePage.Visibility = 'Collapsed'
+    $controls.FeaturePage.Visibility = 'Visible'
+    $controls.FeatureNav.IsChecked = $true
+}
+function Show-Server {
+    foreach ($name in @('HomePage','SettingsPage','SavePage','FeaturePage')) { $controls[$name].Visibility = 'Collapsed' }
+    $controls.ServerPage.Visibility = 'Visible'
+    $controls.ServerNav.IsChecked = $true
 }
 function Show-Error([string]$message) {
     $controls.StatusText.Text = $message
@@ -115,14 +137,14 @@ if (Test-Path -LiteralPath $profilePath) {
     } catch { $controls.StatusText.Text = '配置无法读取，请重新填写；原存档仍保存在 data 目录。' }
 }
 function Set-BusyControls {
-    $busy = ($null -ne $script:worker) -or ($null -ne $script:saveTask)
-    foreach ($name in @('Launch','SaveSettings','SettingsNav','RefreshSaves')) {
+    $busy = ($null -ne $script:worker) -or ($null -ne $script:saveTask) -or ($null -ne $script:adminTask)
+    foreach ($name in @('Launch','SaveSettings','SettingsNav','RefreshSaves','SaveFeatures','RecommendFeatures','FeatureItems','AdminFields','AdminRefresh','AdminCreate','AdminVerify')) {
         $controls[$name].IsEnabled = -not $busy
     }
     $controls.ImportSaves.IsEnabled = -not $busy -and $null -ne $script:saveInspection
 }
 function Start-SaveTransfer([bool]$apply) {
-    if ($script:worker -or $script:saveTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) {
+    if ($script:worker -or $script:saveTask -or $script:adminTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) {
         throw '请先正常退出游戏，并等待当前操作完成。'
     }
     $exe = $controls.InstallPath.Text
@@ -157,6 +179,8 @@ function Start-SaveTransfer([bool]$apply) {
 }
 $controls.HomeNav.Add_Click({ Show-Home })
 $controls.SettingsNav.Add_Click({ Show-Settings })
+$controls.FeatureNav.Add_Click({ Show-Features })
+$controls.ServerNav.Add_Click({ Show-Server })
 $controls.SaveNav.Add_Click({
     Show-Saves
     if (-not $script:worker -and -not $script:saveTask) {
@@ -214,8 +238,13 @@ $controls.OpenLogs.Add_Click({
     [void][Diagnostics.Process]::Start('explorer.exe', ('"' + $path + '"'))
 })
 $controls.Launch.Add_Click({
+    if ($script:featuresDirty) {
+        Show-Features
+        Show-Error '请先保存功能页中的变更，再启动游戏。'
+        return
+    }
     try {
-        if ($script:saveTask) { throw '请等待存档操作完成。' }
+        if ($script:saveTask -or $script:adminTask) { throw '请等待存档或服务器操作完成。' }
         if (Test-Path -LiteralPath (Join-Path $taskRoot '.save-import.lock')) {
             throw '存档导入正在进行或上次未完整结束，请先检查存档备份。'
         }
@@ -244,6 +273,7 @@ $controls.Launch.Add_Click({
 $timer = New-Object Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
+    Update-AdminTask
     if ($script:saveTask -and $script:saveTask.HasExited) {
         try {
             if (-not (Test-Path -LiteralPath $saveResultPath)) { throw '存档工具未返回结果，请重新读取存档信息。' }
@@ -302,6 +332,7 @@ $timer.Add_Tick({
     } catch { } # A partially-written status file is retried on the next tick.
 })
 $window.Add_Closing({
+    if ($script:adminTask) { $_.Cancel = $true; $controls.StatusText.Text = '请等待服务器管理操作完成后关闭。' }
     if ($script:saveTask -and -not $script:saveTask.HasExited) {
         $_.Cancel = $true
         $controls.StatusText.Text = '请等待存档操作完成，再关闭启动器。'
@@ -312,6 +343,8 @@ $window.Add_Closing({
     }
 })
 Show-Home
+. (Join-Path $taskRoot 'Features.ps1')
+. (Join-Path $taskRoot 'Server.ps1')
 $controls.ImportSaves.IsEnabled = $false
 $controls.DestinationSavePath.Text = Join-Path $taskRoot 'data\user\savedata'
 $iconPath = Join-Path $taskRoot 'TheHunt.ico'
@@ -326,6 +359,8 @@ if ($Preview) {
     # Render our own view for layout QA; does not start a game or read other apps.
     if ($PreviewSettings) { Show-Settings }
     if ($PreviewSaves) { Show-Saves }
+    if ($PreviewFeatures) { Show-Features; $script:featureExpanders[0].IsExpanded = $true }
+    if ($PreviewServer) { Show-Server }
     $view = $window.Content
     $view.Background = $window.Background
     $view.Measure((New-Object Windows.Size(1040,740)))
