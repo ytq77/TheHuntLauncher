@@ -148,7 +148,7 @@
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.2" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.3" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.4" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -375,7 +375,12 @@
                 </WrapPanel>
                 <TextBlock Text="全程离线，不打开游戏。自动清理两栏中的无缝道具引用；恢复的原版联机道具只放背包，其他装备保持原样。"
                            TextWrapping="Wrap" LineHeight="22" Foreground="#9DA5A8" Margin="0,2,0,8"/>
-                <Button x:Name="ConversionOpen" Content="打开本次转换目录" HorizontalAlignment="Left" Margin="0,0,8,8"/>
+                <TextBlock Text="导出包保留本次无缝版进度，联机道具已转换为普通版状态。"
+                           TextWrapping="Wrap" Foreground="#9DA5A8" Margin="0,0,0,10"/>
+                <WrapPanel>
+                  <Button x:Name="ConversionOpen" Content="打开本次转换目录" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionOpenOrdinaryBackup" Content="打开原版备份" Margin="0,0,8,8"/>
+                </WrapPanel>
                 <TextBlock x:Name="ConversionStatus" Text="请确认角色，再选择离线导出或替换。" TextWrapping="Wrap"
                            LineHeight="23" Foreground="#C7C3B6" Margin="0,8,0,6"/>
                 <TextBlock x:Name="ConversionPath" TextWrapping="Wrap" FontSize="11" Foreground="#8B9CA4"/>

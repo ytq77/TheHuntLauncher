@@ -4,6 +4,17 @@ $conversionActions = @{ ConversionNew='create'; ConversionBaseline='baseline'; C
     ConversionConvert='convert'; ConversionVerify='verify'; ConversionExport='export';
     ConversionStartExport='start-export'; ConversionStartReplace='start-replace' }
 
+function Get-ConversionOrdinaryBackupPath {
+    if (-not $script:conversionJob) { return $null }
+    if ($script:conversionJob.ordinary_backup) { return [string]$script:conversionJob.ordinary_backup }
+    if ($script:conversionJob.directory) { return Join-Path $script:conversionJob.directory 'backup\ordinary\savedata' }
+    return $null
+}
+function Open-ConversionDirectory([string]$path) {
+    if ($path -and (Test-Path -LiteralPath $path -PathType Container)) {
+        [void][Diagnostics.Process]::Start('explorer.exe', ('"' + $path + '"'))
+    }
+}
 function Update-ConversionButtons([bool]$busy) {
     foreach ($name in $conversionActions.Keys) {
         $action = $conversionActions[$name]
@@ -11,6 +22,10 @@ function Update-ConversionButtons([bool]$busy) {
             ($script:conversionJob -and $script:conversionJob.next -eq $action))
     }
     foreach ($name in @('ConversionSameRole','ConversionClearSlots','ConversionConfirmed')) { $controls[$name].IsEnabled = -not $busy }
+    $backupPath = Get-ConversionOrdinaryBackupPath
+    $controls.ConversionOpenOrdinaryBackup.IsEnabled = -not $busy -and [bool]$backupPath -and
+        (Test-Path -LiteralPath $backupPath -PathType Container)
+    $controls.ConversionOpenOrdinaryBackup.ToolTip = $(if ($backupPath) { $backupPath } else { '完成备份后可打开旧原版存档位置。' })
 }
 function Show-ConversionJob($job) {
     $script:conversionJob = $job
@@ -34,7 +49,7 @@ function Read-ConversionProgress {
         $job = [IO.File]::ReadAllText((Join-Path $folder 'job.json')) | ConvertFrom-Json
         $next = @{ created='baseline'; baselined='inspect'; inspected='convert'; converted='verify'; 'awaiting-confirmation'='export' }
         $view = [pscustomobject]@{ id=$job.id; state=$job.state; message=$job.message; slot=$job.slot;
-            next=$next[$job.state]; directory=$folder; export=$job.export }
+            next=$next[$job.state]; directory=$folder; export=$job.export; ordinary_backup=$job.ordinary_backup }
         if ($job.state -eq 'running' -and -not $script:conversionTask) {
             $view.message = '检测到未结束的测试记录。若游戏和旧操作均已退出，请新建测试；原始存档未替换。'
             $view.next = $null
@@ -116,9 +131,10 @@ foreach ($name in $conversionActions.Keys) {
     $controls[$name].Add_Click($handler)
 }
 $controls.ConversionOpen.Add_Click({
-    if ($script:conversionJob -and (Test-Path -LiteralPath $script:conversionJob.directory)) {
-        [void][Diagnostics.Process]::Start('explorer.exe', ('"' + $script:conversionJob.directory + '"'))
-    }
+    if ($script:conversionJob) { Open-ConversionDirectory $script:conversionJob.directory }
+})
+$controls.ConversionOpenOrdinaryBackup.Add_Click({
+    Open-ConversionDirectory (Get-ConversionOrdinaryBackupPath)
 })
 Read-ConversionProgress
 Update-ConversionButtons $false

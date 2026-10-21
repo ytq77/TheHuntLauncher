@@ -20,7 +20,7 @@ $controls = @{}
   'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups',
   'ConversionNew','ConversionBaseline','ConversionInspect','ConversionConvert','ConversionVerify','ConversionExport',
   'ConversionStartExport','ConversionStartReplace',
-  'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionStatus','ConversionPath',
+  'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionOpenOrdinaryBackup','ConversionStatus','ConversionPath',
   'FeatureItems','FeatureSummary','FeatureStatus','SaveFeatures','RecommendFeatures','ExpandFeatures',
   'ServerNav','ServerPage','AdminTarget','AdminPort','AdminDirectory','AdminIdentity','AdminKnownHosts','AdminSudo','PickAdminIdentity','PickAdminKnownHosts',
   'AdminRefresh','AdminCreate','AdminVerify','AdminName','AdminPassword','AdminEmail','AdminAccounts','AdminStatus','AdminFields') |
