@@ -148,7 +148,7 @@
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.2" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.4" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.5" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -362,7 +362,7 @@
               <StackPanel Margin="16,14,16,8">
                 <TextBlock Text="自动备份两边存档，在副本中离线转换并检查。可直接导出存档包，或完整备份旧原版后替换。"
                            TextWrapping="Wrap" LineHeight="23" Foreground="#C2C6C5"/>
-                <TextBlock Text="当前范围：同一角色，原先拥有四件原版联机道具；无缝五件各一件。未领铃、仓库存放及客机世界恢复记录暂不支持。"
+                <TextBlock Text="当前范围：同一角色，无缝五件各一件。按原版备份逐件恢复原先持有的联机道具，未持有的不补发。已恢复的历史记录及已保存的客机拾取可核对；尚待恢复的世界记录、无可确认道具及仓库存放暂不支持。"
                            TextWrapping="Wrap" LineHeight="22" Foreground="#A6AAA8" Margin="0,8,0,10"/>
                 <TextBlock Text="替换原版会回写整份存档目录，包含其他角色；不会合并两个分支的进度。旧原版会完整备份。"
                            TextWrapping="Wrap" LineHeight="22" Foreground="#A6AAA8" Margin="0,0,0,8"/>

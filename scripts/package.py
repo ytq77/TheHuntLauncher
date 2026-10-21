@@ -179,7 +179,9 @@ def main():
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll"),
             "save_bridge_sha256": digest(dest / "mod/save-bridge.dll"),
             "offline_save_sha256": digest(dest / "offline_save.py"),
-            "save_conversion_validation": "One RTX 5070 role passed offline conversion, vanilla reload/save and post-save inventory/equipment comparison. Kit references cleared; original bells inventory-only. Installed export and temporary-directory replacement/rollback checks passed. User accepted current checks before release; other roles, unclaimed bells, storage and auxiliary journals unsupported."}
+            "offline_aux_sha256": digest(dest / "offline_aux.py"),
+            "original_item_policy": "Restore baseline-confirmed original items individually (any nonempty subset); never grant an absent item or equip it.",
+            "save_conversion_validation": "98 Python tests and WPF checks passed. All 15 nonempty original item subsets covered. One RTX 5070 role passed vanilla reload/save and post-save comparison. Supplied guest sample retains 13 pickup bits and unchanged world flags while restoring only three owned originals; user reported export and ordinary reload success after retry. Guest post-reload bytes were not collected. Pending world/shared-progress journals, empty baseline ownership and storage cases remain unsupported."}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

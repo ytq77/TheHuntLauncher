@@ -15,6 +15,7 @@ import uuid
 import zipfile
 
 import offline_save
+import offline_aux
 
 from client import EBOOT_SHA256
 from save_transfer import plain_path, overlaps, require_stopped, snapshot, source_path
@@ -143,12 +144,10 @@ def auxiliary_snapshot():
     for name in ('guest-items', 'own-world', 'shared-progress'):
         folder = plain_path(ROOT / 'mod' / name)
         result[name] = snapshot(folder) if folder.exists() else None
-        if result[name] is not None and result[name][1]:
-            raise ValueError('发现客机拾取或世界恢复辅助记录，本测试版暂不处理；请保留记录，不要手动删除。')
     return result
 
 
-def create_job(profile, same_role):
+def create_job(profile, same_role, allow_auxiliary=False):
     if same_role is not True:
         raise ValueError('请先确认两份存档对应同一个角色，本次只验证该角色。')
     profile = {k: profile[k] for k in ('install', 'game', 'graphics_source')}
@@ -164,6 +163,8 @@ def create_job(profile, same_role):
     if not Path(profile['graphics_source']).is_file() or not (ROOT / 'mod/save-bridge.dll').is_file():
         raise ValueError('缺少本机画质配置或转换辅助模块，请使用完整测试包。')
     auxiliaries = auxiliary_snapshot()
+    if not allow_auxiliary and any(value is not None and value[1] for value in auxiliaries.values()):
+        raise ValueError('分步诊断暂不处理辅助记录，请保留记录并使用离线转换入口。')
     job_id = uuid.uuid4().hex
     path = job_path(job_id)
     path.mkdir(parents=True)
@@ -171,6 +172,12 @@ def create_job(profile, same_role):
     try:
         ordinary_state = copy_verified(ordinary, path / 'backup/ordinary/savedata')
         seamless_state = copy_verified(seamless, path / 'backup/seamless/savedata')
+        if allow_auxiliary:
+            for name, state in auxiliaries.items():
+                if state is not None:
+                    copied = copy_verified(ROOT / 'mod' / name, path / 'backup/auxiliary' / name)
+                    if normalized(copied) != normalized(state):
+                        raise ValueError('辅助记录在备份期间发生变化，请退出游戏后重试。')
         for label in ('ordinary', 'seamless'):
             if not (path / f'backup/{label}/savedata/1/CUSA00207/SPRJ0005/userdata0010').is_file():
                 raise ValueError('存档结构与当前已验证布局不同，已停止。')
@@ -368,7 +375,7 @@ def export_job(job, confirmed):
             output.writestr('使用说明.txt', (('离线转换输出：本次已检查存档结构，未启动游戏，未覆盖原存档。\n'
                 '无缝道具已移除，两栏相关引用已清空，原版联机道具只放背包。\n' if job.get('flow') == OFFLINE_FLOW else
                 '当前角色转换测试输出，未覆盖任何现有存档。\n') +
-                '本包是整份 savedata，只有本轮角色经过验证；其他槽位、未领铃及客机恢复场景未验证。\n'
+                '本包是整份 savedata，只有本轮角色完成检查；恢复范围依据原版备份已有道具，不补发未持有的道具。\n'
                 '请保留原始备份，勿混合两个分支的 userdata 文件。当前无需安装，先完成测试验收。\n').encode('utf-8-sig'))
         with zipfile.ZipFile(temporary) as check:
             if check.testzip() is not None or any(hashlib.sha256(check.read('savedata/' + name)).hexdigest() != value
@@ -390,7 +397,7 @@ def begin_offline(profile, same_role, output):
     """Back up, transform and export without starting or injecting a game process."""
     if output not in ('export', 'replace'):
         raise ValueError('请选择导出存档包或转换并替换原版。')
-    job = create_job(profile, same_role)
+    job = create_job(profile, same_role, allow_auxiliary=True)
     path = job_path(job['id'])
     job.update(flow=OFFLINE_FLOW, output=output, state='running', worker_pid=os.getpid(),
                message='正在离线检查副本并清理联机道具装备引用；不会打开游戏。')
@@ -409,7 +416,10 @@ def begin_offline(profile, same_role, output):
         if len(kit_slots) != 1:
             raise ValueError('当前仅支持一名角色持有完整无缝五件道具；未找到或多个角色持有时停止转换。')
         slot = kit_slots[0]
+        auxiliary = offline_aux.validate(path / 'backup/auxiliary', source, slot)
+        atomic_json(path / 'auxiliary-check.json', auxiliary)
         baseline = (path / f'backup/ordinary/savedata/1/CUSA00207/SPRJ0005/userdata{slot:04}').read_bytes()
+        restored_goods = offline_save.original_ownership(offline_save.parse(baseline))
         manifests, transformed = {}, {}
         for stem in ('userdata', 'backup'):
             relative = f'1/CUSA00207/SPRJ0005/{stem}{slot:04}'
@@ -428,6 +438,7 @@ def begin_offline(profile, same_role, output):
             raise ValueError('离线输出文件校验失败，已停止。')
         assert_sources(job)
         atomic_json(path / 'offline-fields.json', {'schema': 1, 'slot': slot, 'files': manifests,
+                    'restored_original_goods': list(restored_goods),
                     'equipment_policy': 'clear-kit-references; original-bells-in-inventory-only',
                     'validation': 'offline-structure; no game process started'})
         job.update(state='awaiting-confirmation', slot=slot, completed=['offline'],

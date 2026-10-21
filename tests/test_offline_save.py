@@ -41,6 +41,52 @@ def fixture(kit=False):
 
 
 class OfflineSave(unittest.TestCase):
+    def test_three_originals_preserve_ownership_without_granting_sinister_bell(self):
+        baseline = bytearray(fixture())
+        role = save.parse(baseline)
+        row = role.goods(225)[0]
+        struct.pack_into('<IIII',baseline,row.offset,0,0xFFFFFFFF,0,0)
+        struct.pack_into('<I',baseline,role.username+453,save.u32(baseline,role.username+453)-1)
+        source = fixture(True)
+        output,patches = save.convert(source,bytes(baseline))
+        after = save.parse(output)
+        save.expect_goods(after,(200,205,111))
+        self.assertEqual(save.original_ownership(save.parse(baseline)),(200,205,111))
+        self.assertEqual(after.count(225),0)
+        self.assertEqual(save.u32(source,save.parse(source).username+453)-2,
+                         save.u32(output,after.username+453))
+        for number in (200,205,111):
+            row = after.goods(number)[0]
+            self.assertEqual(list(save.occurrences(output[:after.primary_end],struct.pack('<I',row.handle))),[row.offset])
+        self.assertEqual(len([p for p in patches if p['purpose']=='remove-extra-kit-record']),2)
+        untouched = {i for p in patches for i in range(p['offset'],p['offset']+p['length'])}
+        self.assertTrue(all(a==b or i in untouched for i,(a,b) in enumerate(zip(source,output))))
+
+    def test_every_missing_bell_combination_uses_baseline_ownership(self):
+        for mask in range(16):
+            with self.subTest(mask=mask):
+                baseline = bytearray(fixture())
+                role = save.parse(baseline)
+                owned = tuple(n for i,n in enumerate(save.ORIGINAL) if mask & (1 << i))
+                for number in save.ORIGINAL:
+                    if number not in owned:
+                        struct.pack_into('<IIII',baseline,role.goods(number)[0].offset,0,0xFFFFFFFF,0,0)
+                struct.pack_into('<I',baseline,role.username+453,len(owned)+1)
+                if not owned:
+                    with self.assertRaisesRegex(save.Unsupported,'未找到任何'):
+                        save.convert(fixture(True),bytes(baseline))
+                    continue
+                output,patches = save.convert(fixture(True),bytes(baseline))
+                result = save.parse(output)
+                save.expect_goods(result,owned)
+                self.assertEqual(save.original_ownership(save.parse(baseline)),owned)
+                self.assertEqual(save.u32(output,result.username+453),len(owned)+1)
+                self.assertEqual(len([p for p in patches if p['purpose']=='remove-extra-kit-record']),5-len(owned))
+                self.assertEqual(result.count(120),1)
+                for number in owned:
+                    row = result.goods(number)[0]
+                    self.assertEqual(list(save.occurrences(output[:result.primary_end],struct.pack('<I',row.handle))),[row.offset])
+
     def test_both_bars_cleared_originals_inventory_only_other_item_preserved(self):
         source, ordinary = fixture(True), fixture()
         output, patches = save.convert(source, ordinary)

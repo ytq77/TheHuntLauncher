@@ -3,9 +3,11 @@ import unittest
 from unittest.mock import patch
 import json
 import zipfile
+import struct
 
 import test_conversion_jobs as setup_jobs
 from test_offline_save import fixture
+from test_offline_aux import record, with_flags
 
 jobs = setup_jobs.jobs
 
@@ -59,11 +61,83 @@ class OfflineConversion(unittest.TestCase):
         with self.assertRaises(ValueError): self.begin()
         self.assertFalse((jobs.job_path(jobs.load_job()['id'])/'converted-save.zip').exists())
 
+    def test_partial_baseline_ownership_is_recorded_and_not_expanded(self):
+        path = self.source/'1/CUSA00207/SPRJ0005/userdata0001'
+        raw = bytearray(path.read_bytes())
+        role = jobs.offline_save.parse(raw)
+        struct.pack_into('<IIII',raw,role.goods(225)[0].offset,0,0xFFFFFFFF,0,0)
+        struct.pack_into('<I',raw,role.username+453,jobs.offline_save.u32(raw,role.username+453)-1)
+        path.write_bytes(raw)
+        result = self.begin()
+        fields = json.loads((jobs.job_path(result['id'])/'offline-fields.json').read_text())
+        self.assertEqual(fields['restored_original_goods'],[200,205,111])
+        with zipfile.ZipFile(result['export']) as archive:
+            for stem in ('userdata','backup'):
+                raw = archive.read(f'savedata/1/CUSA00207/SPRJ0005/{stem}0001')
+                jobs.offline_save.expect_goods(jobs.offline_save.parse(raw),(200,205,111))
+
     def test_auxiliary_recovery_record_refused(self):
         folder=self.root/'mod/guest-items'
         folder.mkdir()
         (folder/'pending.json').write_text('{}')
         with self.assertRaises(ValueError): self.begin()
+
+    def settled_auxiliary(self):
+        rows = [(52800,b'\xff\x0f'+bytes(123)),(52420,b'\x08'+bytes(124))]
+        role = self.seamless/'1/CUSA00207/SPRJ0005'
+        for stem in ('userdata','backup'):
+            (role/f'{stem}0001').write_bytes(with_flags(fixture(True),rows))
+        files = [('guest-items/taken-save-1.bin',record(0x544C4242,rows)),
+                 ('own-world/own-save-1.bin.restored',record(0x574F4242,[(12400,bytes(125))]))]
+        for name,data in files:
+            path = self.root/'mod'/name
+            path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_bytes(data)
+        self.before = jobs.hashes(self.source),jobs.hashes(self.seamless)
+        return files
+
+    def test_settled_auxiliary_is_backed_up_but_not_exported_or_replayed(self):
+        files = self.settled_auxiliary()
+        result = self.begin('replace')
+        root = jobs.job_path(result['id'])
+        proof = json.loads((root/'auxiliary-check.json').read_text())
+        self.assertFalse(proof['world_flag_writes'])
+        self.assertEqual(len(proof['records']),2)
+        for name,data in files:
+            self.assertEqual((root/'backup/auxiliary'/name).read_bytes(),data)
+            self.assertEqual((self.root/'mod'/name).read_bytes(),data)
+        for stem in ('userdata','backup'):
+            relative = f'1/CUSA00207/SPRJ0005/{stem}0001'
+            before = (self.seamless/relative).read_bytes()
+            after = (self.source/relative).read_bytes()
+            start,length = struct.unpack_from('<II',before,52)
+            self.assertEqual(before[start:start+length],after[start:start+length])
+        with zipfile.ZipFile(result['export']) as archive:
+            self.assertFalse(any('guest-items' in name or 'own-world' in name for name in archive.namelist()))
+        self.assertEqual(jobs.hashes(self.seamless),self.before[1])
+
+    def test_pending_world_recovery_is_backed_up_and_stops_before_replacement(self):
+        self.settled_auxiliary()
+        pending = self.root/'mod/own-world/own-save-1.bin'
+        data = record(0x574F4242,[(12400,bytes(125))])
+        pending.write_bytes(data)
+        with self.assertRaisesRegex(ValueError,'尚待恢复'):self.begin('replace')
+        root = jobs.job_path(jobs.load_job()['id'])
+        self.assertEqual((root/'backup/auxiliary/own-world/own-save-1.bin').read_bytes(),data)
+        self.assertEqual(self.before,(jobs.hashes(self.source),jobs.hashes(self.seamless)))
+        self.assertFalse((root/'converted-save.zip').exists())
+
+    def test_changed_auxiliary_during_transform_prevents_export(self):
+        self.settled_auxiliary()
+        original = jobs.offline_save.convert
+        def change_record(*args):
+            result = original(*args)
+            (self.root/'mod/guest-items/taken-save-1.bin').write_bytes(b'new-session')
+            return result
+        with patch.object(jobs.offline_save,'convert',side_effect=change_record):
+            with self.assertRaisesRegex(ValueError,'辅助记录发生变化'):self.begin('replace')
+        self.assertEqual(self.before,(jobs.hashes(self.source),jobs.hashes(self.seamless)))
+        self.assertFalse((jobs.job_path(jobs.load_job()['id'])/'converted-save.zip').exists())
 
     def test_changed_source_during_transform_prevents_export(self):
         original=jobs.offline_save.convert

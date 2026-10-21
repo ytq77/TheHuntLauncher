@@ -106,16 +106,25 @@ def parse(data):
 def expect_goods(role, expected):
     for goods_id in TARGETS:
         rows = role.goods(goods_id)
-        require(all(row.area == 'inventory' for row in rows), 'Target item outside carried inventory')
+        require(all(row.area == 'inventory' for row in rows),
+                f'联机道具 {goods_id} 位于背包以外，本版暂不转换仓库中的目标道具。')
         require(len(rows) == int(goods_id in expected) and
                 all(row.quantity == 1 and row.handle == (0xB0000000 | goods_id) for row in rows),
-                'Unsupported target item ownership/count')
+                f'联机道具 {goods_id} 的归属或数量不受支持：预期 {int(goods_id in expected)} 件，'
+                f'实际记录 {len(rows)} 条、数量 {[row.quantity for row in rows]}。')
+
+
+def original_ownership(role):
+    owned = tuple(number for number in ORIGINAL if role.goods(number))
+    require(bool(owned), '原版备份未找到任何已持有的原版联机道具，无法确认恢复范围；不会自动补发。')
+    expect_goods(role, owned)
+    return owned
 
 
 def convert(source, ordinary):
     """Return transformed bytes and exact patch manifest, leaving arguments intact."""
     before, baseline = parse(source), parse(ordinary)
-    expect_goods(baseline, ORIGINAL)
+    owned = original_ownership(baseline)
     require(source[before.username:before.username+32] == ordinary[baseline.username:baseline.username+32]
             and source[before.face+4:before.face+239] == ordinary[baseline.face+4:baseline.face+239],
             'Character name/appearance does not match baseline; no role merge is attempted')
@@ -172,22 +181,22 @@ def convert(source, ordinary):
         require(list(occurrences(source[:before.primary_end], struct.pack('<I', row.code))) == [row.offset+4],
                 'Unexpected duplicate item code outside its inventory record')
 
-    for row, goods_id in zip(kit_rows, ORIGINAL):
+    for row, goods_id in zip(kit_rows, owned):
         patch(row.offset, struct.pack('<III', 0xB0000000 | goods_id, 0x40000000 | goods_id, 1),
               'restore-original-to-inventory-only')
-    removed = kit_rows[-1]
-    patch(removed.offset, struct.pack('<IIII', 0, 0xFFFFFFFF, 0, 0), 'remove-fifth-kit-record')
+    for removed in kit_rows[len(owned):]:
+        patch(removed.offset, struct.pack('<IIII', 0, 0xFFFFFFFF, 0, 0), 'remove-extra-kit-record')
     count_at = before.username + 453
-    patch(count_at, struct.pack('<I', u32(source, count_at)-1), 'update-carried-record-count')
+    patch(count_at, struct.pack('<I', u32(source, count_at)-len(KIT)+len(owned)), 'update-carried-record-count')
 
     result = bytes(output)
     after = parse(result)
-    expect_goods(after, ORIGINAL)
+    expect_goods(after, owned)
     # Other inventories/items and every non-patch byte must remain identical.
     untouched_before = [(row.area, row.offset, row.handle, row.code, row.quantity, row.index)
                         for row in before.entries if row.goods_id not in KIT]
     untouched_after = [(row.area, row.offset, row.handle, row.code, row.quantity, row.index)
-                       for row in after.entries if row.goods_id not in ORIGINAL]
+                       for row in after.entries if row.goods_id not in owned]
     require(untouched_before == untouched_after, 'Unrelated inventory entry changed')
     allowed = {offset for p in patches for offset in range(p['offset'], p['offset']+p['length'])}
     require(all(a == b or offset in allowed for offset, (a, b) in enumerate(zip(source, result))),
@@ -195,7 +204,7 @@ def convert(source, ordinary):
     for goods_id in KIT:
         require(not list(occurrences(result[:after.primary_end], struct.pack('<I', 0xB0000000 | goods_id))),
                 'Kit handle remained after conversion')
-    for goods_id in ORIGINAL:
+    for goods_id in owned:
         restored = after.goods(goods_id)[0]
         require(list(occurrences(result[:after.primary_end], struct.pack('<I', restored.handle))) == [restored.offset],
                 'An original bell has an equipment reference; inventory-only result required')
