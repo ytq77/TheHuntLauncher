@@ -19,6 +19,7 @@ $controls = @{}
   'Shadnet','Webapi','Community','Relay','Account','Password','SaveSettings','StatusText','OpenLogs','Launch',
   'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups',
   'ConversionNew','ConversionBaseline','ConversionInspect','ConversionConvert','ConversionVerify','ConversionExport',
+  'ConversionStartExport','ConversionStartReplace',
   'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionStatus','ConversionPath',
   'FeatureItems','FeatureSummary','FeatureStatus','SaveFeatures','RecommendFeatures','ExpandFeatures',
   'ServerNav','ServerPage','AdminTarget','AdminPort','AdminDirectory','AdminIdentity','AdminKnownHosts','AdminSudo','PickAdminIdentity','PickAdminKnownHosts',

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml
 $repoPath = Split-Path -Parent $PSScriptRoot
 $taskRoot = Join-Path ([IO.Path]::GetTempPath()) ('the-hunt-conversion-' + [Guid]::NewGuid().ToString('N'))
@@ -11,7 +11,7 @@ try {
     $window = [Windows.Markup.XamlReader]::Parse([IO.File]::ReadAllText((Join-Path $repoPath 'launcher\Launcher.xaml')))
     $controls = @{}
     foreach ($name in @('ConversionNew','ConversionBaseline','ConversionInspect','ConversionConvert','ConversionVerify','ConversionExport',
-                         'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionStatus','ConversionPath')) {
+                         'ConversionStartExport','ConversionStartReplace','ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionStatus','ConversionPath')) {
         $controls[$name] = $window.FindName($name)
         if (-not $controls[$name]) { throw ('Missing conversion control: ' + $name) }
     }
@@ -23,7 +23,7 @@ try {
         Show-ConversionJob ([pscustomobject]@{state=$state; next=$steps[$state]; id=('a'*32); message='test'; directory=$taskRoot; slot=1})
         Update-ConversionButtons $false
         foreach ($name in $conversionActions.Keys) {
-            $want = $conversionActions[$name] -eq 'create' -or $conversionActions[$name] -eq $steps[$state]
+            $want = $conversionActions[$name] -in @('create','start-export','start-replace') -or $conversionActions[$name] -eq $steps[$state]
             if ($controls[$name].IsEnabled -ne $want) { throw ('Wrong step binding: ' + $name) }
         }
     }

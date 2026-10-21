@@ -1,12 +1,13 @@
 ﻿$script:conversionTask = $null
 $script:conversionJob = $null
 $conversionActions = @{ ConversionNew='create'; ConversionBaseline='baseline'; ConversionInspect='inspect';
-    ConversionConvert='convert'; ConversionVerify='verify'; ConversionExport='export' }
+    ConversionConvert='convert'; ConversionVerify='verify'; ConversionExport='export';
+    ConversionStartExport='start-export'; ConversionStartReplace='start-replace' }
 
 function Update-ConversionButtons([bool]$busy) {
     foreach ($name in $conversionActions.Keys) {
         $action = $conversionActions[$name]
-        $controls[$name].IsEnabled = -not $busy -and ($action -eq 'create' -or
+        $controls[$name].IsEnabled = -not $busy -and ($action -in @('create','start-export','start-replace') -or
             ($script:conversionJob -and $script:conversionJob.next -eq $action))
     }
     foreach ($name in @('ConversionSameRole','ConversionClearSlots','ConversionConfirmed')) { $controls[$name].IsEnabled = -not $busy }
@@ -19,7 +20,7 @@ function Show-ConversionJob($job) {
         if ($null -ne $job.slot) { $controls.ConversionStatus.Text = ('目标槽位：userdata{0:D4}' -f [int]$job.slot) + "`n" + $job.message }
         if ($job.export) { $controls.ConversionPath.Text = $job.export }
     } else {
-        $controls.ConversionStatus.Text = '先确认两份存档属于同一角色，再新建测试副本。'
+        $controls.ConversionStatus.Text = '请确认两份存档属于同一角色，再选择离线导出或替换。'
         $controls.ConversionPath.Text = ''
     }
 }
@@ -47,7 +48,7 @@ function Start-Conversion([string]$action) {
     $python = Join-Path $taskRoot 'runtime\bin\python.exe'
     if (-not (Test-Path -LiteralPath $python)) { throw '请使用完整测试包。' }
     $request = @{ action=$action }
-    if ($action -eq 'create') {
+    if ($action -in @('create','start-export','start-replace')) {
         if (-not $controls.ConversionSameRole.IsChecked) { throw '请先确认普通版与无缝版对应同一角色。' }
         foreach ($name in @('InstallPath','GamePath','GraphicsPath')) {
             if (-not (Test-Path -LiteralPath $controls[$name].Text -PathType Leaf)) { throw '请先在「游戏与联机」填写本机游戏和画质配置路径。' }
@@ -55,6 +56,11 @@ function Start-Conversion([string]$action) {
         $request.profile = @{ install=[IO.Path]::GetDirectoryName($controls.InstallPath.Text);
             game=[IO.Path]::GetDirectoryName($controls.GamePath.Text); graphics_source=$controls.GraphicsPath.Text }
         $request.same_role = $true
+        if ($action -ne 'create') {
+            $request.action = 'begin'
+            $request.flow = 'offline-v1'
+            $request.output = $(if ($action -eq 'start-replace') { 'replace' } else { 'export' })
+        }
         $controls.ConversionClearSlots.IsChecked = $false
         $controls.ConversionConfirmed.IsChecked = $false
     } else {
@@ -88,7 +94,7 @@ function Start-Conversion([string]$action) {
     $process.StandardInput.Write(($request | ConvertTo-Json -Depth 6 -Compress))
     $process.StandardInput.Close()
     $script:conversionTask = $process
-    $controls.ConversionStatus.Text = '正在准备独立副本；游戏窗口打开后，请只加载本轮目标角色。'
+    $controls.ConversionStatus.Text = $(if ($request.flow -eq 'offline-v1') { '正在备份并离线转换，不会打开游戏…' } else { '正在准备独立副本；游戏窗口打开后，请只加载本轮目标角色。' })
     Set-BusyControls
 }
 function Update-ConversionTask {

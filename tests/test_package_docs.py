@@ -41,6 +41,13 @@ class PublicDocumentation(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 check_public([name])
 
+    def test_archive_guard_rejects_conversion_backups_and_staging(self):
+        for name in ('save-conversion-backups/job/savedata/userdata0001',
+                     '.savedata-conversion-abc/userdata0001',
+                     '.savedata-conversion-rejected-abc/userdata0001'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                check_public([name])
+
 
 if __name__ == "__main__":
     unittest.main()

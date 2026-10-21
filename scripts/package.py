@@ -10,7 +10,7 @@ import zipfile
 from isolate_patches import patched_script
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "conversion-jobs", "__pycache__", ".git",
+PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
@@ -43,7 +43,7 @@ def check_public(files):
         if path.is_absolute() or ".." in path.parts or ":" in name or "\\" in name:
             raise ValueError("Unsafe archive path: " + name)
         if ({part.lower() for part in path.parts} & PRIVATE_PARTS or path.name.lower() in PRIVATE_FILES or
-                any(part.startswith(".savedata-import-") for part in path.parts)):
+                any(part.startswith((".savedata-import-", ".savedata-conversion-")) for part in path.parts)):
             raise ValueError("Private state in release: " + name)
 
 
@@ -174,11 +174,12 @@ def main():
                     continue
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
-    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page"],
+    info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page", "offline-save-conversion"],
             "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll"),
             "save_bridge_sha256": digest(dest / "mod/save-bridge.dll"),
-            "save_conversion_validation": "One role on RTX 5070 passed the complete new-job workflow after the display fix, without manual copy replacement: baseline, unmount, conversion, vanilla reload and verified ZIP export. Live saves unchanged; unclaimed bells, storage, multiple roles and auxiliary journals unsupported."}
+            "offline_save_sha256": digest(dest / "offline_save.py"),
+            "save_conversion_validation": "One RTX 5070 role passed offline conversion, vanilla reload/save and post-save inventory/equipment comparison. Kit references cleared; original bells inventory-only. Installed export and temporary-directory replacement/rollback checks passed. User accepted current checks before release; other roles, unclaimed bells, storage and auxiliary journals unsupported."}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

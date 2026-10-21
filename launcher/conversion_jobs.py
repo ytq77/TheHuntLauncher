@@ -14,6 +14,8 @@ import time
 import uuid
 import zipfile
 
+import offline_save
+
 from client import EBOOT_SHA256
 from save_transfer import plain_path, overlaps, require_stopped, snapshot, source_path
 from settings_bridge import sync_settings
@@ -23,6 +25,7 @@ ORIGINAL = {200, 205, 225, 111}
 RINGING = {201, 206, 226}
 KIT = {4016, 4121, 11201, 4313, 11251}
 ALL_GOODS = ORIGINAL | RINGING | KIT
+OFFLINE_FLOW = 'offline-v1'
 NEXT = {'created': 'baseline', 'baselined': 'inspect', 'inspected': 'convert',
         'converted': 'verify', 'awaiting-confirmation': 'export'}
 MESSAGES = {
@@ -131,8 +134,8 @@ def public_status(job):
         return {'state': 'none', 'message': '先新建独立测试副本。原版与无缝版均保持原样。', 'next': None}
     if job['state'] == 'running' and not pid_alive(job.get('worker_pid')):
         job = dict(job, state='failed', message='上次测试操作中断。请正常退出残留的测试窗口后新建测试；旧副本保留，不能导出。')
-    return {key: job.get(key) for key in ('id', 'state', 'message', 'slot', 'created', 'export')} | {
-        'directory': str(job_path(job['id'])), 'next': NEXT.get(job['state'])}
+    return {key: job.get(key) for key in ('id', 'state', 'message', 'slot', 'created', 'export', 'flow', 'output', 'ordinary_backup', 'validation')} | {
+        'directory': str(job_path(job['id'])), 'next': None if job.get('flow') == OFFLINE_FLOW else NEXT.get(job['state'])}
 
 
 def auxiliary_snapshot():
@@ -362,7 +365,9 @@ def export_job(job, confirmed):
             for name in manifest:
                 output.write(source / name, 'savedata/' + name)
             output.writestr('savedata-sha256.json', json.dumps(manifest, indent=2))
-            output.writestr('使用说明.txt', ('当前角色转换测试输出，未覆盖任何现有存档。\n'
+            output.writestr('使用说明.txt', (('离线转换输出：本次已检查存档结构，未启动游戏，未覆盖原存档。\n'
+                '无缝道具已移除，两栏相关引用已清空，原版联机道具只放背包。\n' if job.get('flow') == OFFLINE_FLOW else
+                '当前角色转换测试输出，未覆盖任何现有存档。\n') +
                 '本包是整份 savedata，只有本轮角色经过验证；其他槽位、未领铃及客机恢复场景未验证。\n'
                 '请保留原始备份，勿混合两个分支的 userdata 文件。当前无需安装，先完成测试验收。\n').encode('utf-8-sig'))
         with zipfile.ZipFile(temporary) as check:
@@ -381,11 +386,124 @@ def export_job(job, confirmed):
     return job
 
 
+def begin_offline(profile, same_role, output):
+    """Back up, transform and export without starting or injecting a game process."""
+    if output not in ('export', 'replace'):
+        raise ValueError('请选择导出存档包或转换并替换原版。')
+    job = create_job(profile, same_role)
+    path = job_path(job['id'])
+    job.update(flow=OFFLINE_FLOW, output=output, state='running', worker_pid=os.getpid(),
+               message='正在离线检查副本并清理联机道具装备引用；不会打开游戏。')
+    save_job(job)
+    try:
+        source = path / 'backup/seamless/savedata'
+        folder = source / '1/CUSA00207/SPRJ0005'
+        kit_slots = []
+        for slot in range(10):
+            raw = (folder / f'userdata{slot:04}').read_bytes()
+            if not any(raw):
+                continue
+            parsed = offline_save.parse(raw)
+            if any(parsed.goods(number) for number in KIT):
+                kit_slots.append(slot)
+        if len(kit_slots) != 1:
+            raise ValueError('当前仅支持一名角色持有完整无缝五件道具；未找到或多个角色持有时停止转换。')
+        slot = kit_slots[0]
+        baseline = (path / f'backup/ordinary/savedata/1/CUSA00207/SPRJ0005/userdata{slot:04}').read_bytes()
+        manifests, transformed = {}, {}
+        for stem in ('userdata', 'backup'):
+            relative = f'1/CUSA00207/SPRJ0005/{stem}{slot:04}'
+            raw = (source / relative).read_bytes()
+            converted, patches = offline_save.convert(raw, baseline)
+            transformed[relative] = converted
+            manifests[relative] = {'before_sha256': hashlib.sha256(raw).hexdigest(),
+                'after_sha256': hashlib.sha256(converted).hexdigest(), 'patches': patches}
+        destination = path / 'verify/user/savedata'
+        copy_verified(source, destination)
+        for relative, converted in transformed.items():
+            (destination / relative).write_bytes(converted)
+        expected = hashes(source)
+        expected.update({name: value['after_sha256'] for name, value in manifests.items()})
+        if hashes(destination) != expected:
+            raise ValueError('离线输出文件校验失败，已停止。')
+        assert_sources(job)
+        atomic_json(path / 'offline-fields.json', {'schema': 1, 'slot': slot, 'files': manifests,
+                    'equipment_policy': 'clear-kit-references; original-bells-in-inventory-only',
+                    'validation': 'offline-structure; no game process started'})
+        job.update(state='awaiting-confirmation', slot=slot, completed=['offline'],
+                   validation='offline-structure', message='离线字段检查通过，正在生成存档包。')
+        job = export_job(job, True)
+        job['message'] = '已离线转换并导出存档包；未启动游戏，原版与无缝版存档均未替换。原版联机道具只放背包。'
+        save_job(job)
+        if output == 'replace':
+            job = install_converted_job(job, True)
+        return job
+    except Exception as error:
+        job.update(state='failed', message=('离线检查未通过：' + str(error) if isinstance(error, ValueError)
+                   else '离线转换未完成；原存档未替换，备份和诊断副本已保留。'))
+        save_job(job)
+        raise
+
+
+def install_converted_job(job, confirmed):
+    """Replace the ordinary directory only after a verified export; retain a full backup."""
+    if job['state'] != 'exported' or confirmed is not True or job.get('player_confirmed') is not True:
+        raise ValueError('请先完成重载和导出验证，再明确选择替换原版存档。')
+    require_stopped()
+    assert_sources(job)
+    destination = source_path(job['profile']['install'])
+    if destination != plain_path(job['ordinary']):
+        raise ValueError('原版存档目录设置已改变，不能替换。')
+    root = job_path(job['id'])
+    source = plain_path(root / 'verify/user/savedata')
+    expected = hashes(source)
+    archive = plain_path(job['export'])
+    if file_hash(archive) != job['export_sha256']:
+        raise ValueError('导出包已改变，不能替换。')
+    with zipfile.ZipFile(archive) as bundle:
+        if bundle.testzip() is not None or json.loads(bundle.read('savedata-sha256.json')) != expected:
+            raise ValueError('验证副本与导出包不一致，不能替换。')
+    if overlaps(source, destination) or overlaps(destination, ROOT):
+        raise ValueError('原版与无缝目录存在重叠，不能替换。')
+    stage = plain_path(destination.parent / ('.savedata-conversion-' + uuid.uuid4().hex))
+    copy_verified(source, stage)
+    backup = plain_path(destination.parent / 'save-conversion-backups' /
+                        (job['id'] + '-' + uuid.uuid4().hex[:8]) / 'savedata')
+    backup.parent.mkdir(parents=True)
+    require_stopped()
+    assert_sources(job)
+    if hashes(stage) != expected or hashes(source) != expected:
+        raise ValueError('待替换副本校验失败，原版保持不变。')
+    # Stage and backup share the ordinary save volume; no cross-volume move.
+    destination.rename(backup)
+    try:
+        stage.rename(destination)
+        original = {name: row[-1] for name, row in job['source_snapshots']['ordinary'][1].items()}
+        if hashes(destination) != expected or hashes(backup) != original:
+            raise OSError('Installed save verification failed')
+    except (OSError, ValueError):
+        rejected = plain_path(destination.parent / ('.savedata-conversion-rejected-' + uuid.uuid4().hex))
+        try:
+            if destination.exists(): destination.rename(rejected)
+            backup.rename(destination)
+        except OSError:
+            raise ValueError(f'替换及恢复未完成。完整旧存档保留在：{backup}；请保留现场，暂勿启动游戏。') from None
+        raise ValueError('替换未完成，原版存档已恢复；导出包和失败副本保留。') from None
+    job.update(state='applied', ordinary_backup=str(backup), installed_sha256=expected,
+               message=f'已替换原版存档。旧原版完整备份：{backup}。无缝版和导出包保留；两个分支的进度没有合并。')
+    save_job(job)
+    return job
+
+
 def dispatch(request):
     action = request.get('action')
     if action == 'status':
         return public_status(load_job())
     with operation_lock():
+        if action == 'begin':
+            if request.get('flow') != OFFLINE_FLOW:
+                raise ValueError('未知转换流程。')
+            return public_status(begin_offline(request.get('profile', {}), request.get('same_role'), request.get('output')))
         if action == 'create':
             return public_status(create_job(request.get('profile', {}), request.get('same_role')))
         job = load_job(request.get('job'))

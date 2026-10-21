@@ -26,3 +26,5 @@ server-admin.json
 /conversion-jobs/
 /conversion-current.json
 /.save-conversion.lock
+/save-conversion-backups/
+/.savedata-conversion-*/

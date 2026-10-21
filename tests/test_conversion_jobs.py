@@ -249,6 +249,71 @@ class ConversionJobs(unittest.TestCase):
         for name in ('conversion-current.json', '.save-conversion.lock', 'conversion-jobs/abc/backup/userdata0001'):
             with self.assertRaises(ValueError): check_public([name])
 
+    def exported_job(self):
+        self.advance('verify')
+        jobs.dispatch({'action': 'export', 'confirmed': True})
+        return jobs.load_job()
+
+    def test_apply_requires_verified_export_and_explicit_replacement(self):
+        self.create()
+        with self.assertRaises(ValueError): jobs.install_converted_job(jobs.load_job(), True)
+        self.exported_job()
+        with self.assertRaises(ValueError): jobs.install_converted_job(jobs.load_job(), False)
+        self.assert_sources_untouched()
+
+    def test_apply_keeps_complete_ordinary_backup_and_seamless_branch(self):
+        job = self.exported_job()
+        expected = jobs.hashes(jobs.job_path(job['id']) / 'verify/user/savedata')
+        result = jobs.install_converted_job(jobs.load_job(), True)
+        self.assertEqual(result['state'], 'applied')
+        applied = jobs.load_job()
+        self.assertEqual(jobs.hashes(self.source), expected)
+        self.assertEqual(jobs.hashes(Path(applied['ordinary_backup'])), self.before[0])
+        self.assertEqual(jobs.hashes(self.seamless), self.before[1])
+        self.assertTrue(Path(applied['export']).is_file())
+
+    def test_apply_refuses_changed_destination_setting_and_stale_original(self):
+        self.exported_job()
+        with patch.object(jobs, 'source_path', return_value=self.base / 'other/savedata'):
+            with self.assertRaises(ValueError): jobs.install_converted_job(jobs.load_job(), True)
+        self.assert_sources_untouched()
+        changed = self.source / '1/CUSA00207/SPRJ0005/userdata0001'
+        changed.write_bytes(b'new-ordinary-progress')
+        with self.assertRaises(ValueError): jobs.install_converted_job(jobs.load_job(), True)
+        self.assertEqual(changed.read_bytes(), b'new-ordinary-progress')
+
+    def test_apply_copy_failure_does_not_touch_real_directories(self):
+        self.exported_job()
+        with patch.object(jobs.shutil, 'copytree', side_effect=OSError('disk-full')):
+            with self.assertRaises(OSError): jobs.install_converted_job(jobs.load_job(), True)
+        self.assert_sources_untouched()
+
+    def test_apply_switch_failure_restores_original_and_retains_failed_stage(self):
+        self.exported_job()
+        rename = Path.rename
+        def fail_stage(path, target):
+            if path.name.startswith('.savedata-conversion-'):
+                raise OSError('simulated switch failure')
+            return rename(path, target)
+        with patch.object(Path, 'rename', fail_stage):
+            with self.assertRaisesRegex(ValueError, '已恢复'):
+                jobs.install_converted_job(jobs.load_job(), True)
+        self.assert_sources_untouched()
+        self.assertTrue(list(self.source.parent.glob('.savedata-conversion-*')))
+        self.assertEqual(jobs.load_job()['state'], 'exported')
+
+    def test_apply_failed_post_switch_verification_rolls_back(self):
+        self.exported_job()
+        hashes = jobs.hashes
+        def failed_verification(path):
+            value = hashes(path)
+            return {} if path == self.source else value
+        with patch.object(jobs, 'hashes', side_effect=failed_verification):
+            with self.assertRaisesRegex(ValueError, '已恢复'):
+                jobs.install_converted_job(jobs.load_job(), True)
+        self.assert_sources_untouched()
+
+
 
 if __name__ == '__main__':
     unittest.main()
