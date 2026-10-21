@@ -101,6 +101,8 @@ def snapshot(folder):
 
 
 def inspect(install):
+    if (ROOT / ".save-conversion.lock").exists():
+        raise ValueError("转换测试正在进行，请先等待转换操作完成。")
     source = source_path(install)
     destination = plain_path(ROOT / "data/user/savedata")
     if overlaps(source, destination):

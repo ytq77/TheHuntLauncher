@@ -11,3 +11,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Native launcher build failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'WPF validation failed.' }
 & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $repo 'tests\test-feature-ui.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'WPF feature persistence checks failed.' }
+& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $repo 'tests\test-conversion-ui.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'WPF conversion workflow checks failed.' }

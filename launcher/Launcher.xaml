@@ -354,10 +354,45 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,20">
           <TextBlock Text="存档" FontSize="26"/>
-          <TextBlock Text="把普通版的新进度带入无缝版。" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
+          <TextBlock Text="导入普通版进度，或在独立副本中测试转回普通版。" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
           <StackPanel>
+            <Expander Header="无缝版 → 普通版 · 当前角色转换测试" Foreground="#D3D0C5" IsExpanded="True" Margin="0,0,0,24">
+              <StackPanel Margin="16,14,16,8">
+                <TextBlock Text="先备份两边存档，全程在独立离线副本中检查与转换。最后只导出存档包，不覆盖现有进度。"
+                           TextWrapping="Wrap" LineHeight="23" Foreground="#C2C6C5"/>
+                <TextBlock Text="当前范围：同一角色，原先拥有四件原版联机道具；无缝五件各一件。未领铃、仓库存放及客机世界恢复记录暂不支持。"
+                           TextWrapping="Wrap" LineHeight="22" Foreground="#A6AAA8" Margin="0,8,0,10"/>
+                <CheckBox x:Name="ConversionSameRole" Foreground="#D3D0C5" Margin="0,8,0,8">
+                  <TextBlock Text="两份存档对应同一角色；本次只验证这个角色，不自动处理其他槽位。" TextWrapping="Wrap"/>
+                </CheckBox>
+                <WrapPanel>
+                  <Button x:Name="ConversionNew" Content="1  新建备份" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionBaseline" Content="2  检查原版副本" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionInspect" Content="3  检查无缝副本" Margin="0,0,8,8"/>
+                </WrapPanel>
+                <TextBlock Text="每轮只加载同一个角色，进入场景后等约 20 秒，再从游戏菜单正常退出。检查无缝副本时不使用占位道具。"
+                           TextWrapping="Wrap" LineHeight="22" Foreground="#9DA5A8" Margin="0,2,0,8"/>
+                <CheckBox x:Name="ConversionClearSlots" Foreground="#D3D0C5" Margin="0,6,0,10">
+                  <TextBlock Text="已在无缝检查副本中确认：五件道具没有装备在快捷栏或随身物品里。" TextWrapping="Wrap"/>
+                </CheckBox>
+                <WrapPanel>
+                  <Button x:Name="ConversionConvert" Content="4  转换副本" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionVerify" Content="5  普通版重载验证" Margin="0,0,8,8"/>
+                </WrapPanel>
+                <CheckBox x:Name="ConversionConfirmed" Foreground="#D3D0C5" Margin="0,6,0,10">
+                  <TextBlock Text="已重载验证：五件无缝道具消失、四件原版道具正常，等级、装备和较新进度均正确。" TextWrapping="Wrap"/>
+                </CheckBox>
+                <WrapPanel>
+                  <Button x:Name="ConversionExport" Content="6  导出存档包" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionOpen" Content="打开本次测试目录" Margin="0,0,8,8"/>
+                </WrapPanel>
+                <TextBlock x:Name="ConversionStatus" Text="先确认角色，再新建独立测试副本。" TextWrapping="Wrap"
+                           LineHeight="23" Foreground="#C7C3B6" Margin="0,8,0,6"/>
+                <TextBlock x:Name="ConversionPath" TextWrapping="Wrap" FontSize="11" Foreground="#8B9CA4"/>
+              </StackPanel>
+            </Expander>
             <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="20">
               <StackPanel>
                 <TextBlock Text="普通版 → 无缝版" FontSize="18" Foreground="#D3D0C5"/>

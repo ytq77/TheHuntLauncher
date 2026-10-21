@@ -18,6 +18,8 @@ $controls = @{}
   'KitStatus','InstallPath','GamePath','GraphicsPath','PickInstall','PickGame','PickGraphics',
   'Shadnet','Webapi','Community','Relay','Account','Password','SaveSettings','StatusText','OpenLogs','Launch',
   'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups',
+  'ConversionNew','ConversionBaseline','ConversionInspect','ConversionConvert','ConversionVerify','ConversionExport',
+  'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionStatus','ConversionPath',
   'FeatureItems','FeatureSummary','FeatureStatus','SaveFeatures','RecommendFeatures','ExpandFeatures',
   'ServerNav','ServerPage','AdminTarget','AdminPort','AdminDirectory','AdminIdentity','AdminKnownHosts','AdminSudo','PickAdminIdentity','PickAdminKnownHosts',
   'AdminRefresh','AdminCreate','AdminVerify','AdminName','AdminPassword','AdminEmail','AdminAccounts','AdminStatus','AdminFields') |
@@ -137,14 +139,15 @@ if (Test-Path -LiteralPath $profilePath) {
     } catch { $controls.StatusText.Text = '配置无法读取，请重新填写；原存档仍保存在 data 目录。' }
 }
 function Set-BusyControls {
-    $busy = ($null -ne $script:worker) -or ($null -ne $script:saveTask) -or ($null -ne $script:adminTask)
+    $busy = ($null -ne $script:worker) -or ($null -ne $script:saveTask) -or ($null -ne $script:adminTask) -or ($null -ne $script:conversionTask)
     foreach ($name in @('Launch','SaveSettings','SettingsNav','RefreshSaves','SaveFeatures','RecommendFeatures','FeatureItems','AdminFields','AdminRefresh','AdminCreate','AdminVerify')) {
         $controls[$name].IsEnabled = -not $busy
     }
     $controls.ImportSaves.IsEnabled = -not $busy -and $null -ne $script:saveInspection
+    Update-ConversionButtons $busy
 }
 function Start-SaveTransfer([bool]$apply) {
-    if ($script:worker -or $script:saveTask -or $script:adminTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) {
+    if ($script:worker -or $script:saveTask -or $script:adminTask -or $script:conversionTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) {
         throw '请先正常退出游戏，并等待当前操作完成。'
     }
     $exe = $controls.InstallPath.Text
@@ -183,7 +186,7 @@ $controls.FeatureNav.Add_Click({ Show-Features })
 $controls.ServerNav.Add_Click({ Show-Server })
 $controls.SaveNav.Add_Click({
     Show-Saves
-    if (-not $script:worker -and -not $script:saveTask) {
+    if (-not $script:worker -and -not $script:saveTask -and -not $script:conversionTask) {
         try { Start-SaveTransfer $false }
         catch { $controls.SaveSummary.Text = $_.Exception.Message; Set-BusyControls }
     }
@@ -244,7 +247,8 @@ $controls.Launch.Add_Click({
         return
     }
     try {
-        if ($script:saveTask -or $script:adminTask) { throw '请等待存档或服务器操作完成。' }
+        if ($script:saveTask -or $script:adminTask -or $script:conversionTask) { throw '请等待存档或服务器操作完成。' }
+        if (Test-Path -LiteralPath (Join-Path $taskRoot '.save-conversion.lock')) { throw '转换测试尚未结束，请先回到存档页处理测试状态。' }
         if (Test-Path -LiteralPath (Join-Path $taskRoot '.save-import.lock')) {
             throw '存档导入正在进行或上次未完整结束，请先检查存档备份。'
         }
@@ -274,6 +278,7 @@ $timer = New-Object Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
     Update-AdminTask
+    Update-ConversionTask
     if ($script:saveTask -and $script:saveTask.HasExited) {
         try {
             if (-not (Test-Path -LiteralPath $saveResultPath)) { throw '存档工具未返回结果，请重新读取存档信息。' }
@@ -332,6 +337,7 @@ $timer.Add_Tick({
     } catch { } # A partially-written status file is retried on the next tick.
 })
 $window.Add_Closing({
+    if ($script:conversionTask -and -not $script:conversionTask.HasExited) { $_.Cancel = $true; $controls.StatusText.Text = '请先正常退出测试游戏，并等待转换检查完成。' }
     if ($script:adminTask) { $_.Cancel = $true; $controls.StatusText.Text = '请等待服务器管理操作完成后关闭。' }
     if ($script:saveTask -and -not $script:saveTask.HasExited) {
         $_.Cancel = $true
@@ -345,6 +351,7 @@ $window.Add_Closing({
 Show-Home
 . (Join-Path $taskRoot 'Features.ps1')
 . (Join-Path $taskRoot 'Server.ps1')
+. (Join-Path $taskRoot 'Conversion.ps1')
 $controls.ImportSaves.IsEnabled = $false
 $controls.DestinationSavePath.Text = Join-Path $taskRoot 'data\user\savedata'
 $iconPath = Join-Path $taskRoot 'TheHunt.ico'

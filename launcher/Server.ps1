@@ -12,7 +12,7 @@ function Admin-Connection {
     return @{ target=$target; port=$port; directory=$directory; identity=$controls.AdminIdentity.Text.Trim(); known_hosts=$controls.AdminKnownHosts.Text.Trim(); sudo=[bool]$controls.AdminSudo.IsChecked }
 }
 function Start-Admin([string]$action) {
-    if ($script:adminTask -or $script:worker -or $script:saveTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) { throw '请先退出本机游戏，并等待当前操作结束。' }
+    if ($script:adminTask -or $script:worker -or $script:saveTask -or $script:conversionTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) { throw '请先退出本机游戏，并等待当前操作结束。' }
     $connection = Admin-Connection
     $request = @{ connection=$connection; action=$action }
     if ($action -ne 'status') {

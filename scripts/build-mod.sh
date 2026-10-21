@@ -30,4 +30,11 @@ clang++ -std=c++23 -fms-extensions -I"$src/src" \
 "$out/test-memscan.exe" race
 clang++ -std=c++23 tests/test_banner_diagnostics.cpp -o "$out/test-banner.exe"
 "$out/test-banner.exe"
-sha256sum "$out/bbsc.dll" "$out/bbsc-launch.exe"
+python scripts/prepare_save_bridge.py .build/bbsc .build/save-bridge
+bridge="$root/.build/save-bridge"
+clang++ "${flags[@]}" -I"$src/src/core" -c "$bridge/bbsc_mod_save.cpp" -o "$bridge/bbsc_mod.o"
+clang++ "${flags[@]}" -I"$src/src/core" -c "$bridge/bloodborne_re_save.cpp" -o "$bridge/bloodborne_re.o"
+clang++ -shared "$bridge/bbsc_mod.o" "$bridge/bloodborne_re.o" \
+    "$out/bbsc_hooks.o" "$out/bbsc_relay.o" "$out/bbsc_channel.o" "$out/bbsc_http.o" \
+    "$out/bbsc_discord.o" "$out/bbsc_memscan.o" -o "$bridge/save-bridge.dll" -lws2_32 -lwinhttp -luser32
+sha256sum "$out/bbsc.dll" "$out/bbsc-launch.exe" "$bridge/save-bridge.dll"

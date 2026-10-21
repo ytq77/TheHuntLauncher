@@ -43,6 +43,8 @@ def main():
             path = args.port / name
             if name and path.is_file():
                 archive.write(path, "bbport/" + name)
+        for path in (ROOT / '.build/save-bridge').glob('*.cpp'):
+            archive.write(path, 'save-bridge/' + path.name)
     with zipfile.ZipFile(out) as archive:
         if archive.testzip() is not None:
             raise ValueError("Source archive CRC failed.")

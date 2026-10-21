@@ -10,11 +10,12 @@ import zipfile
 from isolate_patches import patched_script
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "__pycache__", ".git",
+PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "conversion-jobs", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
-                 "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json"}
+                 "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
+                 "conversion-current.json", ".save-conversion.lock"}
 DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
 
 
@@ -82,6 +83,7 @@ def main():
         (args.port / "out/bb-gpu-capabilities.exe", "bin/bb-gpu-capabilities.exe"),
         (ROOT / ".build/mod/bbsc.dll", "mod/bbsc.dll"),
         (ROOT / ".build/mod/bbsc-launch.exe", "mod/bbsc-launch.exe"),
+        (ROOT / ".build/save-bridge/save-bridge.dll", "mod/save-bridge.dll"),
     ):
         subprocess.run([str(binary_dir / "llvm-strip.exe"), "--strip-debug", "-o", str(dest / target), str(source)], check=True)
     shutil.copy2(ROOT / ".build/BBSC-Launcher.exe", dest)
@@ -174,7 +176,9 @@ def main():
                     raise ValueError("FSR manifest mismatch: " + name)
     info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page"],
             "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
-            "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll")}
+            "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll"),
+            "save_bridge_sha256": digest(dest / "mod/save-bridge.dll"),
+            "save_conversion_validation": "One role on RTX 5070 passed the complete new-job workflow after the display fix, without manual copy replacement: baseline, unmount, conversion, vanilla reload and verified ZIP export. Live saves unchanged; unclaimed bells, storage, multiple roles and auxiliary journals unsupported."}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

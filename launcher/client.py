@@ -118,6 +118,8 @@ def build_environment(profile, name, password, settings_env, snapshot):
 
 
 def main():
+    if (ROOT / ".save-conversion.lock").exists():
+        raise ValueError("转换测试尚未结束，请先在存档页处理测试状态。")
     if (ROOT / ".save-import.lock").exists():
         raise ValueError("存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。")
     for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
