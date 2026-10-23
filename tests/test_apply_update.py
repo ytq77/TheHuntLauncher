@@ -2,6 +2,7 @@
 import hashlib
 import ctypes
 import json
+import ntpath
 import os
 from pathlib import Path
 import subprocess
@@ -123,7 +124,9 @@ class AutomaticUpdate(unittest.TestCase):
         kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
         for client in (False, True):
             root, _, old, plan, _ = self.fixture(client)
-            identity = str(root) if client else str(root).lower() + '\\'
+            # Match .NET GetFullPath even when MSYS2 Python emits forward slashes.
+            native_root = ntpath.normpath(root.as_posix())
+            identity = native_root if client else native_root.lower() + '\\'
             digest = hashlib.sha256(identity.encode()).hexdigest().upper()
             name = ('Local\\BBSCLauncher-' + '-'.join(digest[i:i+2] for i in range(0, len(digest), 2))
                     if client else 'Local\\TheHuntServer-' + digest)
@@ -146,7 +149,9 @@ class AutomaticUpdate(unittest.TestCase):
             'File.WriteAllText(Path.Combine(root,"restarted.txt"),"new program"); }}')
         executable = area / 'Stub.exe'
         compiler = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-        subprocess.run([str(compiler), '/nologo', '/target:winexe', '/out:' + str(executable), str(source)], check=True, capture_output=True)
+        compiled = subprocess.run([str(compiler), '/nologo', '/target:winexe',
+            '/out:' + ntpath.normpath(executable.as_posix()), ntpath.normpath(source.as_posix())], capture_output=True)
+        self.assertEqual(compiled.returncode, 0, (compiled.stdout + compiled.stderr).decode(errors='replace'))
         archive = Path(request['archive'])
         with zipfile.ZipFile(archive) as bundle:
             files = {name: bundle.read(name) for name in bundle.namelist()}
