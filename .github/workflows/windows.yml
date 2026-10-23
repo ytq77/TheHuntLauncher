@@ -63,7 +63,10 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'
         run: |
           cd .build/bbport
-          if ! bash build.sh; then
+          export MSYS2_ROOT="$(cygpath -m /)"
+          echo "MSYS2 build root: $MSYS2_ROOT"
+          command -v bash cp grep cmake ninja
+          if ! bash -x build.sh; then
             tail -n 120 out/gpu-build.log || true
             exit 1
           fi
