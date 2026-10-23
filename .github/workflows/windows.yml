@@ -63,12 +63,25 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'
         run: |
           cd .build/bbport
-          bash build.sh
+          if ! bash build.sh; then
+            tail -n 120 out/gpu-build.log || true
+            exit 1
+          fi
           bash tools/fetch_fsr4_assets.sh
           python packaging/windows/fetch_fsr411_dx12.py
           python packaging/windows/fetch_fg401_dx12.py
           python packaging/windows/prepare_fsr4vk.py
           python ../../scripts/fetch_dlss.py
+      - name: Preserve failed core build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBport-build-diagnostics
+          path: |
+            .build/bbport/out/gpu-build.log
+            .build/bbport/out/gpu/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build BBSC and run native checks
         run: bash scripts/build-mod.sh
       - name: Build launcher and validate WPF
