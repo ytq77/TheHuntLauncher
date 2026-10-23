@@ -2,7 +2,6 @@
 import hashlib
 import ctypes
 import json
-import ntpath
 import os
 from pathlib import Path
 import subprocess
@@ -122,10 +121,15 @@ class AutomaticUpdate(unittest.TestCase):
         kernel.CreateMutexW.restype = wintypes.HANDLE
         kernel.ReleaseMutex.argtypes = (wintypes.HANDLE,)
         kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.GetFullPathNameW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPWSTR, ctypes.c_void_p)
+        kernel.GetFullPathNameW.restype = wintypes.DWORD
         for client in (False, True):
             root, _, old, plan, _ = self.fixture(client)
             # Match .NET GetFullPath even when MSYS2 Python emits forward slashes.
-            native_root = ntpath.normpath(root.as_posix())
+            native_path = ctypes.create_unicode_buffer(32768)
+            length = kernel.GetFullPathNameW(str(root), len(native_path), native_path, None)
+            self.assertTrue(0 < length < len(native_path))
+            native_root = native_path.value
             identity = native_root if client else native_root.lower() + '\\'
             digest = hashlib.sha256(identity.encode()).hexdigest().upper()
             name = ('Local\\BBSCLauncher-' + '-'.join(digest[i:i+2] for i in range(0, len(digest), 2))
@@ -133,7 +137,9 @@ class AutomaticUpdate(unittest.TestCase):
             handle = kernel.CreateMutexW(None, True, name)
             self.assertTrue(handle)
             try:
-                self.assertNotEqual(self.run_installer(plan).returncode, 0)
+                installed = self.run_installer(plan)
+                self.assertNotEqual(installed.returncode, 0,
+                    'Application mutex was not respected: ' + repr((native_root, installed.stdout, installed.stderr)))
                 for file, data in old.items():
                     self.assertEqual((root / file).read_bytes(), data, file)
             finally:
@@ -149,8 +155,9 @@ class AutomaticUpdate(unittest.TestCase):
             'File.WriteAllText(Path.Combine(root,"restarted.txt"),"new program"); }}')
         executable = area / 'Stub.exe'
         compiler = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        # Legacy csc interprets absolute POSIX-style paths as compiler switches.
         compiled = subprocess.run([str(compiler), '/nologo', '/target:winexe',
-            '/out:' + ntpath.normpath(executable.as_posix()), ntpath.normpath(source.as_posix())], capture_output=True)
+            '/out:Stub.exe', 'Stub.cs'], cwd=area, capture_output=True)
         self.assertEqual(compiled.returncode, 0, (compiled.stdout + compiled.stderr).decode(errors='replace'))
         archive = Path(request['archive'])
         with zipfile.ZipFile(archive) as bundle:
