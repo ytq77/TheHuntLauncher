@@ -4,6 +4,8 @@
 
 A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. This is a community project, independent of the original BBSC, BBport, Sony and FromSoftware projects.
 
+窗口中的「检查更新」支持版本查询、自动下载校验、程序备份与替换，并保留账号和存档。网络与升级说明见 [自动更新](docs/updates.md)。
+
 ![启动界面](docs/launcher.png)
 
 ## 当前支持
@@ -11,27 +13,29 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 | 组件 | 固定版本 |
 |---|---|
 | 游戏 | CUSA03173 1.09，自备游戏文件 |
-| BBport | 1.9.2 |
+| BBport | 1.9.4 |
 | BBSC | 0.0.1_items，包含本仓库兼容补丁 |
 | 系统 | Windows 10 / 11，x64 |
 | 界面与模组文本 | 简体中文 |
 
-这是 **0.1.0 预览版**。现有兼容基线已实测双人移动、战斗、死亡后保持联机及提灯同行。新启动器已完成单机启动实测，猎具在进入角色前准备完成，五件道具的分类、中文与图标均经确认；新构建的完整双人回归及 Boss 战结束后的联机保持尚待验证。
+这是 **0.1.0 预览版**。此前 1.9.2 兼容基线已实测双人移动、战斗、死亡后保持联机及提灯同行。当前 1.9.4 已在 RTX 5070 的独立存档副本中确认在线加载、五件道具分类/中文/图标、左右触摸板和 DLSS 画面正常，游戏菜单退出返回 0。双人、死亡复活和存档回迁后的新核心重载仍待回归，不能将旧核心的实测结果视为新版已通过。
 
 ## 使用
 
-1. 从 [Actions](https://github.com/ytq77/bbsc-launcher/actions) 下载构建产物，或从 [Releases](https://github.com/ytq77/bbsc-launcher/releases) 下载预览版。完整解压到新目录。
+1. 从 [Actions](https://github.com/ytq77/TheHuntLauncher/actions) 下载构建产物，或从 [Releases](https://github.com/ytq77/TheHuntLauncher/releases) 下载预览版。完整解压到新目录。
 2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。
 3. 在「游戏与联机」选择本机普通版 `Bloodborne.exe`、游戏 `eboot.bin` 以及普通版的 `bbport.ini`。
 4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「启动游戏」。
 5. 「功能与玩法」提供完整中文功能说明、开关与难度数值，支持恢复推荐。保存后下次启动生效，详见[功能与玩法说明](docs/features.md)。
 6. 自建服务管理员可在「服务器管理」通过 SSH 查看状态与账号、新建及验证账号；普通玩家不需要填写，见[管理说明](docs/server/client-admin.md)。
 
-需要先有能正常运行的 BBport 普通版。首次启动会复制本机存档、输入配置与模组设置，此后无缝版存档保存在本包 `data/user` 中独立发展。普通版画质和帧率设置在每次启动时重新读取，因此低配置电脑不会继承其他电脑的画质。
+需要先有能正常运行的 BBport 普通版。首次启动会复制本机存档与模组设置，此后无缝版存档保存在本包 `data/user` 中独立发展。普通版画质、帧率及同目录 `input.ini` 在每次启动时重新读取，因此低配置电脑不会继承其他电脑的画质。首次替换已有按键配置前会保留 `data/input.before-settings-sync.ini`；普通版文件不存在时保留无缝版现有按键。
+
+1.9.4 新增的人偶洗点在无缝版暂时关闭：尚未验证其额外等级记录与 BBSC、存档回迁的关系。普通版设置保持不变。FSR 4.1.1 的 Vulkan/DX12 组件、DLSS 桥接及 NVIDIA SR/FG 运行库随包提供；相应功能仍受上游硬件与系统运行库限制。
 
 本项目不附带游戏本体、游戏字体/资源、存档、账号或私人服务器配置。游戏主体的汉化来自用户自己的游戏安装；BBSC 道具、联机提示由本项目提供中文文本。
 
-已有安装升级时，退出游戏和启动器，将新版包内的文件与子目录覆盖到原 The Hunt 目录，再重新打开。保留这台电脑自己的存档、账号和个人配置；单纯重启不会下载更新，详见[客户端升级说明](docs/upgrading.md)。
+已有安装可通过「检查更新」下载、校验并自动替换程序。首次从不带更新模块的旧公开版升级时，仍需退出游戏和启动器，将新版程序覆盖到原目录；保留这台电脑自己的存档、账号和个人配置。单纯重启不会下载更新，详见[客户端升级说明](docs/upgrading.md)。
 
 ## 从普通版更新存档
 

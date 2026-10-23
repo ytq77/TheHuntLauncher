@@ -9,7 +9,11 @@ python scripts/localize.py .build/bbsc
 cd .build/bbport
 bash build.sh
 bash tools/fetch_fsr4_assets.sh
+python packaging/windows/fetch_fsr411_dx12.py
+python packaging/windows/fetch_fg401_dx12.py
+python packaging/windows/prepare_fsr4vk.py
 cd ../..
+python scripts/fetch_dlss.py
 bash scripts/build-mod.sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-entry.ps1
 python -m unittest discover -s tests -v
@@ -19,11 +23,14 @@ python scripts/source_archive.py
 
 `fetch_sources.py` 只接受新构建目录，防止覆盖修改过的上游源码。准备脚本对预期代码进行精确匹配；上游变化时停止，而不会猜测替换。
 
+DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.4 发行包，校验完整归档及五个文件的 SHA256，保留两份许可与来源记录。缺少或校验失败将停止打包，避免选择 DLSS 后因漏包而回退 FSR3。桥接源码随固定 BBport 源码提供；不要求本机另外安装 MSVC 来重编该独立动态组件。
+
 产物位于 `dist/`：
 
 - `BBSC-Launcher-<version>-windows-x64.zip`：干净的首次安装包。
 - `BBSC-Launcher-sources.zip`：对应应用源码、补丁及构建脚本。
-- `SHA256SUMS.txt`：两个压缩包的校验值。
+- `SHA256SUMS.txt`：全部发布 ZIP 的校验值。
+- `fsr4vk-v0.4.3-amdfix-src.zip`：Vulkan 动态组件的对应源码，另列入校验文件并随发布提供。
 
 构建依赖来自 MSYS2；Actions 另保存 `toolchain-packages.txt`。核心源码固定版本，但工具链尚未固定到完整离线快照，不能将产物描述为逐字节可重现。
 

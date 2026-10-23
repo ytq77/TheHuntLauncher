@@ -11,6 +11,7 @@ VALUES = {
     "present_mode": ("BB_PRESENT_MODE", "Mailbox"), "language": ("BB_LANGUAGE", "1"),
     "voice_language": ("BB_VOICE_LANGUAGE", "auto"), "draw_pipe": ("BB_DRAW_PIPE", ""),
     "readbacks": ("BB_READBACKS", ""), "frames_ahead": ("BB_FRAMES_AHEAD", ""),
+    "low_vram": ("BB_LOW_VRAM", ""),
 }
 FLAGS = {
     "fullscreen": ("BB_FULLSCREEN", False), "hdr": ("BB_HDR", False),
@@ -51,20 +52,52 @@ def sync_settings(root, profile, settings_path=None):
             if key in EXTRA_KEYS:
                 env[key] = value
 
+    # Match 1.9.4's shared launcher/overlay settings, including in-game restarts.
+    backend = "dx12" if ini.get("fsr411_backend") == "dx12" else "vk"
+    env.update(BB_SHARED_GRAPHICS_CONFIG="1", BB_FSR411_BACKEND=backend,
+               BB_FSR411_NATIVE="1" if backend == "dx12" else "0",
+               BB_OBJECT_MOTION_CACHE="1" if (ini.get("object_motion_cache") == "1" and
+                   ini.get("object_motion", "1") == "1" and
+                   ini.get("upscaler") in {"fsr3", "fsr4", "fsr411"}) else "0",
+               BB_REBIRTH="0")
+
+    # Rebirth carries separate free-level state and changes the Doll's event flow.
+    # Keep it off in seamless mode until save transfer and co-op are validated.
+    lines = raw.decode("utf-8-sig").splitlines(keepends=True)
+    runtime_raw = "".join(line for line in lines
+                          if line.split("=", 1)[0].strip() != "rebirth")
+    if runtime_raw and not runtime_raw.endswith(("\n", "\r")):
+        runtime_raw += "\n"
+    runtime_raw = (runtime_raw + "rebirth=0\n").encode("utf-8")
+
     target = root / "data/bbport.ini"
     target.parent.mkdir(parents=True, exist_ok=True)
     backup = target.with_name("bbport.before-settings-sync.ini")
     if target.exists() and not backup.exists():
         shutil.copy2(target, backup)
     temporary = target.with_suffix(".ini.tmp")
-    temporary.write_bytes(raw)
+    temporary.write_bytes(runtime_raw)
     temporary.replace(target)
+    input_source = source.with_name("input.ini")
+    input_target = root / "data/input.ini"
+    input_snapshot = {"source": str(input_source), "copied": False}
+    if input_source.is_file():
+        input_raw = input_source.read_bytes()
+        input_backup = input_target.with_name("input.before-settings-sync.ini")
+        if input_target.is_file() and not input_backup.exists():
+            shutil.copy2(input_target, input_backup)
+        input_temporary = input_target.with_suffix(".ini.tmp")
+        input_temporary.write_bytes(input_raw)
+        input_temporary.replace(input_target)
+        input_snapshot.update(copied=True, source_sha256=hashlib.sha256(input_raw).hexdigest())
     snapshot = {
         "source": str(source), "source_sha256": hashlib.sha256(raw).hexdigest(),
         "target": str(target), "settings_file": str(settings_path),
         "settings_file_exists": settings_path.exists(),
         "graphics": {key: ini[key] for key in ("output_res", "upscaler", "preset")},
         "launch_options": env,
+        "runtime_overrides": {"rebirth": "0"},
+        "input": input_snapshot,
         "patches_dir": str(Path(settings.get("patches_dir") or source.parent / "patches").expanduser().resolve()),
         "patches_config": str(source.parent / "patches.json"),
     }

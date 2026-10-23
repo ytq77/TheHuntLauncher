@@ -76,6 +76,45 @@ class SessionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 client.validate_network(invalid)
 
+    def test_194_graphics_options_follow_ini_and_low_vram_preference(self):
+        self.ini.write_text("output_res=1280x720\nupscaler=fsr411\npreset=1\n"
+                            "fsr411_backend=dx12\nobject_motion=1\nobject_motion_cache=1\nrebirth=1\n")
+        self.settings.write_text('{"low_vram":"0"}')
+        original = self.ini.read_bytes()
+        env, snapshot = sync_settings(self.root, self.profile, self.settings)
+        self.assertEqual(env["BB_LOW_VRAM"], "0")
+        self.assertEqual(env["BB_SHARED_GRAPHICS_CONFIG"], "1")
+        self.assertEqual(env["BB_FSR411_BACKEND"], "dx12")
+        self.assertEqual(env["BB_FSR411_NATIVE"], "1")
+        self.assertEqual(env["BB_OBJECT_MOTION_CACHE"], "1")
+        self.assertEqual(env["BB_REBIRTH"], "0")
+        self.assertIn("rebirth=0\n", (self.root / "data/bbport.ini").read_text())
+        self.assertNotIn("rebirth=1", (self.root / "data/bbport.ini").read_text())
+        self.assertEqual(self.ini.read_bytes(), original)
+        self.assertEqual(snapshot["runtime_overrides"], {"rebirth": "0"})
+        self.ini.write_text(self.ini.read_text().replace("object_motion=1", "object_motion=0"))
+        env, _ = sync_settings(self.root, self.profile, self.settings)
+        self.assertEqual(env["BB_OBJECT_MOTION_CACHE"], "0")
+
+    def test_input_refresh_keeps_first_backup_and_preserves_target_if_source_missing(self):
+        target = self.root / "data/input.ini"
+        target.parent.mkdir()
+        target.write_bytes(b"original-isolated-bindings")
+        source = self.ini.with_name("input.ini")
+        source.write_bytes(b"updated-normal-bindings")
+        _, snapshot = sync_settings(self.root, self.profile, self.settings)
+        self.assertEqual(target.read_bytes(), b"updated-normal-bindings")
+        self.assertEqual(target.with_name("input.before-settings-sync.ini").read_bytes(), b"original-isolated-bindings")
+        self.assertTrue(snapshot["input"]["copied"])
+        source.write_bytes(b"second-normal-bindings")
+        sync_settings(self.root, self.profile, self.settings)
+        self.assertEqual(target.read_bytes(), b"second-normal-bindings")
+        self.assertEqual(target.with_name("input.before-settings-sync.ini").read_bytes(), b"original-isolated-bindings")
+        source.unlink()
+        _, snapshot = sync_settings(self.root, self.profile, self.settings)
+        self.assertFalse(snapshot["input"]["copied"])
+        self.assertEqual(target.read_bytes(), b"second-normal-bindings")
+
     def test_session_routes_and_saves_use_profile_not_parent_environment(self):
         (self.root / "mod").mkdir()
         (self.root / "mod/mod.json").write_text('{"settings":[]}')

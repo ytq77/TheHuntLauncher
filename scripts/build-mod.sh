@@ -30,6 +30,8 @@ clang++ -std=c++23 -fms-extensions -I"$src/src" \
 "$out/test-memscan.exe" race
 clang++ -std=c++23 tests/test_banner_diagnostics.cpp -o "$out/test-banner.exe"
 "$out/test-banner.exe"
+clang++ -std=c++23 tests/test_insight_refund.cpp -o "$out/test-insight-refund.exe"
+"$out/test-insight-refund.exe"
 python scripts/prepare_save_bridge.py .build/bbsc .build/save-bridge
 bridge="$root/.build/save-bridge"
 clang++ "${flags[@]}" -I"$src/src/core" -c "$bridge/bbsc_mod_save.cpp" -o "$bridge/bbsc_mod.o"

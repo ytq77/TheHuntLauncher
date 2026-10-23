@@ -249,7 +249,7 @@ def game_environment(job, step):
     profile = job['profile']
     settings, _ = sync_settings(data / 'settings-sync', profile)
     shutil.copy2(data / 'settings-sync/data/bbport.ini', data / 'bbport.ini')
-    inputs = Path(profile['install']) / 'input.ini'
+    inputs = data / 'settings-sync/data/input.ini'
     if inputs.is_file():
         shutil.copy2(inputs, data / 'input.ini')
     env = {k: v for k, v in os.environ.items() if not k.startswith(('BB_', 'BBSC_', 'SHADPS4_'))}
@@ -257,6 +257,7 @@ def game_environment(job, step):
     env.update(BB_GAME_DIR=profile['game'], BB_DATA_DIR=str(data), BB_CONFIG=str(data / 'bbport.ini'),
                BB_USER_DIR=str(data / 'user'), BB_GPU_USER_DIR=str(data / 'user'),
                BB_FSR4_DIR=str(ROOT / 'fsr4_shaders'), BB_ONLINE='0', BB_MODS_ENABLED='0',
+               BB_FSR4VK_DIR=str(ROOT / 'fsr4vk'),
                BB_MODS_DIR=str(data / 'mods'), BB_MODS_CONFIG=str(data / 'mods.json'),
                BB_PATCHES_DIR=str(data / 'patches'), BB_PATCHES_CONFIG=str(data / 'patches.json'),
                BB_USER_NAME='SaveConversion', BB_SOUND_HACK='0',

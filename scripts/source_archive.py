@@ -9,7 +9,8 @@ from package import ROOT, digest, public_docs, PRIVATE_FILES, PRIVATE_PARTS
 def launcher_sources(folder):
     return sorted(path for path in folder.rglob("*") if path.is_file()
                   and path.name.lower() not in PRIVATE_FILES
-                  and not ({part.lower() for part in path.relative_to(folder).parts} & PRIVATE_PARTS))
+                  and not ({part.lower() for part in path.relative_to(folder).parts}
+                           & (PRIVATE_PARTS | {"installer-tests"})))
 
 
 def tracked(path):
@@ -26,8 +27,7 @@ def main():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for folder in ("launcher", "scripts", "patches", "locales", "tests", "docs", ".github"):
             paths = (public_docs(ROOT / folder) if folder == "docs" else
-                     launcher_sources(ROOT / folder) if folder == "launcher" else
-                     (ROOT / folder).rglob("*"))
+                     launcher_sources(ROOT / folder))
             for path in paths:
                 if path.is_file() and "__pycache__" not in path.parts:
                     archive.write(path, "bbsc-launcher/" + path.relative_to(ROOT).as_posix())

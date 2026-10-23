@@ -8,14 +8,15 @@ import shutil
 import subprocess
 import zipfile
 from isolate_patches import patched_script
+from port_compat import patched_run_script
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "__pycache__", ".git",
+PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
                  "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
-                 "conversion-current.json", ".save-conversion.lock"}
+                 "conversion-current.json", ".save-conversion.lock", "update-settings.json", ".update.lock", "insight-fix.json"}
 DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
 
 
@@ -81,12 +82,14 @@ def main():
     for source, target in (
         (args.port / "out/bb-probe.exe", "bin/bb-probe.exe"),
         (args.port / "out/bb-gpu-capabilities.exe", "bin/bb-gpu-capabilities.exe"),
+        (args.port / "out/bb-fg401-capabilities.exe", "bin/bb-fg401-capabilities.exe"),
         (ROOT / ".build/mod/bbsc.dll", "mod/bbsc.dll"),
         (ROOT / ".build/mod/bbsc-launch.exe", "mod/bbsc-launch.exe"),
         (ROOT / ".build/save-bridge/save-bridge.dll", "mod/save-bridge.dll"),
     ):
         subprocess.run([str(binary_dir / "llvm-strip.exe"), "--strip-debug", "-o", str(dest / target), str(source)], check=True)
     shutil.copy2(ROOT / ".build/BBSC-Launcher.exe", dest)
+    shutil.copy2(ROOT / ".build/HuntUpdates.dll", dest)
     shutil.copy2(ROOT / ".build/TheHunt.ico", dest)
     for path in (ROOT / "launcher").iterdir():
         if path.suffix in (".ps1", ".xaml", ".py"):
@@ -123,12 +126,18 @@ def main():
                            ("online-NOTICE.md", "gpu/bbnet/SHADNET-PORT.md")):
         shutil.copy2(args.port / relative, dest / "licenses" / name)
     shutil.copy2(args.port / "run.py", dest / "engine/run.py")
+    run_script = dest / "engine/run.py"
+    run_script.write_text(patched_run_script(run_script.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
     script = dest / "engine/scripts/patches.py"
     script.write_text(patched_script(script.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copytree(args.port / "patches", dest / "engine/patches")
     (dest / "engine/tools").mkdir()
     shutil.copy2(args.port / "tools/legacy-cpu-plan.json", dest / "engine/tools")
+    # Dynamic providers are not visible to the PE import scanner. Verify them
+    # against the pinned upstream manifests before adding them to the package.
+    from graphics_assets import stage_graphics_assets
+    graphics_source = stage_graphics_assets(args.port, dest, out)
     shutil.copy2(binary_dir / "python.exe", dest / "runtime/bin")
     version = subprocess.check_output([str(binary_dir / "python.exe"), "-c",
                                       "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
@@ -140,7 +149,8 @@ def main():
                                                  "Tools", "_test*", "_tkinter*"))
     shutil.copytree(args.toolchain / "share/licenses", dest / "runtime/licenses")
     available = {p.name.lower(): p for p in binary_dir.glob("*.dll")}
-    queue = [*dest.glob("bin/*.exe"), *dest.glob("mod/*.dll"), *dest.glob("mod/*.exe"),
+    queue = [*dest.glob("bin/*.exe"), *dest.glob("bin/*.dll"), *dest.glob("fsr4vk/*.dll"),
+             *dest.glob("mod/*.dll"), *dest.glob("mod/*.exe"),
              dest / "runtime/bin/python.exe", *(dest / "runtime" / lib / "lib-dynload").glob("*.pyd")]
     seen = set()
     while queue:
@@ -175,17 +185,19 @@ def main():
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
     info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page", "offline-save-conversion"],
-            "gameplay_validation": "launcher and kit categories/icons/Chinese verified on one RTX 5070 PC; early kit ready in 12540 ms; full co-op regression pending",
+            "gameplay_validation": "RTX 5070 isolated BBport 1.9.4 run: online load, five item categories/icons/Chinese, both touchpad menus and DLSS image confirmed by user; normal exit code 0 and real seamless saves unchanged. Two-PC, death/respawn and offline-conversion reload regression pending.",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll"),
             "save_bridge_sha256": digest(dest / "mod/save-bridge.dll"),
             "offline_save_sha256": digest(dest / "offline_save.py"),
             "offline_aux_sha256": digest(dest / "offline_aux.py"),
             "original_item_policy": "Restore baseline-confirmed original items individually (any nonempty subset); never grant an absent item or equip it.",
             "save_conversion_validation": "98 Python tests and WPF checks passed. All 15 nonempty original item subsets covered. One RTX 5070 role passed vanilla reload/save and post-save comparison. Supplied guest sample retains 13 pickup bits and unchanged world flags while restoring only three owned originals; user reported export and ordinary reload success after retry. Guest post-reload bytes were not collected. Pending world/shared-progress journals, empty baseline ownership and storage cases remain unsupported."}
+    info["features"].append("automatic-updates")
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)
-    (out / "SHA256SUMS.txt").write_text(digest(archive) + "  " + archive.name + "\n", encoding="utf-8")
+    (out / "SHA256SUMS.txt").write_text("".join(digest(path) + "  " + path.name + "\n"
+                                               for path in (archive, graphics_source)), encoding="utf-8")
     print(json.dumps({"archive": str(archive), "bytes": archive.stat().st_size, "files": len(files),
                       "sha256": digest(archive)}, indent=2))
 

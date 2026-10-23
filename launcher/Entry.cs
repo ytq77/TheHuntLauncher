@@ -15,6 +15,12 @@ internal static class Entry
     private static void Main()
     {
         var root = AppDomain.CurrentDomain.BaseDirectory;
+        var updateLock = Path.Combine(root, ".update.lock");
+        if (File.Exists(updateLock))
+        {
+            try { using (File.Open(updateLock, FileMode.Open, FileAccess.Read, FileShare.None)) { } }
+            catch (IOException) { MessageBox.Show("此目录正在更新，请等待更新窗口完成后再启动。", "The Hunt"); return; }
+        }
         var script = Path.Combine(root, "Launcher.ps1");
         if (!File.Exists(script))
         {

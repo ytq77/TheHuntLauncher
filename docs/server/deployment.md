@@ -38,9 +38,9 @@ sudo ss -lntup
 先克隆仓库，再将配方复制到一个**新的独立部署目录**。这样账号、状态和缓存不会写进 Git 工作区：
 
 ```bash
-git clone https://github.com/ytq77/bbsc-launcher.git &&
+git clone https://github.com/ytq77/TheHuntLauncher.git &&
 test ! -e "$HOME/the-hunt-server" &&
-cp -a bbsc-launcher/docs/server/recipe "$HOME/the-hunt-server" &&
+cp -a TheHuntLauncher/docs/server/recipe "$HOME/the-hunt-server" &&
 cd "$HOME/the-hunt-server"
 ```
 

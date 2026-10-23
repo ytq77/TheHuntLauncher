@@ -48,6 +48,23 @@ class PublicDocumentation(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 check_public([name])
 
+    def test_archive_guard_rejects_update_settings_backups_and_guest_journals(self):
+        for name in ('update-settings.json', '.update.lock', 'update-backups/old/Server.exe',
+                     'mod/guest-items/a.json', 'mod/own-world/a.json', 'mod/shared-progress/a.json'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                check_public([name])
+
+    def test_source_archive_excludes_generated_installer_fixtures(self):
+        from source_archive import launcher_sources
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'test_apply_update.py').write_text('source')
+            fixture = root / 'installer-tests/case/installed'
+            fixture.mkdir(parents=True)
+            (fixture / 'Server.exe').write_bytes(b'generated-test-binary')
+            self.assertEqual([p.name for p in launcher_sources(root)],
+                             ['test_apply_update.py'])
+
 
 if __name__ == "__main__":
     unittest.main()

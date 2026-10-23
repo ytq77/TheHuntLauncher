@@ -146,9 +146,9 @@
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
           <Border Height="1" Background="#343B3F" Margin="0,0,0,20"/>
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
-          <TextBlock Text="BBport 1.9.2" Foreground="#A8B1B4"/>
+          <TextBlock Text="BBport 1.9.4" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.5" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.7" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -222,7 +222,7 @@
             <StackPanel>
               <TextBlock Text="画面与操作" Style="{StaticResource Caption}"/>
               <TextBlock x:Name="GraphicsSummary" Text="选择本机普通版配置" FontSize="19" Margin="0,10,0,9"/>
-              <TextBlock Text="同步本机画质与帧率设置" Style="{StaticResource Caption}"/>
+              <TextBlock Text="同步本机画质、帧率与按键设置" Style="{StaticResource Caption}"/>
             </StackPanel>
           </Border>
           <Border Grid.Column="2" Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" CornerRadius="1" Padding="20">
@@ -289,6 +289,8 @@
           <TextBlock Text="功能与玩法" FontSize="26"/>
           <TextBlock Text="保存后下次启动生效。难度数值跟随房主；进度合并会写入客机存档。"
                      Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+            <TextBlock Text="无缝版暂不启用人偶洗点，避免尚未验证的额外等级记录影响联机和存档回迁。"
+                       Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,12"/>
           <WrapPanel>
             <Button x:Name="SaveFeatures" Content="保存功能设置" Margin="0,0,10,8"/>
             <Button x:Name="RecommendFeatures" Content="恢复推荐" Margin="0,0,10,8"/>
@@ -436,12 +438,16 @@
       </Grid>
       <Border Grid.Row="1" BorderBrush="#343D42" BorderThickness="0,1,0,0" Padding="0,20,0,0" Margin="0,20,0,0">
         <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
             <TextBlock x:Name="StatusText" Text="欢迎回来。请先完成游戏与联机设置。" TextWrapping="Wrap" Foreground="#B1BEC4"/>
-            <Button x:Name="OpenLogs" Content="打开日志目录 ↗" HorizontalAlignment="Left" Background="Transparent" BorderThickness="0" Padding="0,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
+            <WrapPanel>
+              <Button x:Name="OpenLogs" Content="打开日志目录 ↗" Background="Transparent" BorderThickness="0" Padding="0,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
+            </WrapPanel>
           </StackPanel>
-          <Button x:Name="Launch" Grid.Column="1" Content="启动游戏  →" Background="#B7B5AD" Foreground="#151618"
+          <Button x:Name="CheckUpdates" Grid.Column="1" Content="检查更新" Height="38" Padding="16,0" FontSize="13"
+                  Background="#282C30" BorderBrush="#727B80" Foreground="#E0E3E2" VerticalAlignment="Center" Margin="0,0,12,0"/>
+          <Button x:Name="Launch" Grid.Column="2" Content="启动游戏  →" Background="#B7B5AD" Foreground="#151618"
                   BorderBrush="#D5D2C8" Padding="27,16" FontSize="16" FontWeight="SemiBold"/>
         </Grid>
       </Border>

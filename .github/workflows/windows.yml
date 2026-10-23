@@ -65,6 +65,10 @@ jobs:
           cd .build/bbport
           bash build.sh
           bash tools/fetch_fsr4_assets.sh
+          python packaging/windows/fetch_fsr411_dx12.py
+          python packaging/windows/fetch_fg401_dx12.py
+          python packaging/windows/prepare_fsr4vk.py
+          python ../../scripts/fetch_dlss.py
       - name: Build BBSC and run native checks
         run: bash scripts/build-mod.sh
       - name: Build launcher and validate WPF

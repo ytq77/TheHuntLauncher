@@ -16,7 +16,7 @@ $window = [Windows.Markup.XamlReader]::Parse([IO.File]::ReadAllText((Join-Path $
 $controls = @{}
 @('HomeNav','SettingsNav','SaveNav','FeatureNav','HomePage','SettingsPage','SavePage','FeaturePage','GraphicsSummary','AccountSummary','ServerSummary',
   'KitStatus','InstallPath','GamePath','GraphicsPath','PickInstall','PickGame','PickGraphics',
-  'Shadnet','Webapi','Community','Relay','Account','Password','SaveSettings','StatusText','OpenLogs','Launch',
+  'Shadnet','Webapi','Community','Relay','Account','Password','SaveSettings','StatusText','OpenLogs','CheckUpdates','Launch',
   'SourceSavePath','DestinationSavePath','SaveSummary','RefreshSaves','ImportSaves','OpenSaveBackups',
   'ConversionNew','ConversionBaseline','ConversionInspect','ConversionConvert','ConversionVerify','ConversionExport',
   'ConversionStartExport','ConversionStartReplace',
@@ -240,6 +240,16 @@ $controls.OpenLogs.Add_Click({
     if (-not (Test-Path -LiteralPath $path)) { $path = $taskRoot }
     # Explorer is intentionally visible because this button requests a folder window.
     [void][Diagnostics.Process]::Start('explorer.exe', ('"' + $path + '"'))
+})
+$controls.CheckUpdates.Add_Click({
+    try {
+        $library = Join-Path $taskRoot 'HuntUpdates.dll'
+        if (-not (Test-Path -LiteralPath $library)) { throw '请使用完整更新包；缺少更新模块 HuntUpdates.dll。' }
+        [void][Reflection.Assembly]::LoadFrom($library)
+        $build = [IO.File]::ReadAllText((Join-Path $taskRoot 'BUILD-INFO.json')) | ConvertFrom-Json
+        $canInstall = [Func[bool]] { return -not ($script:worker -or $script:saveTask -or $script:adminTask -or $script:conversionTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) }
+        [HuntUpdates]::Show($window, $taskRoot, 'TheHuntLauncher', [string]$build.version, $canInstall)
+    } catch { Show-Error $_.Exception.Message }
 })
 $controls.Launch.Add_Click({
     if ($script:featuresDirty) {

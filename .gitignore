@@ -23,6 +23,10 @@ __pycache__/
 /.vs/
 features.json
 server-admin.json
+update-settings.json
+/update-backups/
+/.update.lock
+/tests/installer-tests/
 /conversion-jobs/
 /conversion-current.json
 /.save-conversion.lock

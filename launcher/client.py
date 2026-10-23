@@ -100,6 +100,7 @@ def build_environment(profile, name, password, settings_env, snapshot):
         BB_MODS_DIR=str(data / "mods"), BB_MODS_CONFIG=str(data / "mods.json"),
         BB_PATCHES_DIR=snapshot["patches_dir"], BB_PATCHES_CONFIG=snapshot["patches_config"],
         BB_FSR4_DIR=str(ROOT / "fsr4_shaders"), BB_GPU_LOG="info",
+        BB_FSR4VK_DIR=str(ROOT / "fsr4vk"),
         BB_PROBE=str(ROOT / "mod/bbsc-launch.exe"), BBSC_EMULATOR=str(ROOT / "bin/bb-probe.exe"),
         BB_ONLINE="1", BB_NET_BACKEND="shadnet",
         BB_SHADNET_SERVER=network["shadnet"], BB_SHADNET_WEBAPI=network["webapi"],
