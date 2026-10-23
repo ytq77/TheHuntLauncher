@@ -425,5 +425,11 @@ if (-not $mutex.WaitOne(0)) {
     [void][Windows.MessageBox]::Show('这个目录的 The Hunt 已经打开，请从任务栏切换。', 'The Hunt')
     exit 0
 }
+try {
+    $library = Join-Path $taskRoot 'HuntUpdates.dll'
+    [void][Reflection.Assembly]::LoadFrom($library)
+    $build = [IO.File]::ReadAllText((Join-Path $taskRoot 'BUILD-INFO.json')) | ConvertFrom-Json
+    [HuntUpdates]::WatchStartup($window, $controls.CheckUpdates, $taskRoot, 'TheHuntLauncher', [string]$build.version)
+} catch { $controls.CheckUpdates.ToolTip = '自动检查暂不可用，仍可点击手动检查更新。' }
 try { $timer.Start(); [void]$window.ShowDialog() }
 finally { $timer.Stop(); $mutex.ReleaseMutex(); $mutex.Dispose() }
