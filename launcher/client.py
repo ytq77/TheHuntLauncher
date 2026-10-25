@@ -11,6 +11,8 @@ import uuid
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
+from save_transfer import (copy_verified, import_lock, import_auxiliary_snapshot,
+                           require_stopped, snapshot, content_inventory, source_path)
 
 ROOT = Path(__file__).resolve().parent
 EBOOT_SHA256 = "d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9"
@@ -45,6 +47,19 @@ def validate_network(network):
 
 
 def prepare(profile):
+    if (ROOT / 'data').exists():
+        return _prepare(profile)
+    with import_lock(ROOT):
+        require_stopped()
+        if (ROOT / '.save-conversion.lock').exists():
+            raise ValueError('转换操作尚未完成，已停止首次初始化。')
+        old_auxiliary = import_auxiliary_snapshot(ROOT)
+        if any(value is not None and value[1] for value in old_auxiliary.values()):
+            raise ValueError('发现旧无缝联机记录，但独立存档尚未初始化；请先保留并核对旧存档，不能自动套用记录。')
+        _prepare(profile, old_auxiliary)
+
+
+def _prepare(profile, old_auxiliary=None):
     game = Path(profile["game"])
     source = Path(profile["graphics_source"]).resolve()
     install = Path(profile["install"]).resolve()
@@ -73,16 +88,25 @@ def prepare(profile):
             shutil.copytree(origin, stage / name)
         elif origin.is_file():
             shutil.copy2(origin, stage / name)
-    settings_file = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
-    settings = json.loads(settings_file.read_text(encoding="utf-8-sig")) if settings_file.exists() else {}
-    save_root = Path(settings.get("user_dir") or install / "user") / "savedata"
+    save_root = source_path(install)
+    save_state = None
     if save_root.is_dir():
-        shutil.copytree(save_root, stage / "user/savedata")
+        save_state = copy_verified(save_root, stage / 'user/savedata')
     # FSR4 is optional for machines using FSR3; copy available resources once.
     origin = install / "fsr4_shaders"
     if origin.is_dir() and not (ROOT / "fsr4_shaders").exists():
         state("preparing", "正在复制本机 FSR 4 资源…")
         shutil.copytree(origin, ROOT / "fsr4_shaders")
+    require_stopped()
+    if (ROOT / '.save-conversion.lock').exists():
+        raise ValueError('转换操作已经开始，初始化副本已保留，尚未启用。')
+    if import_auxiliary_snapshot(ROOT) != old_auxiliary:
+        raise ValueError('初始化期间联机辅助记录发生变化，副本已保留，尚未启用。')
+    # Copy verification ran before optional assets; check the source once more
+    # immediately before publishing the independent branch.
+    if save_state is not None:
+        if snapshot(save_root) != save_state or content_inventory(snapshot(stage / 'user/savedata')) != content_inventory(save_state):
+            raise ValueError('初始化期间存档发生变化或副本校验失败，尚未启用。')
     stage.rename(ROOT / "data")
 
 

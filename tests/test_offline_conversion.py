@@ -13,6 +13,34 @@ jobs = setup_jobs.jobs
 
 
 class OfflineConversion(unittest.TestCase):
+    def test_all_event_layouts_are_checked_without_auxiliary_files(self):
+        for label, stem in (('ordinary', 'userdata'), ('seamless', 'userdata'), ('seamless', 'backup')):
+            with self.subTest(label=label, stem=stem):
+                root = self.source if label == 'ordinary' else self.seamless
+                path = root/f'1/CUSA00207/SPRJ0005/{stem}0001'
+                original = path.read_bytes()
+                raw = bytearray(original)
+                struct.pack_into('<III', raw, 52, 0x200000, 150001, 0x200000+150001)
+                path.write_bytes(raw)
+                before = jobs.hashes(self.source), jobs.hashes(self.seamless)
+                with self.assertRaisesRegex(ValueError, '事件标记区'):
+                    self.begin('replace')
+                self.assertEqual(before, (jobs.hashes(self.source), jobs.hashes(self.seamless)))
+                path.write_bytes(original)
+
+    def test_progress_mutation_is_refused_before_export_or_replace(self):
+        original = jobs.offline_save.convert
+        def mutate(*args):
+            result, fields = original(*args)
+            result = bytearray(result)
+            result[jobs.offline_aux.flag_bank(result)] ^= 1
+            return bytes(result), fields
+        with patch.object(jobs.offline_save, 'convert', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, '事件进度'):
+                self.begin('replace')
+        self.assertEqual(self.before, (jobs.hashes(self.source), jobs.hashes(self.seamless)))
+        self.assertFalse((jobs.job_path(jobs.load_job()['id'])/'converted-save.zip').exists())
+
     def setUp(self):
         setup_jobs.ConversionJobs.setUp(self)
         for folder, kit in ((self.source,False),(self.seamless,True)):

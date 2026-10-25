@@ -1,0 +1,133 @@
+// Synthetic quest states; native table, time and file journal I/O are mocked.
+
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
+using u8=uint8_t;using u16=uint16_t;using u32=uint32_t;using u64=uint64_t;using s32=int32_t;using s64=int64_t;
+constexpr size_t BbscWorldGroupBytes=125,BbscDreamGroupCount=57;
+constexpr u32 BbscDreamStateMap=0x15000000,BbscDreamSoldGroup=70009;
+constexpr u64 WorldFlagManPointerOffset=0x0553B100;
+u64 image_base=0x10000000;
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARNING(...) ((void)0)
+
+// NPC_DECLARATIONS
+
+BbscDreamOwnState bbsc_dream_own;
+struct BbscWorldSnapshot{u32 map=0;s64 complete_ms=1;u64 present=0;std::array<std::array<u8,125>,57> groups{};};
+std::mutex bbsc_world_mutex;BbscWorldSnapshot bbsc_dream_ready;
+std::map<u32,std::array<u8,125>> table,bbsc_own_world,journal;
+bool bbsc_own_world_dirty=false;
+struct Slot{int slot=0;};std::optional<Slot> bbsc_own_world_slot;
+std::filesystem::path BbscOwnWorldPath(const Slot&){return {};}
+std::map<u64,u64> fields;int session=4;
+template<class T>T ReadValue(u64 p,u64 offset=0,T fallback={}){
+ auto it=fields.find(p+offset);if(it!=fields.end())return static_cast<T>(it->second);
+ if(p<0x100000000ULL)return fallback;
+ T value{};std::memcpy(&value,reinterpret_cast<void*>(p+offset),sizeof(T));return value;
+}
+bool ReadablePointer(u64 p,size_t){return p!=0;}
+u64 GetGlobalState(){return 0x10000;}
+int GetSessionState(){return session;}
+bool BbscWorldSyncEnabled(){return true;}bool BbscDreamEnabled(){return true;}
+s64 SteadyNowMs(){return 10000;}
+u64 BbscFlagGroupStorage(u32 key){auto it=table.find(key);return it==table.end()?0:reinterpret_cast<u64>(it->second.data());}
+void WriteBbscOwnWorldFile(){journal=bbsc_own_world;}
+void TraceBbscNpcState(std::string_view,bool){}
+void tree(){
+ fields.clear();fields[image_base+WorldFlagManPointerOffset]=0x20000;
+ fields[0x20000+0x38]=0x30000;fields[0x30000+0x19]=1;
+ u64 addr=0x40000;fields[0x30000+8]=table.empty()?0x30000:addr;
+ size_t n=0;for(const auto& [key,data]:table){
+  fields[addr]=0x30000;fields[addr+0x19]=0;fields[addr+0x20]=key;
+  fields[addr+0x10]=++n<table.size()?addr+0x100:0x30000;addr+=0x100;
+ }
+ fields[GetGlobalState()+0x1592]=1;
+}
+void home(){session=0;fields[GetGlobalState()+0x1592]=1;}
+void away(){session=6;fields[GetGlobalState()+0x1592]=0;}
+
+// NPC_FUNCTIONS
+
+void require(bool yes,const char* text){if(!yes)throw std::runtime_error(text);}
+
+int main(int argc,char**argv){try{
+ std::array<u8,125> guest{},host{};
+ auto set=[](auto& data,u32 flag){const u32 b=flag-1000;data[b/8]|=128>>(b%8);};
+ for(auto flag:{1104u,1164u,1181u,1224u,1304u})set(guest,flag);
+ for(auto flag:{1101u,1160u,1181u,1220u,1304u})set(host,flag);
+ require(guest!=host,"distinct synthetic quest states");
+ auto reset=[&]{table.clear();bbsc_own_world.clear();journal.clear();bbsc_dream_own={};bbsc_dream_ready={};
+  bbsc_own_world_slot.reset();bbsc_own_world_dirty=false;session=4;
+  table[0]={};table[1]=guest;table[2]={};table[5]={};table[6]={};table[70009]={};table[12400]={};tree();
+  bbsc_dream_ready.map=BbscDreamStateMap;bbsc_dream_ready.present=1;bbsc_dream_ready.groups[0]=host;
+ };
+ reset();CaptureBbscOwnWorldBeforeJoin();
+ bool prejoin=bbsc_own_world.contains(1)&&bbsc_own_world.at(1)==guest;
+ require(!bbsc_own_world.contains(0),"system flags excluded");
+ away();table[1]=host;ApplyBbscHostDreamState("observed native overlay before Dream");
+ bool baseline=bbsc_dream_own.own[0]==guest&&journal.at(1)==guest;
+ RestoreBbscOwnDreamState("leave Dream");
+ home();table[1]=guest;RestoreBbscOwnWorld("native home reload restored correctly");
+ bool home_ok=table[1]==guest;
+#ifdef EXPECT_FIXED
+ require(prejoin&&baseline&&home_ok,"observed NPC regression must be fixed");
+#else
+ require(!prejoin&&!baseline&&!home_ok&&table[1]==host,"pinned build must reproduce actual wrong write");
+#endif
+ std::cout<<"prejoin_owns_common1="<<prejoin<<"\ntrusted_dream_baseline="<<baseline<<"\nhome_keeps_native_restored_NPCs="<<home_ok<<"\n";
+ // No Dream: normal vanilla restoration must remain intact.
+ reset();CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;home();table[1]=guest;
+ RestoreBbscOwnWorld("no Dream visited");require(table[1]==guest,"no-Dream regression");
+ std::cout<<"no_dream_path_preserved=1\n";
+#ifdef EXPECT_FIXED
+ // All available global Dream keys, not just the two NPCs' key, were captured.
+ reset();CaptureBbscOwnWorldBeforeJoin();for(auto key:{1u,2u,5u,6u,70009u})require(bbsc_own_world.contains(key),"missing global");
+ // An old journal lacking globals must never learn global baseline from a guest's live table.
+ reset();away();bbsc_own_world[12400]={};table[1]=host;ApplyBbscHostDreamState("no trusted baseline");
+ require(!bbsc_own_world.contains(1)&&!(bbsc_dream_own.held&1),"late host captured as our own");
+ std::cout<<"legacy_missing_baseline_not_fabricated=1\n";
+ // Persisted journal recovery after a crash uses our pre-join state.
+ reset();CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;ApplyBbscHostDreamState("Dream");
+ auto saved=journal;bbsc_dream_own={};bbsc_own_world=saved;home();table[1]=host;
+ RestoreBbscOwnWorld("restart recovery");require(table[1]==guest,"crash journal wrong");
+ std::cout<<"crash_journal_has_original_NPCs=1\n";
+ // Repeated apply and a second co-op session must not refresh from host state.
+ reset();CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;
+ ApplyBbscHostDreamState("first");ApplyBbscHostDreamState("repeat");RestoreBbscOwnDreamState("leave");
+ require(table[1]==guest,"repeated Dream apply");home();table[1]=guest;RestoreBbscOwnWorld("home");
+ session=4;CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;ApplyBbscHostDreamState("next session");
+ home();table[1]=guest;RestoreBbscOwnWorld("next home");require(table[1]==guest,"second session");
+ std::cout<<"repeated_apply_and_sessions_keep_original=1\n";
+ // Native common/shop overlay must not confer the host's unlock flags.
+ reset();bbsc_dream_ready.present|=(1ULL<<2)|(1ULL<<3)|(1ULL<<47);
+ for(size_t i=0;i<57;i++)if(BbscDreamStateKeys[i]==70009)bbsc_dream_ready.present|=1ULL<<i;
+ for(size_t i=0;i<57;i++)if(BbscDreamStateKeys[i]==5||BbscDreamStateKeys[i]==6)bbsc_dream_ready.groups[i].fill(255);
+ CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;table[5].fill(255);table[6].fill(255);
+ ApplyBbscHostDreamState("host shops");
+ auto bit=[](const auto& data,u32 flag){return bool(data[(flag%1000)/8]&(128>>((flag%1000)%8)));};
+ for(auto flag:{5500u,5521u})require(!bit(table[5],flag),"host shop unlock leaked");
+ table[70009][0]=1;RestoreBbscOwnDreamState("purchase");
+ require(table[70009][0]==1&&bbsc_own_world.at(70009)[0]==1,"own purchase lost");
+ home();table[70009]={};RestoreBbscOwnWorld("home after purchase");require(table[70009][0]==1,"purchase journal lost");
+ std::cout<<"own_shop_unlocks_and_purchase_preserved=1\n";
+ // Capturing from another world or with an existing journal cannot replace a baseline.
+ reset();away();CaptureBbscOwnWorldBeforeJoin();require(bbsc_own_world.empty(),"away capture allowed");
+ home();session=4;CaptureBbscOwnWorldBeforeJoin();table[1]=host;CaptureBbscOwnWorldBeforeJoin();
+ require(bbsc_own_world.at(1)==guest,"existing baseline overwritten");
+ std::cout<<"capture_guards_preserved=1\n";
+#endif
+ return 0;
+}catch(const std::exception&e){std::cerr<<e.what()<<"\n";return 1;}}

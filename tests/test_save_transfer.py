@@ -14,6 +14,91 @@ import save_transfer as transfer
 
 
 class SaveTransferTests(unittest.TestCase):
+    def auxiliary_records(self):
+        from test_offline_aux import record
+        files = {
+            'own-world/own-save-0.bin.restored': record(0x574F4242, [(1, bytes(125))]),
+            'guest-items/taken-save-0.bin': record(0x544C4242, [(52400, b'\x80' + bytes(124))]),
+        }
+        for name, data in files.items():
+            path = self.root/'mod'/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        return files
+
+    def test_settled_auxiliary_moves_with_old_branch_and_never_remains_active(self):
+        files = self.auxiliary_records()
+        old = self.contents(self.destination)
+        result = transfer.apply(self.install)
+        self.assertEqual(self.contents(Path(result['backup'])), old)
+        for name, data in files.items():
+            self.assertEqual((Path(result['auxiliary_backup'])/name).read_bytes(), data)
+            self.assertFalse((self.root/'mod'/name).exists())
+
+    def test_pending_or_unknown_auxiliary_refuses_import_without_any_move(self):
+        from test_offline_aux import record
+        for name, data in (
+            ('own-world/own-save-0.bin', record(0x574F4242, [(1, bytes(125))])),
+            ('shared-progress/pending-save-0.bin', b'pending'),
+            ('guest-items/unknown.bin', b'unknown'),
+        ):
+            with self.subTest(name=name):
+                path = self.root/'mod'/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                old = self.contents(self.destination)
+                with self.assertRaises(ValueError):
+                    transfer.apply(self.install)
+                self.assertEqual(self.contents(self.destination), old)
+                self.assertEqual(path.read_bytes(), data)
+                self.assertFalse((self.root/'save-backups').exists())
+                path.unlink()
+
+    def test_auxiliary_change_during_copy_refuses_before_commit(self):
+        files = self.auxiliary_records()
+        old = self.contents(self.destination)
+        copy = transfer.copy_verified
+        def mutate(*args):
+            result = copy(*args)
+            p = self.root/'mod/guest-items/taken-save-0.bin'
+            data = bytearray(p.read_bytes()); data[-1] = 1; p.write_bytes(data)
+            return result
+        with patch.object(transfer, 'copy_verified', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, '辅助记录'):
+                transfer.apply(self.install)
+        self.assertEqual(self.contents(self.destination), old)
+        self.assertTrue(all((self.root/'mod'/name).exists() for name in files))
+
+    def test_failed_install_restores_both_save_and_auxiliary(self):
+        files = self.auxiliary_records()
+        old = self.contents(self.destination)
+        rename = Path.rename
+        def fail_stage(path, target):
+            if path.name.startswith('.savedata-import-'):
+                raise OSError('injected stage failure')
+            return rename(path, target)
+        with patch.object(Path, 'rename', fail_stage):
+            with self.assertRaisesRegex(ValueError, '已保持或恢复'):
+                transfer.apply(self.install)
+        self.assertEqual(self.contents(self.destination), old)
+        for name, data in files.items():
+            self.assertEqual((self.root/'mod'/name).read_bytes(), data)
+
+    def test_failure_halfway_through_auxiliary_move_rolls_back_prior_moves(self):
+        files = self.auxiliary_records()
+        old = self.contents(self.destination)
+        rename = Path.rename
+        def fail_second(path, target):
+            if path == self.root/'mod/guest-items':
+                raise OSError('injected auxiliary move failure')
+            return rename(path, target)
+        with patch.object(Path, 'rename', fail_second):
+            with self.assertRaisesRegex(ValueError, '已保持或恢复'):
+                transfer.apply(self.install)
+        self.assertEqual(self.contents(self.destination), old)
+        for name, data in files.items():
+            self.assertEqual((self.root/'mod'/name).read_bytes(), data)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -134,7 +219,7 @@ class SaveTransferTests(unittest.TestCase):
     def test_failed_backup_rename_does_not_replace_original(self):
         old = self.contents(self.destination)
         with patch.object(Path, "rename", side_effect=OSError("backup refused")):
-            with self.assertRaises(OSError):
+            with self.assertRaisesRegex(ValueError, '已保持或恢复'):
                 transfer.apply(self.install)
         self.assertEqual(self.contents(self.destination), old)
 
@@ -153,6 +238,7 @@ class SaveTransferTests(unittest.TestCase):
         backups = list((self.root / "save-backups").glob("import-*/savedata"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(self.contents(backups[0]), old)
+        self.assertTrue((self.root / '.save-import.lock').exists())
 
     def test_corrupted_copied_file_fails_checksum_before_replacement(self):
         old = self.contents(self.destination)

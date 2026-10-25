@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 from banner_diagnostics import apply as banner_diagnostics
 from insight_refund import apply as insight_refund
+from empty_host_cancel import apply as empty_host_cancel
+from npc_prejoin import apply as npc_prejoin
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,7 +81,7 @@ def main():
     args = parser.parse_args()
     core = args.source / "emulator/src/core"
     path = core / "bloodborne_re.cpp"
-    edits = {path: banner_diagnostics(insight_refund(early_items(path.read_text(encoding="utf-8"))))}
+    edits = {path: npc_prejoin(empty_host_cancel(banner_diagnostics(insight_refund(early_items(path.read_text(encoding="utf-8"))))))}
     for name in ("bbsc_http.cpp", "bbsc_relay.cpp"):
         path = args.source / "emulator/mod" / name
         text = path.read_text(encoding="utf-8")
@@ -93,7 +95,9 @@ def main():
     shutil.copy2(ROOT / "patches/bbsc_memscan.cpp", core / "bbsc_memscan.cpp")
     shutil.copy2(ROOT / "patches/bbsc_banner_diagnostics.inc", core / "bbsc_banner_diagnostics.inc")
     shutil.copy2(ROOT / "patches/bbsc_insight_refund.inc", core / "bbsc_insight_refund.inc")
-    print("Applied early item initialization, safe scan, banner text handling, and CLANG64 path fixes.")
+    for name in ("bbsc_empty_host_cancel.inc", "bbsc_empty_host_cancel_policy.h"):
+        shutil.copy2(ROOT / "patches" / name, core / name)
+    print("Applied early item initialization, safe scan, banner handling, confirmed empty-host cancellation, pre-join NPC baselines, and CLANG64 path fixes.")
 
 
 if __name__ == "__main__":

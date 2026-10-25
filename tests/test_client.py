@@ -18,6 +18,51 @@ NETWORK = {"shadnet": "example.test:31413", "webapi": "http://example.test:31415
 
 
 class SessionTests(unittest.TestCase):
+    def test_first_import_corruption_is_refused_and_unpublished_stage_retained(self):
+        origin = self.install/'user/savedata'
+        file = origin/'1/CUSA00207/SPRJ0005/userdata0000'
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b'original')
+        copy = shutil.copytree
+        def corrupt(source, target, *args, **kwargs):
+            result = copy(source, target, *args, **kwargs)
+            if Path(source) == origin:
+                (Path(target)/file.relative_to(origin)).write_bytes(b'corrupt')
+            return result
+        with patch.object(shutil, 'copytree', side_effect=corrupt):
+            with self.assertRaisesRegex(ValueError, '副本校验失败'):
+                client.prepare(self.profile)
+        self.assertFalse((self.root/'data').exists())
+        self.assertTrue(list(self.root.glob('data.setup-*')))
+        self.assertEqual(file.read_bytes(), b'original')
+
+    def test_first_import_source_mutation_is_refused(self):
+        origin = self.install/'user/savedata'
+        file = origin/'1/CUSA00207/SPRJ0005/userdata0000'
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b'original')
+        copy = shutil.copytree
+        def mutate(source, target, *args, **kwargs):
+            result = copy(source, target, *args, **kwargs)
+            if Path(source) == origin:
+                file.write_bytes(b'new-save')
+            return result
+        with patch.object(shutil, 'copytree', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, '发生变化'):
+                client.prepare(self.profile)
+        self.assertFalse((self.root/'data').exists())
+
+    def test_first_import_refuses_old_auxiliary_without_removing_it(self):
+        from test_offline_aux import record
+        p = self.root/'mod/own-world/own-save-0.bin.restored'
+        p.parent.mkdir(parents=True)
+        data = record(0x574F4242, [(1, bytes(125))])
+        p.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, '旧无缝联机记录'):
+            client.prepare(self.profile)
+        self.assertFalse((self.root/'data').exists())
+        self.assertEqual(p.read_bytes(), data)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -42,6 +87,7 @@ class SessionTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(client, "ROOT", self.root).start()
         patch.object(client, "EBOOT_SHA256", hashlib.sha256(b"test-eboot").hexdigest()).start()
+        patch.object(client, 'require_stopped').start()
         patch.dict(os.environ, {"APPDATA": str(self.appdata)}).start()
 
     def test_prepare_copies_once_and_preserves_independent_progress(self):

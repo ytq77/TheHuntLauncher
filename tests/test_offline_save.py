@@ -13,6 +13,7 @@ def fixture(kit=False):
     name = 0xC0F7
     face = name + 34497
     end = name + 68545 + 136
+    struct.pack_into('<III', data, 52, end + 241, 150001, end + 241 + 150001)
     for offset, value in {0:0x41, 12:84, 16:end+157, 20:84, 24:end-84,
                           28:end+158, 36:end, 40:150, 44:end+150, 48:8}.items():
         struct.pack_into('<I', data, offset, value)

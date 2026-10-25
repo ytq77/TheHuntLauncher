@@ -420,15 +420,23 @@ def begin_offline(profile, same_role, output):
         auxiliary = offline_aux.validate(path / 'backup/auxiliary', source, slot)
         atomic_json(path / 'auxiliary-check.json', auxiliary)
         baseline = (path / f'backup/ordinary/savedata/1/CUSA00207/SPRJ0005/userdata{slot:04}').read_bytes()
+        offline_aux.flag_bank(baseline)
         restored_goods = offline_save.original_ownership(offline_save.parse(baseline))
         manifests, transformed = {}, {}
         for stem in ('userdata', 'backup'):
             relative = f'1/CUSA00207/SPRJ0005/{stem}{slot:04}'
             raw = (source / relative).read_bytes()
+            flag_start = offline_aux.flag_bank(raw)
             converted, patches = offline_save.convert(raw, baseline)
+            converted_start = offline_aux.flag_bank(converted)
+            original_flags = raw[flag_start:flag_start + offline_aux.FLAG_BYTES]
+            if converted[converted_start:converted_start + offline_aux.FLAG_BYTES] != original_flags:
+                raise ValueError('转换改变了事件进度，已停止；原始存档未替换。')
             transformed[relative] = converted
             manifests[relative] = {'before_sha256': hashlib.sha256(raw).hexdigest(),
-                'after_sha256': hashlib.sha256(converted).hexdigest(), 'patches': patches}
+                'after_sha256': hashlib.sha256(converted).hexdigest(), 'patches': patches,
+                'event_flags_sha256': hashlib.sha256(original_flags).hexdigest(),
+                'event_flags_unchanged': True}
         destination = path / 'verify/user/savedata'
         copy_verified(source, destination)
         for relative, converted in transformed.items():

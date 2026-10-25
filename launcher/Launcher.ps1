@@ -201,7 +201,7 @@ $controls.ImportSaves.Add_Click({
         if (-not $script:saveInspection) { throw '请先读取普通版存档信息。' }
         $message = "将普通版的全部角色进度导入无缝版。`n`n来源：`n" + $script:saveInspection.source +
                    "`n`n目标：`n" + $script:saveInspection.destination +
-                   "`n`n现有无缝存档会先完整备份，之后整体替换，不合并进度。普通版存档保持原样。`n`n继续导入？"
+                   "`n`n现有无缝存档及已完成的联机辅助记录会一起备份、隔离，之后整体替换，不合并进度。未完成的世界恢复或共享进度会阻止导入。普通版存档保持原样。`n`n继续导入？"
         if ([Windows.MessageBox]::Show($window, $message, '从普通版导入存档', 'YesNo', 'Question', 'No') -eq 'Yes') {
             Start-SaveTransfer $true
         }

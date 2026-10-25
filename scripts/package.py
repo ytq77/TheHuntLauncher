@@ -185,14 +185,16 @@ def main():
                 if digest(binary) != metadata["sha256"] or binary.stat().st_size != metadata["size"]:
                     raise ValueError("FSR manifest mismatch: " + name)
     info = {**lock, "features": ["early-kit-init", "safe-memscan", "isolated-patches", "per-PC-settings", "zh-CN", "WPF-launcher", "save-import-with-backup", "gameplay-feature-page", "offline-save-conversion"],
-            "gameplay_validation": "RTX 5070 isolated BBport 1.9.4 run: online load, five item categories/icons/Chinese, both touchpad menus and DLSS image confirmed by user; normal exit code 0 and real seamless saves unchanged. Two-PC, death/respawn and offline-conversion reload regression pending.",
+            "gameplay_validation": "RTX 5070 isolated BBport 1.9.4 run: online load, five item categories/icons/Chinese, both touchpad menus and DLSS image confirmed by user; normal exit code 0 and real seamless saves unchanged. Two-PC NPC recovery round trip and standalone reload confirmed separately; death/respawn and other gameplay combinations not re-tested in this release.",
             "core_sha256": digest(dest / "bin/bb-probe.exe"), "bbsc_sha256": digest(dest / "mod/bbsc.dll"),
             "save_bridge_sha256": digest(dest / "mod/save-bridge.dll"),
             "offline_save_sha256": digest(dest / "offline_save.py"),
             "offline_aux_sha256": digest(dest / "offline_aux.py"),
             "original_item_policy": "Restore baseline-confirmed original items individually (any nonempty subset); never grant an absent item or equip it.",
-            "save_conversion_validation": "98 Python tests and WPF checks passed. All 15 nonempty original item subsets covered. One RTX 5070 role passed vanilla reload/save and post-save comparison. Supplied guest sample retains 13 pickup bits and unchanged world flags while restoring only three owned originals; user reported export and ordinary reload success after retry. Guest post-reload bytes were not collected. Pending world/shared-progress journals, empty baseline ownership and storage cases remain unsupported."}
-    info["features"].append("automatic-updates")
+            "save_conversion_validation": "121 Python tests and WPF checks passed. All 15 nonempty original item subsets covered. One RTX 5070 role passed vanilla reload/save and post-save comparison. Supplied guest sample retains 13 pickup bits and unchanged world flags while restoring only three owned originals; user reported export and ordinary reload success after retry. Guest post-reload bytes were not collected. Pending world/shared-progress journals, empty baseline ownership and storage cases remain unsupported."}
+    info["features"].extend(["automatic-updates", "verified-save-import", "unchanged-event-region", "confirmed-empty-host-cancel", "prejoin-dream-baseline"])
+    info["npc_recovery_validation"] = "BBport 1.9.4: two-PC isolated guest passed join, Hunter's Dream round trip, selected dismissal, normal save and standalone reload. Native function traces and both complete save generations preserve the original NPC group; another character remains unchanged. Death, crash, invasion and reversed-host combinations not re-tested. Existing damaged saves are not automatically repaired."
+    info["save_safety_validation"] = "Stable verified import copies, settled auxiliary-record archiving, pending-record rejection, rollback and unconditional unchanged event-region checks are covered by the bundled regression suite. No production save is modified during packaging."
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

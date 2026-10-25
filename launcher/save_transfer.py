@@ -13,9 +13,15 @@ import shutil
 import stat
 import subprocess
 import uuid
+import offline_aux
 
 ROOT = Path(__file__).resolve().parent
 REPARSE_POINT = 0x400
+AUXILIARY = ('own-world', 'guest-items', 'shared-progress')
+
+
+class ImportRecoveryError(ValueError):
+    """An incomplete rollback must keep the launch-blocking import lock."""
 
 
 def plain_path(path):
@@ -100,6 +106,47 @@ def snapshot(folder):
     return sorted(directories), files
 
 
+def content_inventory(value):
+    return value[0], {name: (row[2], row[-1]) for name, row in value[1].items()}
+
+
+def copy_verified(source, destination, expected=None):
+    source, destination = plain_path(source), plain_path(destination)
+    if overlaps(source, destination) or destination.exists():
+        raise ValueError('存档副本路径冲突，已停止导入。')
+    original = snapshot(source) if expected is None else expected
+    shutil.copytree(source, destination, copy_function=shutil.copy2)
+    if content_inventory(snapshot(destination)) != content_inventory(original):
+        raise ValueError('存档副本校验失败，原无缝版存档保持不变。')
+    if snapshot(source) != original:
+        raise ValueError('复制期间普通版存档发生变化，原无缝版存档保持不变。')
+    return original
+
+
+def import_auxiliary_snapshot(root=None):
+    root = ROOT if root is None else Path(root)
+    result = {}
+    for category in AUXILIARY:
+        folder = plain_path(root / 'mod' / category)
+        value = snapshot(folder) if folder.exists() else None
+        result[category] = value
+        if value is None:
+            continue
+        for name in value[1]:
+            if category == 'shared-progress':
+                raise ValueError('存在尚待处理的共享进度记录，已停止导入；请先在旧无缝存档中完成恢复，不要删除记录。')
+            if category == 'own-world' and re.fullmatch(r'own-save-[0-9]\.bin', name):
+                raise ValueError('存在尚待恢复的自己世界记录，已停止导入；请先加载旧无缝存档完成恢复，不要删除记录。')
+            pattern = r'own-save-[0-9]\.bin\.restored' if category == 'own-world' else r'taken-save-[0-9]\.bin'
+            if not re.fullmatch(pattern, name):
+                raise ValueError('辅助记录格式不受支持，已停止导入；请保留记录。')
+            path = plain_path(folder / name)
+            if path.stat().st_size > 12 + 10000 * 129:
+                raise ValueError('辅助记录过大，已停止导入。')
+            offline_aux.journal(path.read_bytes(), 0x574F4242 if category == 'own-world' else 0x544C4242)
+    return result
+
+
 def inspect(install):
     if (ROOT / ".save-conversion.lock").exists():
         raise ValueError("转换测试正在进行，请先等待转换操作完成。")
@@ -119,71 +166,96 @@ def inspect(install):
     if destination.exists():
         # Checking the entire old tree prevents renaming or backing up linked data.
         snapshot(destination)
+    import_auxiliary_snapshot()
     latest = max(details[3] for details in files.values())
     return {
         "ok": True, "source": str(source), "destination": str(destination),
         "file_count": len(files), "total_bytes": sum(item[2] for item in files.values()),
         "latest_write": datetime.fromtimestamp(latest / 1e9).strftime("%Y-%m-%d %H:%M:%S"),
         "backup": None, "error": None,
-        "notice": "将替换无缝版全部角色和进度；不会合并。原无缝版存档会完整备份。",
+        "notice": "将替换无缝版全部角色和进度；不会合并。旧存档及已完成的联机辅助记录会一起备份、隔离。",
     }, inventory
 
 
 @contextmanager
-def import_lock():
-    path = plain_path(ROOT / ".save-import.lock")
+def import_lock(root=None):
+    path = plain_path((ROOT if root is None else Path(root)) / ".save-import.lock")
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         raise ValueError("已有存档导入操作或遗留导入锁，请确认没有导入任务后再处理。") from None
+    recovery_required = False
     try:
         os.write(descriptor, str(os.getpid()).encode("ascii"))
         yield
+    except ImportRecoveryError:
+        recovery_required = True
+        raise
     finally:
         os.close(descriptor)
-        path.unlink()
+        if not recovery_required:
+            path.unlink()
 
 
 def apply(install, expected_source=None):
     with import_lock():
         require_stopped()
         info, original = inspect(install)
+        auxiliary = import_auxiliary_snapshot()
         source, destination = Path(info["source"]), Path(info["destination"])
         if expected_source and source != plain_path(expected_source):
             raise ValueError("普通版存档路径已发生变化，请重新读取并确认导入来源。")
         stage = plain_path(destination.parent / (".savedata-import-" + uuid.uuid4().hex))
         # A failed stage is intentionally retained for diagnosis. It is never merged
         # into the live save directory, and the source is never modified.
-        shutil.copytree(source, stage, copy_function=shutil.copy2)
-        copied = snapshot(stage)
-        if copied[0] != original[0] or {
-                name: (item[2], item[-1]) for name, item in copied[1].items()
-        } != {name: (item[2], item[-1]) for name, item in original[1].items()}:
-            raise ValueError("存档副本校验失败，原无缝版存档保持不变。")
-        if snapshot(source) != original:
-            raise ValueError("复制期间普通版存档发生变化，原无缝版存档保持不变。")
+        copy_verified(source, stage, original)
         require_stopped()
         # Recheck paths immediately before the only operation affecting live saves.
         plain_path(destination)
+        if snapshot(source) != original or import_auxiliary_snapshot() != auxiliary:
+            raise ValueError('存档或辅助记录在复制期间发生变化，已停止导入。')
         backup = None
-        if destination.exists():
-            snapshot(destination)
-            backup_parent = plain_path(ROOT / "save-backups" /
-                                       ("import-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-                                        + "-" + uuid.uuid4().hex[:8]))
-            backup_parent.mkdir(parents=True)
-            backup = backup_parent / "savedata"
-            destination.rename(backup)
+        backup_parent = plain_path(ROOT / "save-backups" /
+                                   ("import-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+                                    + "-" + uuid.uuid4().hex[:8]))
+        backup_parent.mkdir(parents=True)
+        moved = []
+        installed = False
+        old_destination = snapshot(destination) if destination.exists() else None
         try:
+            if old_destination is not None:
+                backup = backup_parent / 'savedata'
+                destination.rename(backup)
+            for category, value in auxiliary.items():
+                if value is None:
+                    continue
+                old = plain_path(ROOT / 'mod' / category)
+                saved = plain_path(backup_parent / 'auxiliary' / category)
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                old.rename(saved)
+                moved.append((old, saved))
+                if snapshot(saved) != value:
+                    raise ValueError('辅助记录备份校验失败。')
             stage.rename(destination)
-        except OSError:
-            if backup is not None:
-                try:
+            installed = True
+            if content_inventory(snapshot(destination)) != content_inventory(original):
+                raise ValueError('安装后的存档校验失败。')
+            if old_destination is not None and snapshot(backup) != old_destination:
+                raise ValueError('旧存档备份校验失败。')
+        except (OSError, ValueError):
+            try:
+                if installed:
+                    rejected = plain_path(destination.parent / ('.savedata-import-rejected-' + uuid.uuid4().hex))
+                    destination.rename(rejected)
+                for old, saved in reversed(moved):
+                    saved.rename(old)
+                if backup is not None and backup.exists():
                     backup.rename(destination)
-                except OSError:
-                    raise ValueError(f"替换和回滚均失败。完整旧存档保留在：{backup}。请勿启动游戏。") from None
-            raise ValueError("替换存档失败，原无缝版存档已保持或恢复。") from None
-        info["backup"] = str(backup) if backup else None
+            except OSError:
+                raise ImportRecoveryError(f'替换和回滚均失败。完整旧存档保留在：{backup or backup_parent}；辅助记录保留在：{backup_parent / "auxiliary"}。请勿启动游戏。') from None
+            raise ValueError('替换存档失败，原无缝版存档及辅助记录已保持或恢复。') from None
+        info['auxiliary_backup'] = str(backup_parent / 'auxiliary') if moved else None
+        info['backup'] = str(backup) if backup else None
         return info
 
 
