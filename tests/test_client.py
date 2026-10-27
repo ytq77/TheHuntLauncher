@@ -18,6 +18,24 @@ NETWORK = {"shadnet": "example.test:31413", "webapi": "http://example.test:31415
 
 
 class SessionTests(unittest.TestCase):
+    def test_first_initialization_imports_real_trophy_log_without_touching_source(self):
+        source = self.install/'user/trophies.log'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b'14 180\n35 300\n')
+        client.prepare(self.profile)
+        self.assertEqual((self.root/'data/user/trophies.log').read_bytes(), source.read_bytes())
+        self.assertEqual((self.root/'data/trophy-import-backup/source-0.log').read_bytes(), source.read_bytes())
+
+    def test_failed_trophy_write_never_publishes_first_save_branch(self):
+        source = self.install/'user/trophies.log'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b'14 180\n')
+        with patch.object(client.trophy_sync, 'install', side_effect=OSError('disk failure')):
+            with self.assertRaises(OSError):
+                client.prepare(self.profile)
+        self.assertFalse((self.root/'data').exists())
+        self.assertEqual(source.read_bytes(), b'14 180\n')
+
     def test_first_import_corruption_is_refused_and_unpublished_stage_retained(self):
         origin = self.install/'user/savedata'
         file = origin/'1/CUSA00207/SPRJ0005/userdata0000'

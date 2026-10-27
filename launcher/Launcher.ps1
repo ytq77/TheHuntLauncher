@@ -302,6 +302,7 @@ $timer.Add_Tick({
             }
             if ($script:saveTaskApply) {
                 $controls.SaveSummary.Text = '导入完成。无缝版现在使用普通版的这份进度。'
+                if ($result.trophies) { $controls.SaveSummary.Text += "`n" + $result.notice.Split("`n")[-1] }
                 if ($result.backup) { $controls.SaveSummary.Text += "`n原无缝存档备份：" + $result.backup }
                 $controls.StatusText.Text = '存档已导入，可以启动游戏。'
             } else {

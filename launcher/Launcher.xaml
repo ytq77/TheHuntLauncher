@@ -148,7 +148,7 @@
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.4" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.12" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.13" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -289,7 +289,7 @@
           <TextBlock Text="功能与玩法" FontSize="26"/>
           <TextBlock Text="保存后下次启动生效。难度数值跟随房主；进度合并会写入客机存档。"
                      Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,12"/>
-            <TextBlock Text="无缝版暂不启用人偶洗点，避免尚未验证的额外等级记录影响联机和存档回迁。"
+            <TextBlock Text="无缝版暂不支持人偶洗点。请在普通版完成洗点及全部等级分配，正常保存退出后，再导入普通版存档；导入会替换无缝版全部角色进度。"
                        Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,12"/>
           <WrapPanel>
             <Button x:Name="SaveFeatures" Content="保存功能设置" Margin="0,0,10,8"/>

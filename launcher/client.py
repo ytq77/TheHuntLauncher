@@ -10,6 +10,7 @@ import sys
 import uuid
 import time
 import world_recovery
+import trophy_sync
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
@@ -91,6 +92,9 @@ def _prepare(profile, old_auxiliary=None):
         elif origin.is_file():
             shutil.copy2(origin, stage / name)
     save_root = source_path(install)
+    trophies = trophy_sync.prepare([save_root.parent / trophy_sync.NAME],
+                                   stage / 'user' / trophy_sync.NAME)
+    trophy_sync.backup(trophies, stage / 'trophy-import-backup')
     save_state = None
     if save_root.is_dir():
         save_state = copy_verified(save_root, stage / 'user/savedata')
@@ -109,7 +113,9 @@ def _prepare(profile, old_auxiliary=None):
     if save_state is not None:
         if snapshot(save_root) != save_state or content_inventory(snapshot(stage / 'user/savedata')) != content_inventory(save_state):
             raise ValueError('初始化期间存档发生变化或副本校验失败，尚未启用。')
+    trophy_sync.install(trophies)
     stage.rename(ROOT / "data")
+    state('preparing', trophy_sync.notice(trophies['summary']))
 
 
 def build_environment(profile, name, password, settings_env, snapshot):

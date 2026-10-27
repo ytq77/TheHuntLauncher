@@ -14,6 +14,7 @@ import stat
 import subprocess
 import uuid
 import offline_aux
+import trophy_sync
 
 ROOT = Path(__file__).resolve().parent
 REPARSE_POINT = 0x400
@@ -203,6 +204,8 @@ def apply(install, expected_source=None):
         info, original = inspect(install)
         auxiliary = import_auxiliary_snapshot()
         source, destination = Path(info["source"]), Path(info["destination"])
+        trophies = trophy_sync.prepare([source.parent / trophy_sync.NAME],
+                                       destination.parent / trophy_sync.NAME)
         if expected_source and source != plain_path(expected_source):
             raise ValueError("普通版存档路径已发生变化，请重新读取并确认导入来源。")
         stage = plain_path(destination.parent / (".savedata-import-" + uuid.uuid4().hex))
@@ -219,6 +222,8 @@ def apply(install, expected_source=None):
                                    ("import-" + datetime.now().strftime("%Y%m%d-%H%M%S")
                                     + "-" + uuid.uuid4().hex[:8]))
         backup_parent.mkdir(parents=True)
+        trophy_backup = backup_parent / 'trophies'
+        trophy_sync.backup(trophies, trophy_backup)
         moved = []
         installed = False
         old_destination = snapshot(destination) if destination.exists() else None
@@ -242,7 +247,13 @@ def apply(install, expected_source=None):
                 raise ValueError('安装后的存档校验失败。')
             if old_destination is not None and snapshot(backup) != old_destination:
                 raise ValueError('旧存档备份校验失败。')
+            trophy_sync.install(trophies)
         except (OSError, ValueError):
+            trophy_error = False
+            try:
+                trophy_sync.rollback(trophies, trophy_backup)
+            except (OSError, ValueError):
+                trophy_error = True
             try:
                 if installed:
                     rejected = plain_path(destination.parent / ('.savedata-import-rejected-' + uuid.uuid4().hex))
@@ -253,9 +264,14 @@ def apply(install, expected_source=None):
                     backup.rename(destination)
             except OSError:
                 raise ImportRecoveryError(f'替换和回滚均失败。完整旧存档保留在：{backup or backup_parent}；辅助记录保留在：{backup_parent / "auxiliary"}。请勿启动游戏。') from None
+            if trophy_error:
+                raise ImportRecoveryError(f'原存档已恢复，奖杯记录回滚未完成；原始记录保留在：{trophy_backup}。请保留现场。') from None
             raise ValueError('替换存档失败，原无缝版存档及辅助记录已保持或恢复。') from None
         info['auxiliary_backup'] = str(backup_parent / 'auxiliary') if moved else None
         info['backup'] = str(backup) if backup else None
+        info['trophies'] = trophies['summary']
+        info['trophy_backup'] = str(trophy_backup)
+        info['notice'] += '\n' + trophy_sync.notice(trophies['summary'])
         return info
 
 

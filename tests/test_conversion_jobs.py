@@ -13,6 +13,63 @@ import conversion_jobs as jobs
 
 
 class ConversionJobs(unittest.TestCase):
+    def trophy_inputs(self):
+        ordinary = self.source.parent/'trophies.log'
+        seamless = self.seamless.parent/'trophies.log'
+        ordinary.write_bytes(b'14 200\n15 250\n')
+        seamless.write_bytes(b'14 180\n35 300\n')
+        return ordinary, seamless
+
+    def test_export_contains_verified_union_and_instructions_without_changing_sources(self):
+        ordinary, seamless = self.trophy_inputs()
+        self.advance('verify')
+        jobs.dispatch({'action':'export','confirmed':True})
+        job=jobs.load_job()
+        with zipfile.ZipFile(job['export']) as archive:
+            raw=archive.read('trophies.log')
+            self.assertEqual(raw,b'14 180\n15 250\n35 300\n')
+            info=json.loads(archive.read('trophy-sync.json'))
+            self.assertEqual(info['sha256'],hashlib.sha256(raw).hexdigest())
+            self.assertEqual(info['count'],3)
+            self.assertFalse(info['inferred_from_save'])
+            self.assertIn('不要直接覆盖',archive.read('使用说明.txt').decode('utf-8-sig'))
+        self.assertEqual(ordinary.read_bytes(),b'14 200\n15 250\n')
+        self.assertEqual(seamless.read_bytes(),b'14 180\n35 300\n')
+        self.assert_sources_untouched()
+
+    def test_trophy_source_change_invalidates_old_conversion_job(self):
+        ordinary, seamless = self.trophy_inputs()
+        self.create()
+        seamless.write_bytes(b'14 180\n35 300\n36 400\n')
+        with self.assertRaisesRegex(ValueError,'奖杯记录已变化'):
+            jobs.assert_sources(jobs.load_job())
+        self.assert_sources_untouched()
+
+    def test_install_merges_trophies_and_keeps_exact_backup(self):
+        ordinary, seamless = self.trophy_inputs()
+        self.advance('verify')
+        jobs.dispatch({'action':'export','confirmed':True})
+        job=jobs.install_converted_job(jobs.load_job(),True)
+        self.assertEqual(ordinary.read_bytes(),b'14 180\n15 250\n35 300\n')
+        self.assertEqual((Path(job['ordinary_backup']).parent/'trophies/target.log').read_bytes(),b'14 200\n15 250\n')
+        self.assertEqual(seamless.read_bytes(),b'14 180\n35 300\n')
+
+    def test_install_trophy_failure_restores_both_save_and_log(self):
+        ordinary, seamless = self.trophy_inputs()
+        self.advance('verify')
+        jobs.dispatch({'action':'export','confirmed':True})
+        old=jobs.hashes(self.source)
+        original=jobs.trophy_sync.install
+        def fail(plan):
+            original(plan)
+            raise OSError('failure after trophy write')
+        with patch.object(jobs.trophy_sync,'install',side_effect=fail):
+            with self.assertRaisesRegex(ValueError,'原版存档已恢复'):
+                jobs.install_converted_job(jobs.load_job(),True)
+        self.assertEqual(jobs.hashes(self.source),old)
+        self.assertEqual(ordinary.read_bytes(),b'14 200\n15 250\n')
+        self.assertEqual(seamless.read_bytes(),b'14 180\n35 300\n')
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

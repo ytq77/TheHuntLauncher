@@ -16,6 +16,7 @@ import zipfile
 
 import offline_save
 import offline_aux
+import trophy_sync
 
 from client import EBOOT_SHA256
 from save_transfer import plain_path, overlaps, require_stopped, snapshot, source_path
@@ -172,6 +173,10 @@ def create_job(profile, same_role, allow_auxiliary=False):
     try:
         ordinary_state = copy_verified(ordinary, path / 'backup/ordinary/savedata')
         seamless_state = copy_verified(seamless, path / 'backup/seamless/savedata')
+        trophies = trophy_sync.prepare([ordinary.parent / trophy_sync.NAME,
+                                        seamless.parent / trophy_sync.NAME], path / trophy_sync.NAME)
+        trophy_sync.backup(trophies, path / 'backup/trophies')
+        trophy_sync.install(trophies)
         if allow_auxiliary:
             for name, state in auxiliaries.items():
                 if state is not None:
@@ -190,7 +195,8 @@ def create_job(profile, same_role, allow_auxiliary=False):
                'created': datetime.now(timezone.utc).isoformat(), 'profile': profile,
                'ordinary': str(ordinary), 'seamless': str(seamless),
                'source_snapshots': {'ordinary': ordinary_state, 'seamless': seamless_state},
-               'auxiliary_snapshots': auxiliaries, 'helper_sha256': file_hash(mod / 'bbsc.dll')}
+               'auxiliary_snapshots': auxiliaries, 'helper_sha256': file_hash(mod / 'bbsc.dll'),
+               'trophy_plan': trophies}
         save_job(job)
         atomic_json(ROOT / 'conversion-current.json', {'job': job_id})
         assert_sources(job)
@@ -205,6 +211,12 @@ def normalized(value):
 
 
 def assert_sources(job):
+    if job.get('trophy_plan'):
+        trophy_sync.check(job['trophy_plan'], include_target=False)
+        expected = job['trophy_plan']['content']
+        output = job_path(job['id']) / trophy_sync.NAME
+        if (output.read_bytes() if output.exists() else None) != (expected.encode('utf-8') if expected else None):
+            raise ValueError('转换任务的奖杯记录副本已变化，请新建任务。')
     for label in ('ordinary', 'seamless'):
         if normalized(snapshot(plain_path(job[label]))) != normalized(job['source_snapshots'][label]):
             raise ValueError('原始存档在测试期间有更新。请新建测试，以免导出旧进度；当前副本保留。')
@@ -373,23 +385,47 @@ def export_job(job, confirmed):
             for name in manifest:
                 output.write(source / name, 'savedata/' + name)
             output.writestr('savedata-sha256.json', json.dumps(manifest, indent=2))
+            if job.get('trophy_plan'):
+                trophies = job['trophy_plan']
+                trophy_hash = None
+                if trophies['content'] is not None:
+                    output.write(path / trophy_sync.NAME, trophy_sync.NAME)
+                    trophy_hash = file_hash(path / trophy_sync.NAME)
+                output.writestr('trophy-sync.json', json.dumps(
+                    {'schema': 1, 'sha256': trophy_hash, **trophies['summary']}, indent=2))
             output.writestr('使用说明.txt', (('离线转换输出：本次已检查存档结构，未启动游戏，未覆盖原存档。\n'
                 '无缝道具已移除，两栏相关引用已清空，原版联机道具只放背包。\n' if job.get('flow') == OFFLINE_FLOW else
                 '当前角色转换测试输出，未覆盖任何现有存档。\n') +
                 '本包是整份 savedata，只有本轮角色完成检查；恢复范围依据原版备份已有道具，不补发未持有的道具。\n'
-                '请保留原始备份，勿混合两个分支的 userdata 文件。当前无需安装，先完成测试验收。\n').encode('utf-8-sig'))
+                '请保留原始备份，勿混合两个分支的 userdata 文件。\n' +
+                ('奖杯记录说明：' + trophy_sync.notice(job['trophy_plan']['summary']) + '\n'
+                 '如包内有 trophies.log，请放在原版实际用户目录（savedata 的上一层）。\n'
+                 '目标已有该文件时不要直接覆盖；使用新版 The Hunt 的转换并替换可自动合并及备份。\n'
+                 if job.get('trophy_plan') else '')).encode('utf-8-sig'))
         with zipfile.ZipFile(temporary) as check:
             if check.testzip() is not None or any(hashlib.sha256(check.read('savedata/' + name)).hexdigest() != value
                                                 for name, value in manifest.items()):
                 raise ValueError('导出校验失败，未生成可用包。')
+            if job.get('trophy_plan'):
+                content = job['trophy_plan']['content']
+                metadata = json.loads(check.read('trophy-sync.json'))
+                if content is not None:
+                    raw = check.read(trophy_sync.NAME)
+                    if raw != content.encode('utf-8') or hashlib.sha256(raw).hexdigest() != metadata['sha256']:
+                        raise ValueError('奖杯导出校验失败，未生成可用包。')
+                elif trophy_sync.NAME in check.namelist() or metadata['sha256'] is not None:
+                    raise ValueError('无来源记录却出现奖杯文件，已停止导出。')
         if hashes(source) != manifest:
             raise ValueError('导出期间测试存档发生变化，未生成可用包。')
+        assert_sources(job)
         temporary.rename(archive)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
     job.update(state='exported', export=str(archive), export_sha256=file_hash(archive),
                message=MESSAGES['exported'], player_confirmed=True)
+    if job.get('trophy_plan'):
+        job['message'] += '\n' + trophy_sync.notice(job['trophy_plan']['summary'])
     save_job(job)
     return job
 
@@ -454,6 +490,7 @@ def begin_offline(profile, same_role, output):
                    validation='offline-structure', message='离线字段检查通过，正在生成存档包。')
         job = export_job(job, True)
         job['message'] = '已离线转换并导出存档包；未启动游戏，原版与无缝版存档均未替换。原版联机道具只放背包。'
+        job['message'] += '\n' + trophy_sync.notice(job['trophy_plan']['summary'])
         save_job(job)
         if output == 'replace':
             job = install_converted_job(job, True)
@@ -490,6 +527,11 @@ def install_converted_job(job, confirmed):
     backup = plain_path(destination.parent / 'save-conversion-backups' /
                         (job['id'] + '-' + uuid.uuid4().hex[:8]) / 'savedata')
     backup.parent.mkdir(parents=True)
+    trophies = None
+    if job.get('trophy_plan'):
+        trophy_sources = [root / trophy_sync.NAME] if job['trophy_plan']['content'] is not None else []
+        trophies = trophy_sync.prepare(trophy_sources, destination.parent / trophy_sync.NAME)
+        trophy_sync.backup(trophies, backup.parent / 'trophies')
     require_stopped()
     assert_sources(job)
     if hashes(stage) != expected or hashes(source) != expected:
@@ -501,16 +543,28 @@ def install_converted_job(job, confirmed):
         original = {name: row[-1] for name, row in job['source_snapshots']['ordinary'][1].items()}
         if hashes(destination) != expected or hashes(backup) != original:
             raise OSError('Installed save verification failed')
+        if trophies:
+            trophy_sync.install(trophies)
     except (OSError, ValueError):
+        trophy_error = False
+        if trophies:
+            try:
+                trophy_sync.rollback(trophies, backup.parent / 'trophies')
+            except (OSError, ValueError):
+                trophy_error = True
         rejected = plain_path(destination.parent / ('.savedata-conversion-rejected-' + uuid.uuid4().hex))
         try:
             if destination.exists(): destination.rename(rejected)
             backup.rename(destination)
         except OSError:
             raise ValueError(f'替换及恢复未完成。完整旧存档保留在：{backup}；请保留现场，暂勿启动游戏。') from None
+        if trophy_error:
+            raise ValueError(f'原版存档已恢复，但奖杯记录回滚未完成；原记录保留在：{backup.parent / "trophies"}。请保留现场。') from None
         raise ValueError('替换未完成，原版存档已恢复；导出包和失败副本保留。') from None
     job.update(state='applied', ordinary_backup=str(backup), installed_sha256=expected,
                message=f'已替换原版存档。旧原版完整备份：{backup}。无缝版和导出包保留；两个分支的进度没有合并。')
+    if trophies:
+        job['message'] += '\n' + trophy_sync.notice(job['trophy_plan']['summary'])
     save_job(job)
     return job
 

@@ -14,6 +14,49 @@ import save_transfer as transfer
 
 
 class SaveTransferTests(unittest.TestCase):
+    def test_trophy_merge_preserves_other_branch_and_raw_backups(self):
+        source = self.source.parent / 'trophies.log'
+        target = self.destination.parent / 'trophies.log'
+        source.write_bytes(b'14 180\n35 300\n')
+        target.write_bytes(b'14 200\n15 250\n')
+        result = transfer.apply(self.install)
+        self.assertEqual(target.read_bytes(), b'14 180\n15 250\n35 300\n')
+        self.assertEqual(source.read_bytes(), b'14 180\n35 300\n')
+        backup = Path(result['trophy_backup'])
+        self.assertEqual((backup/'target.log').read_bytes(), b'14 200\n15 250\n')
+        self.assertEqual(result['trophies']['count'], 3)
+
+    def test_trophy_write_failure_rolls_back_savedata_and_trophies(self):
+        source = self.source.parent / 'trophies.log'
+        target = self.destination.parent / 'trophies.log'
+        source.write_bytes(b'14 180\n')
+        target.write_bytes(b'15 250\n')
+        old = self.contents(self.destination)
+        original = transfer.trophy_sync.install
+        def fail(plan):
+            original(plan)
+            raise OSError('failure after trophy replacement')
+        with patch.object(transfer.trophy_sync, 'install', side_effect=fail):
+            with self.assertRaisesRegex(ValueError, '已保持或恢复'):
+                transfer.apply(self.install)
+        self.assertEqual(self.contents(self.destination), old)
+        self.assertEqual(target.read_bytes(), b'15 250\n')
+        self.assertEqual(source.read_bytes(), b'14 180\n')
+
+    def test_trophy_changed_during_save_copy_is_refused_without_save_commit(self):
+        source = self.source.parent / 'trophies.log'
+        source.write_bytes(b'14 180\n')
+        old = self.contents(self.destination)
+        original = transfer.copy_verified
+        def mutate(*args):
+            result = original(*args)
+            source.write_bytes(b'15 250\n')
+            return result
+        with patch.object(transfer, 'copy_verified', side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, '奖杯记录已变化'):
+                transfer.apply(self.install)
+        self.assertEqual(self.contents(self.destination), old)
+
     def auxiliary_records(self):
         from test_offline_aux import record
         files = {
