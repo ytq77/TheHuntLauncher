@@ -18,6 +18,14 @@ SOURCES={
 
 def sha(text):return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
+def canonical_patch(path):
+    # Store blank context lines without trailing spaces, then reconstruct the
+    # required unified-diff context prefix. Git for Windows and MSYS2 differ in
+    # accepting empty context lines, and checkout may have emitted CRLF.
+    text=path.read_text(encoding='utf-8')
+    return ''.join(' \n' if line=='\n' else line
+                   for line in text.splitlines(keepends=True)).encode('utf-8')
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('source',type=Path)
@@ -34,9 +42,10 @@ def main():
         path=tree/relative
         path.write_text(path.read_text('utf-8'),encoding='utf-8',newline='\n')
     patch=ROOT/'patches/session-recovery.patch'
+    payload=canonical_patch(patch)
     git=['git','-c','safe.directory='+tree.as_posix()]
-    subprocess.run([*git,'apply','--check',str(patch)],cwd=tree,check=True)
-    subprocess.run([*git,'apply',str(patch)],cwd=tree,check=True)
+    subprocess.run([*git,'apply','--check','-'],input=payload,cwd=tree,check=True)
+    subprocess.run([*git,'apply','-'],input=payload,cwd=tree,check=True)
     for relative,(_,expected,fragments) in SOURCES.items():
         path=tree/relative
         expanded=path.read_text('utf-8')
