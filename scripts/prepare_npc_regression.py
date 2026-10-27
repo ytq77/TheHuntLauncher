@@ -34,6 +34,15 @@ def generate(source, destination):
         'bool BbscHomeForOwnWorld() {',
         'size_t RestoreBbscOwnWorld(std::string_view why) {')]
     template=(ROOT/'tests/npc_prejoin_runtime.cpp.in').read_text(encoding='utf-8')
+    # This fixture isolates the legacy/prejoin NPC baseline path. The enabled
+    # transaction path is covered separately by test_world_recovery.cpp + Python.
+    marker='// NPC_FUNCTIONS'
+    protocol_stubs='''bool BbscWorldRecoveryEnabled(){return false;}
+bool BbscWorldRecoveryCanCapture(){return true;}
+bool BbscRestoreWorldTransaction(std::string_view){return false;}
+std::vector<int> bbsc_recovery_rows;
+'''
+    template=template.replace(marker,protocol_stubs+marker,1)
     for marker,value in [('// NPC_DECLARATIONS','\n'.join(declarations)),('// NPC_FUNCTIONS','\n'.join(functions))]:
         if template.count(marker)!=1:raise ValueError('Unexpected native regression template')
         template=template.replace(marker,value,1)

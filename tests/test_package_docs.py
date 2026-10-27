@@ -50,7 +50,7 @@ class PublicDocumentation(unittest.TestCase):
 
     def test_archive_guard_rejects_update_settings_backups_and_guest_journals(self):
         for name in ('update-settings.json', '.update.lock', 'update-backups/old/Server.exe',
-                     'mod/guest-items/a.json', 'mod/own-world/a.json', 'mod/shared-progress/a.json'):
+                     'mod/guest-items/a.json', 'mod/own-world/a.json', 'mod/shared-progress/a.json', 'data/user/world-recovery/job.json', 'save-proof/run/native.jsonl', 'diagnostics/disk/save.bin'):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 check_public([name])
 

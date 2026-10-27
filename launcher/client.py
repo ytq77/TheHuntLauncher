@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import uuid
+import time
+import world_recovery
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
@@ -161,9 +163,11 @@ def main():
         raise ValueError("请先填写联机账号与密码。")
     feature_environment(ROOT)  # Reject invalid preferences before preparing saves.
     prepare(profile)
+    recovery_env = world_recovery.begin(ROOT)
     state("preparing", "正在同步这台电脑的画质与操作设置…")
     settings_env, snapshot = sync_settings(ROOT, profile)
     env, network = build_environment(profile, name, password, settings_env, snapshot)
+    env.update(recovery_env)
     (ROOT / "settings-snapshot.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     user = ROOT / "data/user"
     user.mkdir(parents=True, exist_ok=True)
@@ -178,16 +182,31 @@ def main():
     with log.open("w", encoding="utf-8") as output:
         output.write("BBSC settings snapshot: " + json.dumps(snapshot) + "\n")
         output.flush()
-        result = subprocess.run([sys.executable, str(ROOT / "engine/run.py")], env=env,
-                                cwd=ROOT / "engine", stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+        result = subprocess.Popen([sys.executable, str(ROOT / "engine/run.py")], env=env,
+                                  cwd=ROOT / "engine", stdin=subprocess.DEVNULL,
+                                  stdout=output, stderr=subprocess.STDOUT,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+        while result.poll() is None:
+            try:
+                world_recovery.poll(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
+            except (ValueError, OSError) as error:
+                world_recovery.json_file(user / 'world-recovery/latest-observation.json',
+                                         {'state': 'waiting', 'message': str(error)})
+            time.sleep(0.1)
     (user / "last-exit.json").write_text(json.dumps({
         "started": started, "ended": datetime.now().isoformat(),
         "exit_code": result.returncode, "log": log.name,
     }, indent=2), encoding="utf-8")
+    world_recovery.process_exited(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'], result.returncode)
+    state("preparing", "游戏已退出，正在核对自己的世界与两代存档…")
+    outcomes = world_recovery.finalize(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
+    waiting_backup = any('waiting-backup' in item for item in outcomes)
+    world_recovery.json_file(user / 'world-recovery/latest-result.json',
+                             {'state': 'waiting-backup' if waiting_backup else 'complete',
+                              'outcomes': outcomes, 'game_exit_code': result.returncode})
     state("exited" if result.returncode == 0 else "error",
-          "本次狩猎已结束。" if result.returncode == 0 else
+          ("主存档已恢复。下次加载并正常保存后，将确认游戏备份。" if waiting_backup else
+           "本次狩猎已结束，世界记录核对完成。") if result.returncode == 0 else
           f"游戏退出，返回码 {result.returncode}。请打开日志查看本次记录。")
     return result.returncode
 

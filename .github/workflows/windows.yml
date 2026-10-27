@@ -58,6 +58,7 @@ jobs:
           python scripts/fetch_sources.py
           python scripts/prepare_sources.py .build/bbsc
           python scripts/localize.py .build/bbsc
+          python scripts/prepare_session_recovery.py .build/bbsc
       - name: Build BBport
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'

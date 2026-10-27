@@ -1,0 +1,234 @@
+--- a/emulator/src/core/bloodborne_re_zh_cn.cpp
++++ b/emulator/src/core/bloodborne_re_zh_cn.cpp
+@@ -15,6 +15,13 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <iomanip>
++extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
++extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
++extern "C" __declspec(dllimport) int __stdcall ReadProcessMemory(void*, const void*, void*, std::size_t, std::size_t*);
++extern "C" __declspec(dllimport) long __stdcall BCryptOpenAlgorithmProvider(void**, const wchar_t*, const wchar_t*, unsigned long);
++extern "C" __declspec(dllimport) long __stdcall BCryptHash(void*, unsigned char*, unsigned long, unsigned char*, unsigned long, unsigned char*, unsigned long);
++extern "C" __declspec(dllimport) long __stdcall BCryptCloseAlgorithmProvider(void*, unsigned long);
++#include <iterator>
+ #include <limits>
+ #include <map>
+ #include <mutex>
+@@ -3156,6 +3163,12 @@
+ void KeepBbscOwnWorldGroup(u32 key, const u8* live); // see "Own world journal"
+ const u8* BbscOwnDreamBaseline(u32 key, const u8* live);
+ void CaptureBbscOwnWorldBeforeJoin();
++bool BbscWorldRecoveryEnabled();
++bool BbscWorldRecoveryJournalFrozen();
++bool BbscWorldRecoveryWaiting();
++bool BbscRecordWorldRecovery(u32 mode);
++void BbscWorldRecoveryQuit(bool confirmed);
++bool BbscWorldRecoveryCanCapture();
+ void WriteBbscOwnWorldFile();
+ void NoteBbscOwnDreamRestored(u32 key, const u8* live);
+ s32 GetSessionState();
+@@ -5701,6 +5714,7 @@
+ // game thread, before the load): every map group of kinds 1/5/6/7 and the
+ // Dream globals, before vanilla co-op can replace their live values.
+ void CaptureBbscOwnWorldBeforeJoin() {
++    if (!BbscWorldRecoveryCanCapture()) return;
+     if (image_base == 0 || !bbsc_own_world.empty()) {
+         return; // a copy is kept already (an earlier session that has not got home yet)
+     }
+@@ -5774,6 +5788,7 @@
+ }
+ 
+ void WriteBbscOwnWorldFile() {
++    if (BbscWorldRecoveryWaiting() || BbscWorldRecoveryJournalFrozen()) return;
+     if (!bbsc_own_world_dirty || bbsc_own_world.empty()) {
+         return;
+     }
+@@ -5810,6 +5825,7 @@
+     std::filesystem::rename(temp, path, ec);
+     if (!ec) {
+         bbsc_own_world_dirty = false;
++        if (BbscWorldRecoveryEnabled()) BbscRecordWorldRecovery(1);
+     }
+ }
+ 
+@@ -5844,8 +5860,19 @@
+            ReadValue<u64>(image_base + WorldFlagManPointerOffset, 0) != 0;
+ }
+ 
++#include "bbsc_world_recovery.inc"
++
++bool BbscWorldRecoveryCanCapture() {
++    return !BbscWorldRecoveryEnabled() ||
++           (!BbscWorldRecoveryWaiting() && !bbsc_recovery_title_exit && !BbscRecoveryHasPendingSave());
++}
++
++#include "bbsc_save_proof.inc"
++
+ // Our own groups back into the live table. Returns the groups written (0 = nothing kept).
+ size_t RestoreBbscOwnWorld(std::string_view why) {
++    if (BbscWorldRecoveryEnabled())
++        return BbscRestoreWorldTransaction(why) ? bbsc_recovery_rows.size() : 0;
+     if (bbsc_own_world.empty() || image_base == 0 || !BbscHomeForOwnWorld()) {
+         return 0;
+     }
+@@ -5911,6 +5938,11 @@
+ }
+ 
+ void TickBbscOwnWorld() {
++    if (BbscWorldRecoveryEnabled()) {
++        BbscRecoveryPollAck();
++        if (bbsc_recovery_waiting ||
++            (!bbsc_own_world.empty() && BbscHomeForOwnWorld())) return;
++    }
+     static s64 last_ms = 0;
+     static s64 recover_checked_ms = 0;
+     const s64 now = SteadyNowMs();
+@@ -5943,9 +5975,13 @@
+ // The load home: as early as the load's respawn point / character creation, before the map's
+ // events read the flags (and before shared progress merges the host's into them).
+ void RestoreBbscOwnWorldAtLoad() {
+-    if (!bbsc_own_world.empty()) {
+-        RestoreBbscOwnWorld("during the home load");
+-    }
++    if (BbscWorldRecoveryEnabled()) {
++        BbscWorldRecoveryLoadedAfterTitle();
++        bbsc_recovery_at_load = true;
++    }
++    if (!bbsc_own_world.empty()) RestoreBbscOwnWorld("during the home load");
++    bbsc_recovery_at_load = false;
++    BbscSaveProofAtLoad();
+ }
+ 
+ // ---- Guest loot view (2026-09-27) --------------------------------------------------------------
+@@ -8143,8 +8179,12 @@
+              "map={:#x}",
+              caller > image_base ? caller - image_base : caller, GetSessionState(),
+              RemotePlayerCount(), GetCurrentPackedMap());
++    BbscWorldRecoveryQuit(false);
+     SuspendBbscPersistence("quit to title");
+ }
++
++#include "bbsc_menu_quit.inc"
++
+ 
+ // ---- Stray forced warp on a host (2026-10-07) ---------------------------------------------------
+ // Report: kicking the guest with the Blank sent the host to the title, and loading back in left him
+@@ -8651,6 +8691,8 @@
+                   RegistReturnTitleOffset);
+         return;
+     }
++    InstallBbscMenuQuitHook();
++    InstallBbscSaveProofHook();
+     LOG_INFO(Debug, "BBSC quit to title ends the session for both players (RegistReturnTitle {:#x})",
+              RegistReturnTitleOffset);
+ }
+@@ -9804,6 +9846,10 @@
+ 
+ // Guest: collect while in the session; merge once home.
+ void TickBbscSharedProgress() {
++    if (BbscWorldRecoveryEnabled() && BbscHomeForOwnWorld() &&
++        (!bbsc_own_world.empty() || BbscWorldRecoveryWaiting() || BbscRecoveryHasPendingSave()))
++        return; // The personal baseline must be saved before a deliberate host-progress merge.
++
+     static s64 last_ms = 0;
+     const s64 now = SteadyNowMs();
+     if (!BbscSharedProgressEnabled() || image_base == 0 || now - last_ms < 1'000) {
+@@ -9960,6 +10006,10 @@
+ // there, so the map comes up with the host's progress already in it. The tick above checks again
+ // once we are settled (and merges whatever did not stick, should the own-world table come later).
+ void ApplyBbscSharedProgressAtLoad() {
++    if (BbscWorldRecoveryEnabled() && BbscHomeForOwnWorld() &&
++        (!bbsc_own_world.empty() || BbscWorldRecoveryWaiting() || BbscRecoveryHasPendingSave()))
++        return; // The personal baseline must be saved before a deliberate host-progress merge.
++
+     if (!BbscSharedProgressEnabled() || image_base == 0 || !bbsc_progress_was_guest ||
+         bbsc_progress_merged_at_load) {
+         return;
+@@ -12201,6 +12251,35 @@
+     }
+ }
+ 
++#include "bbsc_kit_fast_prepare.inc"
++
++
++void TickBbscRecoveryBellGuard() {
++    if (!BbscWorldRecoveryEnabled()) return;
++    const auto table = BbscActiveGoodsTable();
++    if (!table) return;
++    static std::map<u32,u8> saved;
++    static bool announced = false;
++    const bool blocked = BbscWorldRecoveryWaiting() || bbsc_recovery_title_exit || BbscRecoveryHasPendingSave() ||
++                         (BbscHomeForOwnWorld() && !bbsc_own_world.empty());
++    if (blocked && !announced && BbscHomeForOwnWorld()) {
++        announced = true;
++        BbscAnnounce(u"正在核对世界恢复与游戏备份。\n保存确认完成后，即可继续鸣铃。",
++                     "world recovery awaits a complete native backup save");
++    } else if (!blocked) announced = false;
++    std::scoped_lock lock{bbsc_kit_rows_mutex};
++    for (u32 id : {4016u,4121u,11201u}) {
++        const auto row = BbscParamRow(table, id, GoodsRowSize);
++        if (!row) continue;
++        if (blocked) {
++            if (!saved.contains(id)) saved[id] = ReadValue<u8>(row, 68);
++            WriteValue<u8>(row, 68, 0);
++        } else if (const auto old = saved.find(id); old != saved.end()) {
++            WriteValue<u8>(row, 68, old->second); saved.erase(old);
++        }
++    }
++}
++
+ void PrepareBbscDuelBell() {
+     const s64 started_ms = SteadyNowMs();
+     const auto goods_tables = FindBbscParamTables("EQUIP_PARAM_GOODS_ST", 100, 1);
+@@ -12236,6 +12315,7 @@
+         WriteValue<u16>(effect, 0x156, 0);  // stateInfo: no summon sign
+         effects.push_back(effect);
+     }
++    std::scoped_lock kit_lock{bbsc_kit_rows_mutex};
+     for (const u64 table : goods_tables) {
+         PrepareBbscKitRows(table);
+         const u64 row = BbscParamRow(table, BbscDuelBellGoodsId, GoodsRowSize);
+@@ -13727,6 +13807,8 @@
+         CaptureBbscGuestLoot();
+         TickBbscGuestLootReset();
+         TickBbscDreamStateRestore();
++        TickBbscKitFastPrepare();
++        TickBbscRecoveryBellGuard();
+         TickBbscFreeBell();
+         TickBbscEchoTrace();
+         TickBbscMapTrace();
+--- a/emulator/mod/bbsc_mod_zh_cn.cpp
++++ b/emulator/mod/bbsc_mod_zh_cn.cpp
+@@ -488,30 +488,8 @@
+ std::mutex guarded_mutex;
+ std::vector<GuardedSlot> guarded_slots;
+ 
+-DWORD WINAPI SlotGuardThread(void*) {
+-    for (;;) {
+-        Sleep(5);
+-        std::scoped_lock lock{guarded_mutex};
+-        for (auto& guarded : guarded_slots) {
+-            auto* slot = reinterpret_cast<volatile u64*>(EbootBase + guarded.slot_offset);
+-            const u64 value = *slot;
+-            if (value == guarded.wrapper || value == 0 ||
+-                (value >= EbootBase && value < EbootBase + EbootSize)) {
+-                continue;
+-            }
+-            *reinterpret_cast<void* volatile*>(guarded.original) = reinterpret_cast<void*>(value);
+-            DWORD old = 0;
+-            VirtualProtect(const_cast<u64*>(slot), 8, PAGE_READWRITE, &old);
+-            *slot = guarded.wrapper;
+-            DWORD ignored = 0;
+-            VirtualProtect(const_cast<u64*>(slot), 8, old, &ignored);
+-            if (++guarded.rewritten <= 3) {
+-                LOG_INFO(Mod, "Import {} was linked again by the emulator - wrapper put back ({}x)",
+-                         guarded.name, guarded.rewritten);
+-            }
+-        }
+-    }
+-}
++#include "bbsc_slot_guard.inc"
++
+ } // namespace
+ 
+ void GuardSlot(u64 slot_offset, u64 wrapper, void** original, const char* name) {

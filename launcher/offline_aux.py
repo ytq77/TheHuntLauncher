@@ -71,6 +71,9 @@ def validate(folder, savedata, slot):
             relative = path.relative_to(folder).as_posix()
             if category == 'shared-progress':
                 raise save.Unsupported('存在共享进度辅助记录，暂不支持离线转换；请保留记录。')
+            if category == 'own-world' and re.fullmatch(r'own-save-[0-9]\.bin\.awaiting-save', path.name):
+                raise save.Unsupported('世界恢复的主存档已就绪，游戏备份尚待确认。请用当前 The Hunt 加载对应角色，'
+                                       '正常保存退出后重试；不要删除待确认记录。')
             if category == 'own-world' and re.fullmatch(r'own-save-[0-9]\.bin', path.name):
                 raise save.Unsupported('存在尚待恢复的自己世界记录。请用 The Hunt 加载该角色，在自己的世界等候恢复，'
                                        '从游戏菜单正常退出后重试；不要删除 own-world 记录。')

@@ -6,6 +6,7 @@
 python scripts/fetch_sources.py
 python scripts/prepare_sources.py .build/bbsc
 python scripts/localize.py .build/bbsc
+python scripts/prepare_session_recovery.py .build/bbsc
 cd .build/bbport
 bash build.sh
 bash tools/fetch_fsr4_assets.sh
