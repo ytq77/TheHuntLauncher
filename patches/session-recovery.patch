@@ -37,7 +37,7 @@
      }
 @@ -5774,6 +5788,7 @@
  }
- 
+
  void WriteBbscOwnWorldFile() {
 +    if (BbscWorldRecoveryWaiting() || BbscWorldRecoveryJournalFrozen()) return;
      if (!bbsc_own_world_dirty || bbsc_own_world.empty()) {
@@ -50,11 +50,11 @@
 +        if (BbscWorldRecoveryEnabled()) BbscRecordWorldRecovery(1);
      }
  }
- 
+
 @@ -5844,8 +5860,19 @@
             ReadValue<u64>(image_base + WorldFlagManPointerOffset, 0) != 0;
  }
- 
+
 +#include "bbsc_world_recovery.inc"
 +
 +bool BbscWorldRecoveryCanCapture() {
@@ -73,7 +73,7 @@
      }
 @@ -5911,6 +5938,11 @@
  }
- 
+
  void TickBbscOwnWorld() {
 +    if (BbscWorldRecoveryEnabled()) {
 +        BbscRecoveryPollAck();
@@ -98,7 +98,7 @@
 +    bbsc_recovery_at_load = false;
 +    BbscSaveProofAtLoad();
  }
- 
+
  // ---- Guest loot view (2026-09-27) --------------------------------------------------------------
 @@ -8143,8 +8179,12 @@
               "map={:#x}",
@@ -110,7 +110,7 @@
 +
 +#include "bbsc_menu_quit.inc"
 +
- 
+
  // ---- Stray forced warp on a host (2026-10-07) ---------------------------------------------------
  // Report: kicking the guest with the Blank sent the host to the title, and loading back in left him
 @@ -8651,6 +8691,8 @@
@@ -123,7 +123,7 @@
               RegistReturnTitleOffset);
  }
 @@ -9804,6 +9846,10 @@
- 
+
  // Guest: collect while in the session; merge once home.
  void TickBbscSharedProgress() {
 +    if (BbscWorldRecoveryEnabled() && BbscHomeForOwnWorld() &&
@@ -147,7 +147,7 @@
 @@ -12201,6 +12251,35 @@
      }
  }
- 
+
 +#include "bbsc_kit_fast_prepare.inc"
 +
 +
@@ -202,7 +202,7 @@
 @@ -488,30 +488,8 @@
  std::mutex guarded_mutex;
  std::vector<GuardedSlot> guarded_slots;
- 
+
 -DWORD WINAPI SlotGuardThread(void*) {
 -    for (;;) {
 -        Sleep(5);
@@ -230,5 +230,5 @@
 +#include "bbsc_slot_guard.inc"
 +
  } // namespace
- 
+
  void GuardSlot(u64 slot_offset, u64 wrapper, void** original, const char* name) {
