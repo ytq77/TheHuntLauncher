@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import zipfile
 from isolate_patches import patched_script
-from port_compat import patched_run_script
+from port_compat import patched_run_script, patched_mods_script
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
@@ -129,6 +129,9 @@ def main():
     run_script = dest / "engine/run.py"
     run_script.write_text(patched_run_script(run_script.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    menu_mods = dest / "engine/scripts/mods.py"
+    menu_mods.write_text(patched_mods_script(menu_mods.read_text(encoding="utf-8")), encoding="utf-8")
+    shutil.copy2(ROOT / "scripts/quit_text_compat.py", dest / "engine/scripts/quit_text_compat.py")
     script = dest / "engine/scripts/patches.py"
     script.write_text(patched_script(script.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copytree(args.port / "patches", dest / "engine/patches")
@@ -195,6 +198,8 @@ def main():
     info["features"].extend(["automatic-updates", "verified-save-import", "unchanged-event-region", "confirmed-empty-host-cancel", "prejoin-dream-baseline"])
     info["features"].extend(["active-kit-prepare", "confirmed-menu-quit", "fixed-world-save-mapping", "native-save-proof", "guarded-import-slots"])
     info["session_recovery_validation"] = "BBport 1.9.4: isolated two-PC guest join/movement, confirmed menu quit while window stays at title, process close, automatic primary-only event recovery, standalone online reload and both actual save generations verified. Fixed 979 logical groups/939 positions retained. User confirmed items, lamps, scene and movement normal. No normal-install saves were changed during testing. Other crash/death/invasion combinations remain unverified."
+    info["features"].append("post-mod-quit-text-compatibility")
+    info["quit_text_validation"] = "13 synthetic and actual-mod-loader checks passed; three supplied language-mod archives preserve all non-quit entries and source bytes. Correct game-visible exit labels and direct-desktop co-op cancellation/confirmation remain pending gameplay validation."
     info["npc_recovery_validation"] = "BBport 1.9.4: two-PC isolated guest passed join, Hunter's Dream round trip, selected dismissal, normal save and standalone reload. Native function traces and both complete save generations preserve the original NPC group; another character remains unchanged. Death, crash, invasion and reversed-host combinations not re-tested. Existing damaged saves are not automatically repaired."
     info["save_safety_validation"] = "Stable verified import copies, settled auxiliary-record archiving, pending-record rejection, rollback and unconditional unchanged event-region checks are covered by the bundled regression suite. No production save is modified during packaging."
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")

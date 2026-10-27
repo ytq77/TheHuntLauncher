@@ -20,6 +20,8 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 
 这是 **0.1.0 预览版**。当前 BBport 1.9.4 已在独立存档副本中验证在线加载、五件道具分类/中文/图标、左右触摸板、DLSS，以及双人移动和菜单退出。本轮客机退出后关闭程序、自动恢复、独自重载和两代存档确认也已通过。此前另有梦境往返及 NPC 恢复验证；死亡复活、强退、入侵和交换房主等组合没有全部随本次补丁重测。详见[验证范围](docs/validation.md)。
 
+游戏汉化MOD覆盖新增退出文字的问题已加入[退出文本兼容修正](docs/quit-to-desktop.md)，保留其他译文，并沿用普通版的功能开关。
+
 合作退出与世界记录等待的说明见[世界恢复流程](docs/world-recovery.md)。如果刚退出合作，请关闭游戏窗口后再重启加载；不要手动删除待确认记录。
 
 ## 使用
