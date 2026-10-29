@@ -73,7 +73,7 @@ def main():
     args = parser.parse_args()
     lock = json.loads((ROOT / "upstream.lock.json").read_text(encoding="utf-8"))
     out = ROOT / "dist"
-    dest = out / ("BBSC-Launcher-" + lock["version"] + "-windows-x64")
+    dest = out / ("TheHuntLauncher-" + lock["version"] + "-windows-x64")
     if dest.exists():
         raise SystemExit("Staging folder exists. Refusing to overwrite a possible initialized install.")
     for folder in ("bin", "mod", "engine", "runtime/bin", "licenses", "source-info"):
@@ -214,8 +214,12 @@ def main():
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)
+    # Installed clients select this exact legacy asset name. Keep identical bytes
+    # available so renaming the public package does not break automatic updates.
+    legacy = out / ("BBSC-Launcher-" + lock["version"] + "-windows-x64.zip")
+    shutil.copy2(archive, legacy)
     (out / "SHA256SUMS.txt").write_text("".join(digest(path) + "  " + path.name + "\n"
-                                               for path in (archive, graphics_source)), encoding="utf-8")
+                                               for path in (archive, legacy, graphics_source)), encoding="utf-8")
     print(json.dumps({"archive": str(archive), "bytes": archive.stat().st_size, "files": len(files),
                       "sha256": digest(archive)}, indent=2))
 

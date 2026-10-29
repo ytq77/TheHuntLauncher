@@ -109,7 +109,7 @@ jobs:
           pacman -Q > dist/toolchain-packages.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: BBSC-Launcher-windows-x64
+          name: TheHuntLauncher-windows-x64
           path: |
             dist/*.zip
             dist/SHA256SUMS.txt
@@ -128,7 +128,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: BBSC-Launcher-windows-x64
+          name: TheHuntLauncher-windows-x64
           path: release
       - name: Check tag and publish prerelease
         env:
@@ -136,4 +136,4 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 -c 'import json,os; assert os.environ["RELEASE_TAG"] == "v"+json.load(open("upstream.lock.json"))["version"]'
-          gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --notes-file "docs/releases/$RELEASE_TAG.md" --title "The Hunt - BBSC Launcher $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --notes-file "docs/releases/$RELEASE_TAG.md" --title "The Hunt Launcher $RELEASE_TAG"

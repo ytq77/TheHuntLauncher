@@ -36,7 +36,7 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
   `runtime/licenses/`; build package versions are recorded with release artifacts.
 
 The exact upstream commits are in upstream.lock.json. Every release built by this
-repository includes BBSC-Launcher-sources.zip with the patched application sources,
+repository includes TheHuntLauncher-sources.zip with the patched application sources,
 generated localization, build scripts, and BBport sources including its submodules.
 The matching source archive is distributed beside the binaries.
 

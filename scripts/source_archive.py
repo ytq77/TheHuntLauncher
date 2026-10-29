@@ -23,7 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=Path, default=ROOT / ".build/bbport")
     args = parser.parse_args()
-    out = ROOT / "dist/BBSC-Launcher-sources.zip"
+    out = ROOT / "dist/TheHuntLauncher-sources.zip"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for folder in ("launcher", "scripts", "patches", "locales", "tests", "docs", ".github"):
             paths = (public_docs(ROOT / folder) if folder == "docs" else

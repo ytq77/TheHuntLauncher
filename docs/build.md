@@ -33,8 +33,9 @@ DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.5 发行�
 
 产物位于 `dist/`：
 
-- `BBSC-Launcher-<version>-windows-x64.zip`：干净的首次安装包。
-- `BBSC-Launcher-sources.zip`：对应应用源码、补丁及构建脚本。
+- `TheHuntLauncher-<version>-windows-x64.zip`：干净的首次安装包。
+- `TheHuntLauncher-sources.zip`：对应应用源码、补丁及构建脚本。
+- `BBSC-Launcher-<version>-windows-x64.zip`：与主安装包逐字节相同的旧版自动更新兼容包。
 - `SHA256SUMS.txt`：全部发布 ZIP 的校验值。
 - `fsr4vk-v0.4.3-amdfix-src.zip`：Vulkan 动态组件的对应源码，另列入校验文件并随发布提供。
 
