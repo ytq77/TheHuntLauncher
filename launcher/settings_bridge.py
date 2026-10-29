@@ -12,6 +12,9 @@ VALUES = {
     "voice_language": ("BB_VOICE_LANGUAGE", "auto"), "draw_pipe": ("BB_DRAW_PIPE", ""),
     "readbacks": ("BB_READBACKS", ""), "frames_ahead": ("BB_FRAMES_AHEAD", ""),
     "low_vram": ("BB_LOW_VRAM", ""),
+    "low_latency": ("BB_LOW_LATENCY", ""), "async_pipelines": ("BB_ASYNC_PIPELINES", ""),
+    "vrr": ("BB_VRR", ""), "early_submit": ("BB_EARLY_SUBMIT", ""),
+    "menu_key": ("BB_MENU_KEY", ""), "menu_pad": ("BB_MENU_PAD", ""),
 }
 FLAGS = {
     "fullscreen": ("BB_FULLSCREEN", False), "hdr": ("BB_HDR", False),
@@ -52,13 +55,18 @@ def sync_settings(root, profile, settings_path=None):
             if key in EXTRA_KEYS:
                 env[key] = value
 
-    # Match 1.9.4's shared launcher/overlay settings, including in-game restarts.
+    if settings.get("fullscreen") and settings.get("exclusive_fullscreen"):
+        env["BB_WINDOW_MODE"] = "fullscreen"
+    if settings.get("vram_warning") is False:
+        env["BB_VRAM_WARN_MB"] = "0"
+
+    # Match 1.9.5's shared launcher/overlay settings, including in-game restarts.
     backend = "dx12" if ini.get("fsr411_backend") == "dx12" else "vk"
     env.update(BB_SHARED_GRAPHICS_CONFIG="1", BB_FSR411_BACKEND=backend,
                BB_FSR411_NATIVE="1" if backend == "dx12" else "0",
                BB_OBJECT_MOTION_CACHE="1" if (ini.get("object_motion_cache") == "1" and
                    ini.get("object_motion", "1") == "1" and
-                   ini.get("upscaler") in {"fsr3", "fsr4", "fsr411"}) else "0",
+                   ini.get("upscaler") in {"fsr3", "fsr4", "fsr411", "fsr412"}) else "0",
                BB_REBIRTH="0")
 
     # Rebirth carries separate free-level state and changes the Doll's event flow.

@@ -1,8 +1,9 @@
 {
-  "source": "https://github.com/Supermedo/bloodborne_pc/releases/tag/windows-v1.9.4",
-  "archive_url": "https://github.com/Supermedo/bloodborne_pc/releases/download/windows-v1.9.4/Bloodborne-Windows.zip",
-  "archive_size": 189268960,
-  "archive_sha256": "b94390545fa72c05f0800f7cd7b5aa9fa4424fbb0e268a5b25bfa48331fa8f5a",
+  "source": "https://github.com/Supermedo/bloodborne_pc/releases/tag/windows-v1.9.5",
+  "version": "1.9.5",
+  "archive_url": "https://github.com/Supermedo/bloodborne_pc/releases/download/windows-v1.9.5/Bloodborne-Windows.zip",
+  "archive_size": 189931692,
+  "archive_sha256": "c4b738926f4fe7267c69c1a9fff67b163f7f55030f4ea061fd1a7962ce6322ec",
   "files": {
     "bin/bbport_dlss.dll": {
       "size": 257024,
@@ -21,8 +22,8 @@
       "sha256": "3027f23ca5a46dd9cb8183fbd522983a86f64d7daac5982912bf9f214671f294"
     },
     "licenses/bbport_dlss-LICENSE.txt": {
-      "size": 1434,
-      "sha256": "56b6f9b125691bbf1b34cf1c20870174124ddc8eef33c72bde5ede3b6e84a9ec"
+      "size": 1461,
+      "sha256": "4d9b9d1a8686c04c8d0c69cbc744c6889b04ed3a8debf50c548c312bf1d6ed8a"
     }
   }
 }

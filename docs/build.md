@@ -7,6 +7,7 @@ python scripts/fetch_sources.py
 python scripts/prepare_sources.py .build/bbsc
 python scripts/localize.py .build/bbsc
 python scripts/prepare_session_recovery.py .build/bbsc
+python scripts/prepare_personal_rewards.py .build/bbsc
 cd .build/bbport
 bash build.sh
 bash tools/fetch_fsr4_assets.sh
@@ -24,7 +25,11 @@ python scripts/source_archive.py
 
 `fetch_sources.py` 只接受新构建目录，防止覆盖修改过的上游源码。准备脚本对预期代码进行精确匹配；上游变化时停止，而不会猜测替换。
 
-DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.4 发行包，校验完整归档及五个文件的 SHA256，保留两份许可与来源记录。缺少或校验失败将停止打包，避免选择 DLSS 后因漏包而回退 FSR3。桥接源码随固定 BBport 源码提供；不要求本机另外安装 MSVC 来重编该独立动态组件。
+`prepare_personal_rewards.py` 在既有会话恢复源码通过固定摘要检查后，增加个人奖励修复及同轮返家后的原生保存凭据。打包脚本自动包含 `launcher/home_save_proof.py`；运行时验证模块与 DLL 必须成套使用。
+
+DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.5 发行包，校验完整归档及五个文件的 SHA256，保留两份许可与来源记录。缺少或校验失败将停止打包，避免选择 DLSS 后因漏包而回退 FSR3。桥接源码随固定 BBport 源码提供；不要求本机另外安装 MSVC 来重编该独立动态组件。
+
+1.9.5 的部分 FSR 头文件名很长。Windows CI 为 Git 启用长路径，并在引擎构建期间将固定源码目录临时映射到未占用的 B:，结束后解除映射；不移动或删除源码。手动构建宜使用较短的工作目录。
 
 产物位于 `dist/`：
 

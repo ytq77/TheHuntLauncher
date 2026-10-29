@@ -19,7 +19,7 @@ def verified(path, size, expected):
 def prepare(folder):
     manifest = json.loads((ROOT / "scripts/dlss-runtime.lock.json").read_text(encoding="utf-8"))
     folder.mkdir(parents=True, exist_ok=True)
-    archive = folder / "Bloodborne-Windows-1.9.4.zip"
+    archive = folder / ("Bloodborne-Windows-" + manifest.get("version", "1.9.4") + ".zip")
     if not verified(archive, manifest["archive_size"], manifest["archive_sha256"]):
         temporary = archive.with_suffix(".zip.part")
         request = urllib.request.Request(manifest["archive_url"], headers={"User-Agent": "The-Hunt-DLSS-assets"})

@@ -98,6 +98,26 @@ class QuitTextCompatibility(unittest.TestCase):
         self.assertIsNone(compat.prepare_layer([layer],self.out,mods.mod_files))
         self.assertFalse(self.out.exists())
 
+    def test_prepared_pc_labels_survive_language_mod_without_changing_its_translation(self):
+        import pc_menu
+        prepared=q.menu_texts(archive(),q.TEXTS['zhocn'],pc_menu.texts())
+        lower=self.layer('quit_text',prepared)
+        upper=self.layer('translation',archive(extra='保留这份完整汉化'))
+        generated=compat.prepare_layer([lower,upper],self.out,mods.mod_files)
+        data=bodies((generated[1]/'dvdroot_ps4/msg/zhocn/menu.msgbnd.dcx').read_bytes())
+        names=q.read_fmg(data[200])
+        self.assertEqual(names[119001],'PC Graphics');self.assertEqual(names[119002],'PC Effects')
+        self.assertEqual(names[110000],'保留这份完整汉化')
+
+    def test_existing_translated_pc_labels_are_preserved(self):
+        import pc_menu
+        extra=pc_menu.texts();prepared=q.menu_texts(archive(),q.TEXTS['zhocn'],extra)
+        translated=q.menu_texts(archive(),q.TEXTS['zhocn'],{200:{119001:'电脑画面设置'}})
+        lower=self.layer('quit_text',prepared);upper=self.layer('translation',translated)
+        generated=compat.prepare_layer([lower,upper],self.out,mods.mod_files)
+        names=q.read_fmg(bodies((generated[1]/'dvdroot_ps4/msg/zhocn/menu.msgbnd.dcx').read_bytes())[200])
+        self.assertEqual(names[119001],'电脑画面设置');self.assertEqual(names[119003],'PC Options')
+
     def test_unchanged_input_reuses_output_without_rewriting(self):
         layers=[self.layer('quit_text',archive())]
         first=compat.prepare_layer(layers,self.out,mods.mod_files)

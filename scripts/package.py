@@ -8,10 +8,10 @@ import shutil
 import subprocess
 import zipfile
 from isolate_patches import patched_script
-from port_compat import patched_run_script, patched_mods_script
+from port_compat import patched_run_script, patched_mods_script, patched_coop_saves
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
+PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
@@ -127,7 +127,13 @@ def main():
         shutil.copy2(args.port / relative, dest / "licenses" / name)
     shutil.copy2(args.port / "run.py", dest / "engine/run.py")
     run_script = dest / "engine/run.py"
-    run_script.write_text(patched_run_script(run_script.read_text(encoding="utf-8")), encoding="utf-8")
+    run_script.write_text(patched_coop_saves(patched_run_script(run_script.read_text(encoding="utf-8"))), encoding="utf-8")
+    # 1.9.5's direct runner uses driver discovery and optional exit backups.
+    # Include their small dependency closure, without the upstream GUI/accounts.
+    (dest / "engine/launcher").mkdir()
+    for name in ("bbport_driver_runtime", "bbport_exit_backup", "bbport_saves",
+                 "bbport_character", "bbport_trophies"):
+        shutil.copy2(args.port / "launcher" / (name + ".py"), dest / "engine/launcher" / (name + ".py"))
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
     menu_mods = dest / "engine/scripts/mods.py"
     menu_mods.write_text(patched_mods_script(menu_mods.read_text(encoding="utf-8")), encoding="utf-8")
@@ -202,6 +208,9 @@ def main():
     info["quit_text_validation"] = "13 synthetic and actual-mod-loader checks passed; three supplied language-mod archives preserve all non-quit entries and source bytes. Correct game-visible exit labels and direct-desktop co-op cancellation/confirmation remain pending gameplay validation."
     info["npc_recovery_validation"] = "BBport 1.9.4: two-PC isolated guest passed join, Hunter's Dream round trip, selected dismissal, normal save and standalone reload. Native function traces and both complete save generations preserve the original NPC group; another character remains unchanged. Death, crash, invasion and reversed-host combinations not re-tested. Existing damaged saves are not automatically repaired."
     info["save_safety_validation"] = "Stable verified import copies, settled auxiliary-record archiving, pending-record rejection, rollback and unconditional unchanged event-region checks are covered by the bundled regression suite. No production save is modified during packaging."
+    info["features"].extend(["personal-shop-rewards", "single-personal-enemy-roll", "same-run-home-save-proof", "bbport-195-existing-save-root"])
+    info["personal_rewards_validation"] = "BBport 1.9.4 / unchanged BBSC candidate: user accepted personal shops, no historical NPC badge compensation, and one ordinary enemy drop. Same-run return home verified 979 recovery rows / 939 persistent positions, both native save generations, archived transaction and clean process exit on 2026-10-29. These results are reused for the unchanged BBSC gameplay code; they do not claim a 1.9.5 gameplay run."
+    info["bbport_upgrade_validation"] = "1.9.5: pinned source build and automated runner/package compatibility checks. Preserve The Hunt's existing isolated user/save paths and explicit server addresses, keep Rebirth disabled, include direct-runner imports. New graphics, PC menu interaction and online play on the 1.9.5 engine still require normal user feedback; no repetition of the unchanged reward checks is requested."
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

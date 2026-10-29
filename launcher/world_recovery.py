@@ -11,6 +11,7 @@ import uuid
 import offline_aux
 import offline_save
 import save_proof
+import home_save_proof
 from save_transfer import plain_path, require_stopped, import_lock
 
 HEADER = struct.Struct('<4sIQ32sIIIQ')
@@ -248,7 +249,8 @@ def saved_matches(request, value):
     strict = [file_matches(request, value, name, raw) for name,raw in current.items()]
     if all(strict):
         return True
-    proof = save_proof.verify(request, value, current)
+    proof = (save_proof.verify(request, value, current) or
+             home_save_proof.verify(request, value, current))
     if proof:
         request['native_save_proof'] = proof
     return proof is not None
@@ -270,6 +272,11 @@ def finish(request, value, *, proof):
         if receipt is None or sha(receipt) != value['native_save_proof']['native_receipt_sha256']:
             raise ValueError('游戏保存凭据发生变化，保留恢复任务。')
         atomic(job/'native-save-proof.jsonl', receipt)
+        if value['native_save_proof'].get('origin') == 'same-run-home-restore':
+            bank = request.get('native_restored_bank')
+            if bank is None or sha(bank) != value['native_save_proof']['restored_bank_sha256']:
+                raise ValueError('内存恢复的事件区凭据不完整，保留恢复任务。')
+            atomic(job/'native-restored-bank.bin', bank)
     json_file(job/'job.json', value)
     # The full previous journal is already retained in this job's immutable backup.
     archived = request['journal'].with_suffix('.bin.restored')

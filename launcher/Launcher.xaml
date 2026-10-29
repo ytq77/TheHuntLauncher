@@ -146,9 +146,9 @@
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
           <Border Height="1" Background="#343B3F" Margin="0,0,0,20"/>
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
-          <TextBlock Text="BBport 1.9.4" Foreground="#A8B1B4"/>
+          <TextBlock Text="BBport 1.9.5" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.13" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.14" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>

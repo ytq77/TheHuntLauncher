@@ -21,3 +21,20 @@ def patched_mods_script(text):
     if text.count(before)!=1:
         raise ValueError('Unexpected mods.py layer construction; recheck quit text compatibility.')
     return text.replace(before,after,1)
+
+
+def patched_coop_saves(text):
+    before = "    coop = user_dir / COOP_SAVES\n"
+    after = '''    # The Hunt already owns an isolated save root and a run-bound recovery
+    # transaction. Keep the engine and BBSC on that exact same character path.
+    if env.get('THEHUNT_WORLD_RECOVERY_V2') == '1':
+        expected = user_dir / 'savedata/1/CUSA00207/SPRJ0005'
+        supplied = env.get('BBSC_SAVE_DIR')
+        if not supplied or Path(supplied).resolve() != expected.resolve():
+            raise ValueError('The Hunt: engine and world recovery save paths disagree')
+        return user_dir
+    coop = user_dir / COOP_SAVES
+'''
+    if text.count(before) != 1:
+        raise ValueError('Unexpected 1.9.5 co-op save isolation; refusing an unverified change.')
+    return text.replace(before, after, 1)

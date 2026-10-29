@@ -36,12 +36,19 @@ clang++ -std=c++23 tests/test_empty_host_cancel.cpp -o "$out/test-empty-host-can
 "$out/test-empty-host-cancel.exe"
 clang++ -std=c++23 tests/test_empty_host_cancel_runtime.cpp -o "$out/test-empty-host-cancel-runtime.exe"
 "$out/test-empty-host-cancel-runtime.exe"
+clang++ -std=c++23 tests/test_personal_rewards.cpp -o "$out/test-personal-rewards.exe"
+"$out/test-personal-rewards.exe"
+python scripts/prepare_personal_rewards_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-personal-rewards-runtime.cpp"
+clang++ -std=c++23 -I"$src/src/core" "$out/test-personal-rewards-runtime.cpp" -o "$out/test-personal-rewards-runtime.exe"
+"$out/test-personal-rewards-runtime.exe"
 python scripts/prepare_npc_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-npc-prejoin.cpp"
 clang++ -std=c++23 -DEXPECT_FIXED "$out/test-npc-prejoin.cpp" -o "$out/test-npc-prejoin.exe"
 "$out/test-npc-prejoin.exe"
 clang++ -std=c++23 tests/test_save_proof.cpp -o "$out/test-save-proof.exe" -lbcrypt
 mkdir -p "$out/save-proof-fixture"
 "$out/test-save-proof.exe" "$out/save-proof-fixture"
+clang++ "${flags[@]}" tests/test_home_save_proof.cpp -o "$out/test-home-save-proof.exe" -lbcrypt
+"$out/test-home-save-proof.exe" "$out/home-save-proof-$(date +%s%N)"
 clang++ -std=c++23 tests/test_slot_guard.cpp -o "$out/test-slot-guard.exe"
 for mode in noaccess unmapped null guest already protect-failure write-failure loader-change normal readonly race-protect race-decommit; do
     "$out/test-slot-guard.exe" "$mode"

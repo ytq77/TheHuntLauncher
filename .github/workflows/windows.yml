@@ -14,6 +14,10 @@ jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 120
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: 'true'
     defaults:
       run:
         shell: msys2 {0}
@@ -59,12 +63,18 @@ jobs:
           python scripts/prepare_sources.py .build/bbsc
           python scripts/localize.py .build/bbsc
           python scripts/prepare_session_recovery.py .build/bbsc
+          python scripts/prepare_personal_rewards.py .build/bbsc
           python tests/test_quit_text_compat.py
+          python tests/test_port_195.py
       - name: Build BBport
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'
         run: |
-          cd .build/bbport
+          launcher_root="$PWD"
+          if [[ -e /b ]]; then echo 'Build drive B: is already in use' >&2; exit 1; fi
+          MSYS2_ARG_CONV_EXCL='*' subst.exe B: "$(cygpath -m "$PWD/.build/bbport")"
+          trap "MSYS2_ARG_CONV_EXCL='*' subst.exe B: /D" EXIT
+          cd /b
           export MSYS2_ROOT="$(cygpath -m /)"
           echo "MSYS2 build root: $MSYS2_ROOT"
           command -v bash cp grep cmake ninja
@@ -76,7 +86,7 @@ jobs:
           python packaging/windows/fetch_fsr411_dx12.py
           python packaging/windows/fetch_fg401_dx12.py
           python packaging/windows/prepare_fsr4vk.py
-          python ../../scripts/fetch_dlss.py
+          python "$launcher_root/scripts/fetch_dlss.py"
       - name: Preserve failed core build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

@@ -15,7 +15,7 @@ def launcher_sources(folder):
 
 def tracked(path):
     return subprocess.check_output(
-        ["git", "-c", "safe.directory=" + path.as_posix(), "-C", str(path),
+        ["git", "-c", "core.longpaths=true", "-c", "safe.directory=" + path.as_posix(), "-C", str(path),
          "ls-files", "--recurse-submodules", "-z"]).decode("utf-8").split("\0")
 
 
