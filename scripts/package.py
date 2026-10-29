@@ -7,13 +7,14 @@ import re
 import shutil
 import subprocess
 import zipfile
+from server_bundle import install_package
 from isolate_patches import patched_script
 from port_compat import patched_run_script, patched_mods_script, patched_coop_saves
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
-PRIVATE_FILES = {"profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
+PRIVATE_FILES = {"shadnet.cfg", ".server.lock","profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
                  "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
                  "conversion-current.json", ".save-conversion.lock", "update-settings.json", ".update.lock", "insight-fix.json"}
@@ -41,7 +42,9 @@ def digest(path):
 def check_public(files):
     for name in files:
         path = Path(name)
-        if path.is_absolute() or ".." in path.parts or ":" in name or "\\" in name:
+        if re.match(r"^(?:server/)?(?:normal|bbsc)/(?:db/|online-data\.json$)", name):
+            raise ValueError("Private server state in release: " + name)
+        if name.startswith("/") or path.is_absolute() or ".." in path.parts or ":" in name or "\\" in name:
             raise ValueError("Unsafe archive path: " + name)
         if ({part.lower() for part in path.parts} & PRIVATE_PARTS or path.name.lower() in PRIVATE_FILES or
                 any(part.startswith((".savedata-import-", ".savedata-conversion-")) for part in path.parts)):
@@ -70,6 +73,7 @@ def main():
     parser.add_argument("--port", type=Path, default=ROOT / ".build/bbport")
     parser.add_argument("--toolchain", type=Path, required=True)
     parser.add_argument("--fsr-assets", type=Path)
+    parser.add_argument("--server-package", type=Path, required=True)
     args = parser.parse_args()
     lock = json.loads((ROOT / "upstream.lock.json").read_text(encoding="utf-8"))
     out = ROOT / "dist"
@@ -211,6 +215,10 @@ def main():
     info["features"].extend(["personal-shop-rewards", "single-personal-enemy-roll", "same-run-home-save-proof", "bbport-195-existing-save-root"])
     info["personal_rewards_validation"] = "BBport 1.9.4 / unchanged BBSC candidate: user accepted personal shops, no historical NPC badge compensation, and one ordinary enemy drop. Same-run return home verified 979 recovery rows / 939 persistent positions, both native save generations, archived transaction and clean process exit on 2026-10-29. These results are reused for the unchanged BBSC gameplay code; they do not claim a 1.9.5 gameplay run."
     info["bbport_upgrade_validation"] = "1.9.5: pinned source build and automated runner/package compatibility checks. Preserve The Hunt's existing isolated user/save paths and explicit server addresses, keep Rebirth disabled, include direct-runner imports. New graphics, PC menu interaction and online play on the 1.9.5 engine still require normal user feedback; no repetition of the unchanged reward checks is requested."
+    (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+    server_info = install_package(args.server_package, dest / "server", lock["version"], check_public)
+    info["features"].append("bundled-local-seamless-server")
+    info["local_server"] = {"version": server_info["label"], "location": "server/Server.exe"}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

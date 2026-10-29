@@ -59,7 +59,7 @@ public static class HuntUpdates
     }
 
     private static string AssetName(string repository, string version) {
-        if (repository == "TheHuntLauncher") return "BBSC-Launcher-" + version + "-windows-x64.zip";
+        if (repository == "TheHuntLauncher") return "TheHuntLauncher-" + version + "-windows-x64.zip";
         if (repository == "TheHuntServer") return "TheHuntServer-Windows-v" + version + ".zip";
         throw new ArgumentException("未知的更新项目。");
     }
@@ -85,7 +85,7 @@ public static class HuntUpdates
             var assets = release["assets"] as object[];
             if (assets == null) continue;
             string name = AssetName(repository, version);
-            string path = "https://github.com/ytq77/" + repository + "/releases/";
+            string path = "https://github.com/ytq77/TheHuntLauncher/releases/";
             string download = path + "download/" + Uri.EscapeDataString(tag) + "/" + name;
             foreach (var value in assets) {
                 var asset = value as Dictionary<string, object>;
@@ -138,7 +138,7 @@ public static class HuntUpdates
 
     public static HuntRelease Check(string repository, bool previews, string proxy, string prefix) {
         AssetName(repository, "0.0.0"); prefix = ValidatePrefix(prefix);
-        string url = "https://api.github.com/repos/ytq77/" + repository + "/releases?per_page=100";
+        string url = "https://api.github.com/repos/ytq77/TheHuntLauncher/releases?per_page=100";
         try { var release = SelectRelease(Fetch(url, proxy), repository, previews); release.VerifiedOrigin = true; return release; }
         catch (WebException) {
             if (prefix.Length == 0) throw new IOException("无法连接 GitHub，或请求受到限流。可配置 HTTP 代理或 GitHub 加速前缀后重试。");

@@ -140,7 +140,7 @@
           <RadioButton x:Name="HomeNav" GroupName="Navigation" Content="启动" Style="{StaticResource NavigationButton}" IsChecked="True" Margin="0,0,0,8"/>
           <RadioButton x:Name="SettingsNav" GroupName="Navigation" Content="游戏与联机" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
           <RadioButton x:Name="FeatureNav" GroupName="Navigation" Content="功能与玩法" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
-          <RadioButton x:Name="ServerNav" GroupName="Navigation" Content="服务器管理" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
+          <RadioButton x:Name="ServerNav" GroupName="Navigation" Content="本地与云端开服" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
           <RadioButton x:Name="SaveNav" GroupName="Navigation" Content="存档" Style="{StaticResource NavigationButton}"/>
         </StackPanel>
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
@@ -148,7 +148,7 @@
           <TextBlock Text="iytq" FontFamily="Georgia" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.5" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.14" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.15" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -306,13 +306,25 @@
       <Grid x:Name="ServerPage" Visibility="Collapsed">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,14">
-          <TextBlock Text="服务器管理" FontSize="26"/>
-          <TextBlock Text="管理员专用 · 使用已有 SSH 密钥，不开放额外管理端口。"
+          <TextBlock Text="本地与云端开服" FontSize="26"/>
+          <TextBlock Text="本机开服使用内置管理窗口；云端管理使用已有 SSH 密钥。"
                      Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-          <Button x:Name="AdminRefresh" Content="刷新状态与账号" HorizontalAlignment="Left" Margin="0,12,0,0"/>
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
           <StackPanel>
+            <Border BorderBrush="#474644" BorderThickness="1" Padding="18" Margin="0,0,0,18">
+              <StackPanel>
+                <TextBlock Text="本地无缝开服" FontSize="20" Foreground="#D4D0C2"/>
+                <TextBlock Text="打开内置管理窗口，选择本机地址、启动服务并创建账号。退出游戏或关闭启动器不会自动停服；结束开服请在管理窗口停止服务。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,10,0,0"/>
+                <WrapPanel Margin="0,14,0,0">
+                  <Button x:Name="OpenLocalServer" Content="打开本地开服管理" Margin="0,0,10,8"/>
+                  <Button x:Name="UseLocalServer" Content="填入本机服务地址" Margin="0,0,0,8"/>
+                </WrapPanel>
+                <TextBlock Text="按钮读取开服窗口已保存的监听地址。127.0.0.1 仅限同机；同伴使用局域网或 VPN 地址，并使用自己的账号。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22"/>
+              </StackPanel>
+            </Border>
+            <TextBlock Text="云端服务器管理" FontSize="20"/>
+            <Button x:Name="AdminRefresh" Content="刷新云端状态与账号" HorizontalAlignment="Left" Margin="0,12,0,0"/>
             <StackPanel x:Name="AdminFields">
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>

@@ -42,7 +42,7 @@ function Safe-Relative([string]$name) {
     }
     $private = @('.private','data','user','logs','captures','save-backups','save-conversion-backups','conversion-jobs','update-backups','guest-items','own-world','shared-progress','__pycache__','.git','backups')
     foreach ($part in $name.Split('/')) { if ($part -in $private) { throw 'Private state found in update package' } }
-    if ($name -match '(^|/)(profile.json|account.clixml|features.json|server-admin.json|update-settings.json|launcher-state.json|settings-snapshot.json|conversion-current.json|save-transfer-result.json|last-exit.json|bbport.ini|input.ini|mods.json|patches.json|shadnet.cfg|\.env|\.save-import.lock|\.save-conversion.lock|\.update.lock)$' -or $name -match '^(normal|bbsc)/(db/|online-data.json$)') { throw 'Private configuration found in update package' }
+    if ($name -match '(^|/)(profile.json|account.clixml|features.json|server-admin.json|update-settings.json|launcher-state.json|settings-snapshot.json|conversion-current.json|save-transfer-result.json|last-exit.json|bbport.ini|input.ini|mods.json|patches.json|shadnet.cfg|\.env|\.save-import.lock|\.save-conversion.lock|\.update.lock)$' -or $name -match '^(server/)?(normal|bbsc)/(db/|online-data.json$)' -or $name -match '(^|/)\.server\.lock$') { throw 'Private configuration found in update package' }
     return $name.Replace('/',[IO.Path]::DirectorySeparatorChar)
 }
 function Check-Parents([string]$path) {
@@ -113,7 +113,10 @@ try {
     if ($running) { throw 'Game or service processes are still running; no files replaced' }
     $backup = Join-Path $root ('update-backups\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
     [void][IO.Directory]::CreateDirectory((Join-Path $backup 'program'))
-    $operations = @($names | Where-Object { -not (-not $client -and ($_ -eq 'server.json' -or $_ -match '^(normal|bbsc)/(worlds|scoreboards)\.cfg$') -and (Test-Path -LiteralPath (Join-Path $root $_))) } | Sort-Object)
+    $operations = @($names | Where-Object {
+        $preserve = if ($client) { $_ -match '^server/(server\.json|bbsc/(worlds|scoreboards)\.cfg)$' } else { $_ -eq 'server.json' -or $_ -match '^(normal|bbsc)/(worlds|scoreboards)\.cfg$' }
+        -not ($preserve -and (Test-Path -LiteralPath (Join-Path $root $_)))
+    } | Sort-Object)
     Report '正在备份将被替换的程序文件，账号与存档保持原位……' 20
     foreach ($relative in $operations) {
         $destination = Join-Path $root (Safe-Relative $relative); Check-Parents $destination

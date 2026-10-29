@@ -23,7 +23,7 @@ $controls = @{}
   'ConversionSameRole','ConversionClearSlots','ConversionConfirmed','ConversionOpen','ConversionOpenOrdinaryBackup','ConversionStatus','ConversionPath',
   'FeatureItems','FeatureSummary','FeatureStatus','SaveFeatures','RecommendFeatures','ExpandFeatures',
   'ServerNav','ServerPage','AdminTarget','AdminPort','AdminDirectory','AdminIdentity','AdminKnownHosts','AdminSudo','PickAdminIdentity','PickAdminKnownHosts',
-  'AdminRefresh','AdminCreate','AdminVerify','AdminName','AdminPassword','AdminEmail','AdminAccounts','AdminStatus','AdminFields') |
+  'OpenLocalServer','UseLocalServer','AdminRefresh','AdminCreate','AdminVerify','AdminName','AdminPassword','AdminEmail','AdminAccounts','AdminStatus','AdminFields') |
   ForEach-Object { $controls[$_] = $window.FindName($_) }
 
 function Show-Settings {
@@ -141,7 +141,7 @@ if (Test-Path -LiteralPath $profilePath) {
 }
 function Set-BusyControls {
     $busy = ($null -ne $script:worker) -or ($null -ne $script:saveTask) -or ($null -ne $script:adminTask) -or ($null -ne $script:conversionTask)
-    foreach ($name in @('Launch','SaveSettings','SettingsNav','RefreshSaves','SaveFeatures','RecommendFeatures','FeatureItems','AdminFields','AdminRefresh','AdminCreate','AdminVerify')) {
+    foreach ($name in @('UseLocalServer','Launch','SaveSettings','SettingsNav','RefreshSaves','SaveFeatures','RecommendFeatures','FeatureItems','AdminFields','AdminRefresh','AdminCreate','AdminVerify')) {
         $controls[$name].IsEnabled = -not $busy
     }
     $controls.ImportSaves.IsEnabled = -not $busy -and $null -ne $script:saveInspection
@@ -247,7 +247,7 @@ $controls.CheckUpdates.Add_Click({
         if (-not (Test-Path -LiteralPath $library)) { throw '请使用完整更新包；缺少更新模块 HuntUpdates.dll。' }
         [void][Reflection.Assembly]::LoadFrom($library)
         $build = [IO.File]::ReadAllText((Join-Path $taskRoot 'BUILD-INFO.json')) | ConvertFrom-Json
-        $canInstall = [Func[bool]] { return -not ($script:worker -or $script:saveTask -or $script:adminTask -or $script:conversionTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue)) }
+        $canInstall = [Func[bool]] { return -not ($script:worker -or $script:saveTask -or $script:adminTask -or $script:conversionTask -or (Get-Process bb-probe -ErrorAction SilentlyContinue) -or (Test-LocalServerOpen)) }
         [HuntUpdates]::Show($window, $taskRoot, 'TheHuntLauncher', [string]$build.version, $canInstall)
     } catch { Show-Error $_.Exception.Message }
 })
@@ -363,6 +363,7 @@ $window.Add_Closing({
 Show-Home
 . (Join-Path $taskRoot 'Features.ps1')
 . (Join-Path $taskRoot 'Server.ps1')
+. (Join-Path $taskRoot 'Local-Server.ps1')
 . (Join-Path $taskRoot 'Conversion.ps1')
 $controls.ImportSaves.IsEnabled = $false
 $controls.DestinationSavePath.Text = Join-Path $taskRoot 'data\user\savedata'

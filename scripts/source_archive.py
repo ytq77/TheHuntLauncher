@@ -1,5 +1,7 @@
 """Attach the exact patched application sources beside every binary release."""
 import argparse
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import zipfile
@@ -33,6 +35,19 @@ def main():
                     archive.write(path, "bbsc-launcher/" + path.relative_to(ROOT).as_posix())
         for name in ("README.md", "LICENSE", "NOTICE.md", "CONTRIBUTING.md", "upstream.lock.json", ".gitignore", ".gitattributes"):
             archive.write(ROOT / name, "bbsc-launcher/" + name)
+        # Include only registered server sources, never its build or test state.
+        server = ROOT / "server"
+        for name in tracked(server):
+            if name and (server / name).is_file():
+                archive.write(server / name, "bbsc-launcher/server/" + name)
+        manifest = json.loads((server / "recipe/sources.json").read_text("utf-8"))
+        fixed = [(item["name"], item["sha256"]) for item in manifest["archives"]]
+        fixed += [("bbsc/" + name, value) for name, value in manifest["bbsc"]["files"].items()]
+        for name, expected in fixed:
+            path = server / "windows/downloads" / name
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise ValueError("Server source hash mismatch: " + name)
+            archive.write(path, "server-upstream/" + name)
         # BBSC has no used submodules for this DLL; include the exact patched
         # sources (including generated Chinese source and GPL notices).
         bbsc = ROOT / ".build/bbsc"

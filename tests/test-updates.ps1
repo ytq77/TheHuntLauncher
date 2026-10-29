@@ -15,9 +15,9 @@ foreach ($value in @('http://accelerator.example/','https://user:secret@accelera
 }
 foreach ($repository in @('TheHuntLauncher','TheHuntServer')) {
     function Release([string]$version, [bool]$preview) {
-        $name = if ($repository -eq 'TheHuntLauncher') { "BBSC-Launcher-$version-windows-x64.zip" } else { "TheHuntServer-Windows-v$version.zip" }
+        $name = if ($repository -eq 'TheHuntLauncher') { "TheHuntLauncher-$version-windows-x64.zip" } else { "TheHuntServer-Windows-v$version.zip" }
         return @{ tag_name="v$version"; draft=$false; prerelease=$preview; body='中文更新说明'; assets=@(@{
-            name=$name; state='uploaded'; browser_download_url="https://github.com/ytq77/$repository/releases/download/v$version/$name"
+            name=$name; state='uploaded'; browser_download_url="https://github.com/ytq77/TheHuntLauncher/releases/download/v$version/$name"
         }) }
     }
     $stable = Release '0.1.0' $false

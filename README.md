@@ -1,4 +1,12 @@
-# The Hunt — BBSC Launcher
+# The Hunt — 无缝联机与开服
+
+
+从 preview.15 起，客户端与无缝服务端在本仓库统一维护。完整客户端包内置本地开服管理入口；远程 Windows 开服仍可下载独立服务端包，Linux 使用同版本部署配方。原 TheHuntServer 仓库作为历史只读仓库保留。
+
+- 玩家：使用 `TheHuntLauncher-<版本>-windows-x64.zip`，在「本地与云端开服」打开内置管理窗口。
+- 专用 Windows 服务端：使用 `TheHuntServer-Windows-v<版本>.zip`，无需安装客户端引擎。
+- Linux 服务端：[部署说明](server/docs/deployment.md)与[配方](server/recipe/)。
+- 本地开服、远程服务端迁移与账号保存：[开服说明](docs/local-server.md)。
 
 由 **iytq** 维护，适用于 Bloodborne PC 移植版的 BBSC 无缝联机启动器，提供独立运行环境、中文文本、本机配置同步与自动构建。
 

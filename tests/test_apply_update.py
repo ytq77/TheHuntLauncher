@@ -33,7 +33,13 @@ class AutomaticUpdate(unittest.TestCase):
                     'profile.json': b'private-profile-marker',
                     'features.json': b'private-feature-marker',
                     'mod/guest-items/a.json': b'private-guest-marker',
-                    'mod/own-world/a.json': b'private-world-marker'} if client else {
+                    'mod/own-world/a.json': b'private-world-marker',
+                    'server/server.json': b'{"address":"100.64.1.2"}',
+                    'server/bbsc/db/shadnet.db': b'embedded-server-account-marker',
+                    'server/bbsc/shadnet.cfg': b'embedded-server-private-config',
+                    'server/bbsc/online-data.json': b'embedded-server-online-data',
+                    'server/bbsc/worlds.cfg': b'embedded-server-worlds',
+                    'server/bbsc/scoreboards.cfg': b'embedded-server-scoreboards'} if client else {
                     'normal/db/shadnet.db': b'normal-account-marker',
                     'bbsc/db/shadnet.db': b'bbsc-account-marker',
                     'bbsc/online-data.json': b'private-online-marker',
@@ -49,6 +55,10 @@ class AutomaticUpdate(unittest.TestCase):
         if not client:
             files.update({'server.json': b'{"address":"127.0.0.1"}', 'normal/worlds.cfg': b'new-world-default'})
         files.update(extra or {})
+        if client:
+            files.update({'server/server.json': b'{"address":"127.0.0.1"}',
+                          'server/bbsc/worlds.cfg': b'default-worlds',
+                          'server/bbsc/scoreboards.cfg': b'default-scoreboards'})
         if client:
             files['BUILD-INFO.json'] = json.dumps({'version': '0.2.0-preview.1'}).encode()
             files['file-sha256.json'] = json.dumps({name: sha(data) for name, data in files.items()}).encode()
@@ -98,7 +108,8 @@ class AutomaticUpdate(unittest.TestCase):
         self.assertIn('a.txt', report['applied'])
 
     def test_private_and_traversal_payloads_are_rejected_before_install(self):
-        for name in ('../escape.txt', 'profile.json', 'bbport.ini', 'input.ini', 'mods.json', 'mod/guest-items/pickup.json', 'bbsc/db/shadnet.db', 'bbsc/online-data.json'):
+        for name in ('../escape.txt', 'profile.json', 'bbport.ini', 'input.ini', 'mods.json', 'mod/guest-items/pickup.json', 'bbsc/db/shadnet.db', 'bbsc/online-data.json',
+                     'server/bbsc/db/shadnet.db', 'server/bbsc/shadnet.cfg', 'server/bbsc/online-data.json', 'server/bbsc/.server.lock'):
             with self.subTest(name=name):
                 root, _, old, plan, _ = self.fixture(extra={name: b'not-allowed'})
                 result = self.run_installer(plan)

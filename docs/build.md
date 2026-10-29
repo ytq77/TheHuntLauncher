@@ -50,3 +50,9 @@ DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.5 发行�
 3. 推送对应的 `v<version>` 标签。
 
 标签工作流校验版本号与 lock 文件一致，构建完成后发布为 prerelease，附带源码和校验文件。上游版本升级不会自动进入玩家安装。
+
+## 统一仓库构建
+
+先执行 `server/windows/build-native.ps1` 构建并检查无缝服务端，再将其同版本 ZIP 传给客户端打包器的 `--server-package`。客户端拒绝版本不一致、包含普通模式或私人状态的服务端包。服务端版本 `server/VERSION` 必须与根目录 `upstream.lock.json` 一致。
+
+`launcher/HuntUpdates.cs` 是共享更新器源码。CI 同时构建 Windows 服务端、Linux 配方和客户端；完整客户端内置服务端，发布页也附带独立 Windows 服务端和 Linux 配方。
