@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0-preview.15",
+  "version": "0.1.0-preview.16",
   "bbport": {
     "url": "https://github.com/Supermedo/bloodborne_pc.git",
     "commit": "ff42e28bbd5ad02939560e039008a7896b26ae41",

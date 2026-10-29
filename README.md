@@ -1,7 +1,7 @@
 # The Hunt — 无缝联机与开服
 
 
-从 preview.15 起，客户端与无缝服务端在本仓库统一维护。完整客户端包内置本地开服管理入口；远程 Windows 开服仍可下载独立服务端包，Linux 使用同版本部署配方。原 TheHuntServer 仓库作为历史只读仓库保留。
+从 preview.16 起，客户端与无缝服务端在本仓库统一维护。完整客户端包内置本地开服管理入口；远程 Windows 开服仍可下载独立服务端包，Linux 使用同版本部署配方。原 TheHuntServer 仓库作为历史只读仓库保留。
 
 - 玩家：使用 `TheHuntLauncher-<版本>-windows-x64.zip`，在「本地与云端开服」打开内置管理窗口。
 - 专用 Windows 服务端：使用 `TheHuntServer-Windows-v<版本>.zip`，无需安装客户端引擎。
