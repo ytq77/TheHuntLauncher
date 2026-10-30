@@ -1,5 +1,20 @@
-﻿param([Parameter(Mandatory=$true)][string]$AssemblyPath)
+﻿param([Parameter(Mandatory=$true)][string]$AssemblyPath,[string]$FixtureDirectory)
 $ErrorActionPreference = 'Stop'
+# WPF caches private font handles until process exit. The parent owns cleanup.
+if(-not $FixtureDirectory) {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('the-hunt-desktop-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixture)
+    $testExit = 1
+    try {
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -STA -ExecutionPolicy Bypass -File $PSCommandPath -AssemblyPath ([IO.Path]::GetFullPath($AssemblyPath)) -FixtureDirectory $fixture
+        $testExit = $LASTEXITCODE
+    } finally {
+        $full=[IO.Path]::GetFullPath($fixture); $base=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'
+        if(-not $full.StartsWith($base,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'the-hunt-desktop-*') { throw 'Unsafe fixture cleanup path' }
+        try { Remove-Item -LiteralPath $full -Recurse -Force } catch { if($testExit -eq 0) { throw }; Write-Warning "Fixture cleanup also failed: $_" }
+    }
+    exit $testExit
+}
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml,System.Web.Extensions
 Add-Type @'
 using System;
@@ -11,8 +26,7 @@ public static class ToastStyleCheck {
 [void][Reflection.Assembly]::LoadFrom((Join-Path (Split-Path $AssemblyPath) 'HuntUpdates.dll'))
 [void][Reflection.Assembly]::LoadFrom($AssemblyPath)
 $repo = Split-Path $PSScriptRoot
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('the-hunt-desktop-' + [Guid]::NewGuid().ToString('N'))
-[void][IO.Directory]::CreateDirectory($fixture)
+$fixture = $FixtureDirectory
 $utf8 = New-Object Text.UTF8Encoding $false
 $flags = [Reflection.BindingFlags]'Instance,NonPublic'
 function Invoke-Private($object, [string]$name, [object[]]$arguments=@()) { $raw = New-Object object[] $arguments.Length; for($i=0;$i -lt $arguments.Length;$i++) { $raw[$i]=$arguments[$i].PSObject.BaseObject }; return $object.GetType().GetMethod($name,$flags).Invoke($object,$raw) }
@@ -115,7 +129,6 @@ try {
     $window.Close()
     'PASS: native views, credential compatibility, feature persistence, busy/close/update guards, conversion backups, local addresses, trophy session states.'
 } finally {
-    $full=[IO.Path]::GetFullPath($fixture); $base=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    if(-not $full.StartsWith($base,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'the-hunt-desktop-*') { throw 'Unsafe fixture cleanup path' }
-    Remove-Item -LiteralPath $full -Recurse -Force
+    if($toast) { $toast.Stop() }
+    if($window) { $window.Close() }
 }

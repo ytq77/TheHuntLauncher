@@ -1,10 +1,26 @@
-﻿param([Parameter(Mandatory=$true)][string]$PackageRoot,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$GameDirectory)
+﻿param([Parameter(Mandatory=$true)][string]$PackageRoot,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$GameDirectory,[string]$FixtureDirectory)
 $ErrorActionPreference='Stop'
-Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml
 [void][IO.Directory]::CreateDirectory($OutputDirectory)
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-$fixture=Join-Path $OutputDirectory ('fixture-'+[Guid]::NewGuid().ToString('N'))
-[void][IO.Directory]::CreateDirectory($fixture)
+# WPF caches private font handles until process exit. The parent owns cleanup.
+if(-not $FixtureDirectory) {
+    $fixture=Join-Path $OutputDirectory ('fixture-'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixture)
+    $testExit=1
+    try {
+        $childArguments=@('-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-PackageRoot',([IO.Path]::GetFullPath($PackageRoot)),'-OutputDirectory',$OutputDirectory,'-FixtureDirectory',$fixture)
+        if($GameDirectory) { $childArguments+=@('-GameDirectory',([IO.Path]::GetFullPath($GameDirectory))) }
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" @childArguments
+        $testExit=$LASTEXITCODE
+    } finally {
+        $full=[IO.Path]::GetFullPath($fixture)
+        if(-not $full.StartsWith($OutputDirectory.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'fixture-*') { throw 'Unsafe session fixture cleanup path' }
+        try { Remove-Item -LiteralPath $full -Recurse -Force } catch { if($testExit -eq 0) { throw }; Write-Warning "Fixture cleanup also failed: $_" }
+    }
+    exit $testExit
+}
+Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml
+$fixture=$FixtureDirectory
 $utf8=New-Object Text.UTF8Encoding $false
 $flags=[Reflection.BindingFlags]'Instance,NonPublic'
 function Assert($v,[string]$m) { if(-not $v) { throw $m } }
@@ -96,7 +112,7 @@ sys.exit(9)
     Assert ($desktop.Window.FindName('TrophySummary').Text -like '*4 / 40*' -and $desktop.Window.FindName('TrophyNotice').Text -like '*上次成功*') 'Read error did not retain/label previous display'
     'PASS: actual packaged Python provider, native session launch/auth environment, nonzero worker exit, trophy delta, recovery-error preservation and stale display.'
 } finally {
-    $full=[IO.Path]::GetFullPath($fixture)
-    if(-not $full.StartsWith($OutputDirectory+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'fixture-*') { throw 'Unsafe session fixture cleanup path' }
-    Remove-Item -LiteralPath $full -Recurse -Force
+    if($pollTimer) { $pollTimer.Stop() }
+    if($script:noticeProbe) { $script:noticeProbe.Stop() }
+    if($desktop) { $desktop.Window.Close() }
 }
