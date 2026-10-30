@@ -50,6 +50,24 @@ try {
     $desktop = New-Object DesktopWindow($fixture)
     foreach($page in @('Home','Settings','Feature','Save','Server','Trophy')) { $desktop.Validate($null,$page) }
     $window=$desktop.Window
+    $privateHash=(Get-FileHash -LiteralPath $credentials -Algorithm SHA256).Hash
+    $window.FindName('PublicAccount').Text='Public_fixture'
+    $window.FindName('PublicPassword').Password='public-fixture-password'
+    Invoke-Private $desktop 'SavePublic'
+    $publicPath=Join-Path $fixture '.private\public-online.clixml'
+    $public=[DesktopCredentials]::Read($publicPath)
+    Assert ($public[0] -ceq 'Public_fixture' -and $public[1] -ceq 'public-fixture-password') 'Public credential roundtrip failed'
+    Assert ((Get-FileHash -LiteralPath $credentials -Algorithm SHA256).Hash -ceq $privateHash) 'Public login overwrote private credentials'
+    Assert ($window.FindName('PublicPassword').Password.Length -eq 0) 'Public password remained visible in the form'
+    $window.FindName('PublicAccount').Text=''
+    Invoke-Private $desktop 'LoadProfile'
+    Assert ($window.FindName('PublicAccount').Text -ceq 'Public_fixture') 'Saved public account was lost before the first full profile save'
+    $reused=Invoke-Private $desktop 'PublicCredential'
+    Assert ($reused[1] -ceq 'public-fixture-password') 'Saved public credentials were not reused without typing'
+    $window.FindName('PublicAccount').Text='Other_fixture'; $rejected=$false
+    try { Invoke-Private $desktop 'PublicCredential' } catch { $rejected=$true }
+    Assert $rejected 'Changed public account reused a different account password'
+    $window.FindName('PublicAccount').Text='Public_fixture'
     Assert ($window.Title -eq 'The Hunt') 'Extra title attribution remains'
     Assert ($null -eq $window.FindName('FontStylePicker')) 'Font selection option remains'
     Assert ($window.FontFamily.Source -eq ([HuntTypography]::Body($fixture)).Source) 'Default font is not fixed Sans'
@@ -86,7 +104,7 @@ try {
     Assert ($rejected -and [IO.File]::ReadAllText((Join-Path $fixture 'features.json')) -ceq $before) 'Invalid feature value was written'
     $desktop.GetType().GetField('operation',$flags).SetValue($desktop,$true)
     Invoke-Private $desktop 'SetBusy'
-    foreach($name in @('Launch','SaveSettings','RefreshSaves','ImportSaves','UseLocalServer','SaveFeatures','AdminCreate','ConversionStartReplace')) { Assert (-not $window.FindName($name).IsEnabled) ('Busy gate failed: '+$name) }
+    foreach($name in @('Launch','SaveSettings','RefreshSaves','ImportSaves','UseLocalServer','SaveFeatures','AdminCreate','ConversionStartReplace','PublicVerify','PublicForget')) { Assert (-not $window.FindName($name).IsEnabled) ('Busy gate failed: '+$name) }
     Assert (-not $desktop.CanUpdate()) 'Updates permitted during operation'
     $closing=New-Object ComponentModel.CancelEventArgs
     # Closing is tested through the actual event while a task is active.

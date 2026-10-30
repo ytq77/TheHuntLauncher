@@ -6,7 +6,7 @@ $request = [IO.File]::ReadAllText([IO.Path]::GetFullPath($Plan)) | ConvertFrom-J
 $root = [IO.Path]::GetFullPath([string]$request.root).TrimEnd('\')
 $client = $request.repository -eq 'TheHuntLauncher'
 if (-not $client -and $request.repository -ne 'TheHuntServer') { throw 'Unknown update project' }
-$entryName = if ($client) { 'BBSC-Launcher.exe' } else { 'Server.exe' }
+$entryName = if ($client) { 'TheHuntLauncher.exe' } else { 'Server.exe' }
 if (-not (Test-Path -LiteralPath (Join-Path $root $entryName) -PathType Leaf)) { throw 'Update target is not an installed application' }
 $session = Split-Path -Parent ([IO.Path]::GetFullPath($Plan))
 $extract = Join-Path $session ('payload-' + [guid]::NewGuid().ToString('N'))

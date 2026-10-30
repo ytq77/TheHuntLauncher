@@ -23,7 +23,7 @@
           <TextBlock Text="iytq" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.6" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.17" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.18" FontSize="11" Foreground="#68767D"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -121,6 +121,18 @@
               </StackPanel>
             </Grid>
             <TextBlock Text="以上地址由服务器管理员提供。密码使用当前 Windows 用户加密保存在本机。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,8"/>
+            <Border BorderBrush="#37383A" BorderThickness="1" Padding="18" Margin="0,16,0,8">
+              <StackPanel x:Name="PublicFields">
+                <CheckBox x:Name="PublicOnline" Content="使用 SuperMedo 公共在线内容" IsChecked="True" Foreground="#D3D0C5" FontSize="17"/>
+                <TextBlock Text="笔记、血迹与游魂使用公共服；无缝合作仍使用上方私服。首次填写后自动登录，无需打开普通版启动器。关闭此项后使用私服的独立内容。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="23" Margin="0,10,0,4"/>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                  <StackPanel><TextBlock Text="公共账号 · SuperMedo Online ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PublicAccount"/></StackPanel>
+                  <StackPanel Grid.Column="2"><TextBlock Text="公共密码 · 已保存时留空" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="PublicPassword"/></StackPanel>
+                </Grid>
+                <WrapPanel Margin="0,12,0,0"><Button x:Name="PublicVerify" Content="验证并保存账号" Margin="0,0,10,6"/><Button x:Name="PublicForget" Content="忘记公共账号" Margin="0,0,0,6"/></WrapPanel>
+                <TextBlock x:Name="PublicStatus" Text="使用已有 SuperMedo 账号；没有账号可先在普通版启动器创建。两套账号分别加密保存。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,6,0,0"/>
+              </StackPanel>
+            </Border>
             <Button x:Name="SaveSettings" Content="保存设置" HorizontalAlignment="Left" Margin="0,8,0,18"/>
           </StackPanel>
         </ScrollViewer>

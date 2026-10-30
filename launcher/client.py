@@ -1,5 +1,6 @@
 """Isolated BBSC session runner. Credentials arrive only through the worker environment."""
 from datetime import datetime
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import time
 import world_recovery
 import trophy_sync
 from trophy_notices import TrophyNotices
+from public_online import Account, Bridge
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
@@ -124,7 +126,7 @@ def build_environment(profile, name, password, settings_env, snapshot):
     user = data / "user"
     network = validate_network(profile["network"])
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("BB_", "BBSC_", "SHADPS4_"))}
+           if not key.startswith(("BB_", "BBSC_", "SHADPS4_", "THEHUNT_PUBLIC_"))}
     env.update(settings_env)
     env["PATH"] = str(ROOT / "runtime/bin") + os.pathsep + env.get("PATH", "")
     env.update(
@@ -169,7 +171,22 @@ def main():
     if not name or not password:
         raise ValueError("请先填写联机账号与密码。")
     feature_environment(ROOT)  # Reject invalid preferences before preparing saves.
+    public_name = os.environ.pop('THEHUNT_PUBLIC_ACCOUNT', '')
+    public_password = os.environ.pop('THEHUNT_PUBLIC_PASSWORD', '')
+    with ExitStack() as services:
+        bridge = None
+        if profile.get('public_online', True):
+            state('preparing', '正在连接 SuperMedo 公共账号…')
+            account = services.enter_context(Account(public_name, public_password))
+            public_password = None
+            bridge = services.enter_context(Bridge(account, profile['network']['community'].rstrip('/')))
+        return run_session(profile, name, password, bridge)
+
+
+def run_session(profile, name, password, bridge):
     prepare(profile)
+    if bridge and not bridge.account.connected:
+        raise ValueError('初始化期间公共账号连接已断开，请重新启动。')
     trophy_notices = TrophyNotices(ROOT, os.environ.get('THEHUNT_UI_SESSION'))
     recovery_env = world_recovery.begin(ROOT)
     state("preparing", "正在同步这台电脑的画质与操作设置…")
@@ -180,12 +197,13 @@ def main():
     user = ROOT / "data/user"
     user.mkdir(parents=True, exist_ok=True)
     (user / "host_overrides.custom.json").write_text(json.dumps({
-        "https://ss4.scej-network.jp:20443": network["community"],
+        "https://ss4.scej-network.jp:20443": bridge.origin if bridge else network["community"],
         "https://bb-playlog-prod.s3.amazonaws.com:443": network["community"],
         "https://bb-playlog-test.s3.amazonaws.com:443": network["community"],
     }, indent=2), encoding="utf-8")
     log = user / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
     started = datetime.now().isoformat()
+    last_public_state = None
     state("running", "游戏已启动，正在加载。道具准备情况会显示在这里。")
     with log.open("w", encoding="utf-8") as output:
         output.write("BBSC settings snapshot: " + json.dumps(snapshot) + "\n")
@@ -196,6 +214,17 @@ def main():
                                   creationflags=subprocess.CREATE_NO_WINDOW)
         while result.poll() is None:
             trophy_notices.poll()
+            if bridge:
+                public_state = {
+                    'ui_session': os.environ.get('THEHUNT_UI_SESSION'),
+                    'account_connected': bridge.account.connected,
+                    'game_authenticated': bridge.login_ok, 'failures': bridge.failures}
+                if public_state != last_public_state:
+                    try:
+                        world_recovery.json_file(user / 'public-online-state.json', public_state)
+                        last_public_state = public_state
+                    except OSError:
+                        pass  # A UI status write cannot terminate the live game/account owner.
             try:
                 world_recovery.poll(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
             except (ValueError, OSError) as error:

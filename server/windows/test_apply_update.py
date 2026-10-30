@@ -27,7 +27,7 @@ class AutomaticUpdate(unittest.TestCase):
         parent.mkdir(exist_ok=True)
         area = Path(tempfile.mkdtemp(prefix='case-', dir=parent))
         root = area / 'installed'; root.mkdir()
-        entry = 'BBSC-Launcher.exe' if client else 'Server.exe'
+        entry = 'TheHuntLauncher.exe' if client else 'Server.exe'
         private = ({'.private/account.clixml': b'private-credential-marker',
                     'data/user/savedata/userdata0000': b'private-save-marker',
                     'profile.json': b'private-profile-marker',

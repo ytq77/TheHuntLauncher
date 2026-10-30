@@ -2,13 +2,15 @@
 
 **Bloodborne PC 无缝联机启动器与开服工具**
 
+preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早版本切换，请完整解压到新目录；旧版更新助手不能跨越此次更名。详见[入口更名与升级](docs/launcher-entry-rename.md)。
+
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.17) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.18) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.17**，基于 **BBport 1.9.6**，仍处于预览阶段。1.9.6 运行和 comp 小窗口奖杯提示已获用户实机确认；历史灯点分支问题仍在调查。版本内容见[发布说明](docs/releases/v0.1.0-preview.17.md)，各项验证范围见[验收表](docs/validation-current.md)。
+当前版本为 **0.1.0-preview.18**，基于 **BBport 1.9.6**，仍处于预览阶段。新增独立 SuperMedo 账号和公共在线内容分流，私服继续负责无缝合作。账号认证、公共游戏登录与只读笔记接口已通过协议验证；公共内容的游戏内显示与双人混合联机仍待定向验收。既有 1.9.6 运行及小窗口奖杯验收按未改范围复用；历史灯点问题仍在调查。详见[发布说明](docs/releases/v0.1.0-preview.18.md)与[验收表](docs/validation-current.md)。
 
 ## 功能
 
@@ -30,9 +32,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.17-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.17.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.17.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.18-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.18.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.18.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
@@ -42,9 +44,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 ### 已有可连接的服务器
 
 1. 准备能正常运行的 BBport 普通版及自己的游戏文件。
-2. 完整解压客户端，双击 **BBSC-Launcher.exe**。无需单独安装 Python；若电脑缺少 VC++ x64 运行库，可运行包内 `prerequisites/VC_redist.x64.exe`。
+2. 完整解压客户端，双击 **TheHuntLauncher.exe**。无需单独安装 Python；若电脑缺少 VC++ x64 运行库，可运行包内 `prerequisites/VC_redist.x64.exe`。
 3. 在「游戏与联机」选择普通版 `Bloodborne.exe`、游戏 `eboot.bin` 和普通版 `bbport.ini`。
-4. 填写服务器管理员提供的四项地址和你的联机账号，保存后点击「启动游戏」。
+4. 填写服务器管理员提供的四项地址和你的私服联机账号，再填写独立的 SuperMedo 公共账号。保存后点击「启动游戏」；之后自动使用本机加密保存的账号。公共内容与私服合作的区别见[公共在线说明](docs/public-online.md)。
 
 The Hunt 使用所填服务器上的账号，与普通版 SuperMedo 登录分开。联机双方使用兼容版本、同一服务器和不同账号。四项地址的含义见[联机配置](docs/network.md)。
 

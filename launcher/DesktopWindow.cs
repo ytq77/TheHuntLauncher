@@ -98,6 +98,12 @@ public sealed class DesktopWindow
         Click("PickAdminIdentity",delegate { Pick("AdminIdentity","所有文件|*.*"); });
         Click("PickAdminKnownHosts",delegate { Pick("AdminKnownHosts","所有文件|*.*"); });
         Click("SaveSettings",delegate { RequireIdle(); SaveProfile(); Say("设置已保存。"); Page("Home"); });
+        AsyncClick("PublicVerify",VerifyPublic);
+        Click("PublicForget",delegate {
+            RequireIdle(); string path=PathAt(@".private\public-online.clixml"); if(File.Exists(path)) File.Delete(path);
+            Get<TextBox>("PublicAccount").Clear(); Get<PasswordBox>("PublicPassword").Clear();
+            Get<TextBlock>("PublicStatus").Text="公共账号已移除；如需公共内容，请重新填写账号。";
+        });
         AsyncClick("Launch",Launch);
         Click("OpenLogs",delegate { OpenFolder(Directory.Exists(PathAt(@"data\user")) ? PathAt(@"data\user"):root); });
         Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有导入备份。首次替换现有无缝存档时会自动创建。"; });
@@ -159,9 +165,43 @@ public sealed class DesktopWindow
         if(password.Length==0 && (!File.Exists(path) || DesktopCredentials.Read(path)[0]!=Text("Account"))) throw new InvalidOperationException("首次使用或更换账号时需要填写密码。");
         if(password.Length>0) { DesktopCredentials.Save(path,Text("Account"),password); Get<PasswordBox>("Password").Clear(); }
         profile["network"]=Map("shadnet",Text("Shadnet"),"webapi",Text("Webapi"),"community",Text("Community"),"relay",Text("Relay"));
+        profile["public_online"]=Get<CheckBox>("PublicOnline").IsChecked==true;
+        if((bool)profile["public_online"]) SavePublic();
         WriteJson(PathAt("profile.json"),profile); Summary();
     }
+    string[] PublicCredential() {
+        string name=Text("PublicAccount"), password=Get<PasswordBox>("PublicPassword").Password, path=PathAt(@".private\public-online.clixml");
+        if(name.Length==0) throw new InvalidOperationException("请填写 SuperMedo 公共账号，或关闭公共在线内容。");
+        if(password.Length>0) return new [] {name,password};
+        if(File.Exists(path)) { var saved=DesktopCredentials.Read(path); if(saved[0]==name) return saved; }
+        throw new InvalidOperationException("首次使用或更换公共账号时需要填写公共密码。");
+    }
+    void SavePublic() {
+        var account=PublicCredential();
+        try { DesktopCredentials.Save(PathAt(@".private\public-online.clixml"),account[0],account[1]); }
+        finally { account[1]=null; Get<PasswordBox>("PublicPassword").Clear(); }
+        Get<TextBlock>("PublicStatus").Text="公共账号已保存 · 启动时自动连接。";
+    }
+    async Task VerifyPublic() {
+        RequireIdle(); var credential=PublicCredential(); operation=true; SetBusy();
+        try {
+            Get<TextBlock>("PublicStatus").Text="正在验证公共账号…";
+            var result=await Request("public_online.py",Map("name",credential[0],"password",credential[1]),"");
+            DesktopCredentials.Save(PathAt(@".private\public-online.clixml"),credential[0],credential[1]);
+            Get<PasswordBox>("PublicPassword").Clear(); Get<TextBlock>("PublicStatus").Text=Str(result,"message");
+        } catch(Exception error) { Get<TextBlock>("PublicStatus").Text=error.Message; throw; }
+        finally { credential[1]=null; operation=false; SetBusy(); }
+    }
+    void LoadPublic() {
+        try {
+            string path=PathAt(@".private\public-online.clixml");
+            if(!File.Exists(path)) return;
+            Get<TextBox>("PublicAccount").Text=DesktopCredentials.Read(path)[0];
+            Get<TextBlock>("PublicStatus").Text="公共账号已保存 · 启动时自动连接。";
+        } catch { Get<TextBlock>("PublicStatus").Text="本机公共凭据无法读取，请重新填写账号密码。"; }
+    }
     void LoadProfile() {
+        LoadPublic();
         try {
             if(!File.Exists(PathAt("profile.json"))) return;
             var p=ReadJson(PathAt("profile.json"));
@@ -169,6 +209,7 @@ public sealed class DesktopWindow
             Get<TextBox>("GamePath").Text=Path.Combine(Str(p,"game"),"eboot.bin"); Get<TextBox>("GraphicsPath").Text=Str(p,"graphics_source");
             if(p.ContainsKey("network")) { var net=(Dictionary<string,object>)p["network"]; foreach(string n in new [] {"Shadnet","Webapi","Community","Relay"}) Get<TextBox>(n).Text=Str(net,n.ToLowerInvariant()); }
             if(File.Exists(PathAt(@".private\account.clixml"))) Get<TextBox>("Account").Text=DesktopCredentials.Read(PathAt(@".private\account.clixml"))[0];
+            Get<CheckBox>("PublicOnline").IsChecked=!p.ContainsKey("public_online") || Flag(p,"public_online");
             Summary(); Say("已加载本机配置，可以启动游戏。");
         } catch { Say("配置或本机凭据无法读取，请重新填写；存档仍在 data 目录。"); }
     }
@@ -182,7 +223,7 @@ public sealed class DesktopWindow
         }
     }
     void SetBusy() {
-        foreach(string n in new [] {"UseLocalServer","Launch","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
+        foreach(string n in new [] {"UseLocalServer","Launch","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
         foreach(var p in conversions) Get<Button>(p.Key).IsEnabled=!Busy && (p.Value=="create" || p.Value.StartsWith("start-") || Str(conversionJob,"next")==p.Value);
         foreach(string n in new [] {"ConversionSameRole","ConversionClearSlots","ConversionConfirmed"}) Get<CheckBox>(n).IsEnabled=!Busy;
@@ -218,12 +259,17 @@ public sealed class DesktopWindow
             bool fresh=await RefreshTrophies(true); trophies.Begin(fresh); DrawTrophies();
             var credential=DesktopCredentials.Read(PathAt(@".private\account.clixml"));
             var info=Python("client.py",""); info.EnvironmentVariables["BBSC_ACCOUNT"]=credential[0]; info.EnvironmentVariables["BBSC_PASSWORD"]=credential[1];
+            if(Get<CheckBox>("PublicOnline").IsChecked==true) {
+                var publicAccount=DesktopCredentials.Read(PathAt(@".private\public-online.clixml"));
+                info.EnvironmentVariables["THEHUNT_PUBLIC_ACCOUNT"]=publicAccount[0]; info.EnvironmentVariables["THEHUNT_PUBLIC_PASSWORD"]=publicAccount[1]; publicAccount[1]=null;
+            }
             noticeSession=Guid.NewGuid().ToString("N"); noticeSequence=0; toast.Stop();
             info.EnvironmentVariables["THEHUNT_UI_SESSION"]=noticeSession;
             WriteJson(PathAt("launcher-state.json"),Map("phase","preparing","message","正在准备独立环境…"));
             startedAt=DateTime.Now;
             using(var log=new StreamWriter(PathAt("startup.log"),false,new UTF8Encoding(false))) {
                 worker=Process.Start(info); info.EnvironmentVariables.Remove("BBSC_PASSWORD"); credential[1]=null;
+                info.EnvironmentVariables.Remove("THEHUNT_PUBLIC_PASSWORD");
                 Get<Button>("Launch").Content="游戏运行中"; Get<TextBlock>("KitStatus").Text="正在等待模组加载…"; Page("Home");
                 var stdout=Pump(worker.StandardOutput,log); var stderr=Pump(worker.StandardError,log);
                 await Task.Run(()=>worker.WaitForExit()); await Task.WhenAll(stdout,stderr);
@@ -250,6 +296,13 @@ public sealed class DesktopWindow
     void Poll() {
         if(worker==null) return;
         if(!worker.HasExited) PollTrophyNotices();
+        try {
+            string path=PathAt(@"data\user\public-online-state.json");
+            if(File.Exists(path)) {
+                var state=ReadJson(path);
+                if(Str(state,"ui_session")==noticeSession) Get<TextBlock>("PublicStatus").Text=!Flag(state,"account_connected") ? "公共账号连接已断开。": Convert.ToInt32(state["failures"])>0 ? "公共内容请求失败，请检查网络或重新启动。":Flag(state,"game_authenticated") ? "公共在线已连接 · 私服无缝保持独立。":"公共账号已连接，等待游戏登录。";
+            }
+        } catch(IOException) {} catch(ArgumentException) {}
         try { if(File.Exists(PathAt("launcher-state.json"))) Say(Str(ReadJson(PathAt("launcher-state.json")),"message")); } catch(IOException) {} catch(ArgumentException) {}
         try {
             string logs=PathAt(@"mod\logs");

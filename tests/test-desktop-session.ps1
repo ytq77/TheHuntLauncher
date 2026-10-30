@@ -53,12 +53,13 @@ try {
     [IO.File]::WriteAllText((Join-Path $fixture 'Bloodborne.exe'),'fixture',$utf8)
     [IO.File]::WriteAllText((Join-Path $fixture 'bbport.ini'),"output_res=2560x1440`nupscaler=dlss",$utf8)
     if(-not $GameDirectory) { $GameDirectory=Join-Path $fixture 'game'; [void][IO.Directory]::CreateDirectory($GameDirectory); [IO.File]::WriteAllText((Join-Path $GameDirectory 'eboot.bin'),'fixture',$utf8) }
-    $profile=@{ install=$fixture; game=$GameDirectory; graphics_source=(Join-Path $fixture 'bbport.ini'); network=@{shadnet='127.0.0.1:31413';webapi='http://127.0.0.1:31415';community='http://127.0.0.1:20443';relay='127.0.0.1:20444'} }
+    $profile=@{ install=$fixture; game=$GameDirectory; graphics_source=(Join-Path $fixture 'bbport.ini'); public_online=$true; network=@{shadnet='127.0.0.1:31413';webapi='http://127.0.0.1:31415';community='http://127.0.0.1:20443';relay='127.0.0.1:20444'} }
     [IO.File]::WriteAllText((Join-Path $fixture 'profile.json'),($profile|ConvertTo-Json -Depth 4),$utf8)
     [void][Reflection.Assembly]::LoadFrom((Join-Path $PackageRoot 'HuntUpdates.dll'))
-    [void][Reflection.Assembly]::LoadFrom((Join-Path $PackageRoot 'BBSC-Launcher.exe'))
+    [void][Reflection.Assembly]::LoadFrom((Join-Path $PackageRoot 'TheHuntLauncher.exe'))
     Assert ([HuntTypography]::Assets($fixture) -eq (Join-Path $PackageRoot 'assets')) 'Fixture must use the immutable packaged assets'
     [DesktopCredentials]::Save((Join-Path $fixture '.private\account.clixml'),'fixture-hunter','fixture-password')
+    [DesktopCredentials]::Save((Join-Path $fixture '.private\public-online.clixml'),'Public_fixture','public-fixture-password')
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'data\user'))
     [IO.File]::WriteAllText((Join-Path $fixture 'data\user\trophies.log'),"7 1700000000`n14 1700000001`n21 1700000002`n",$utf8)
     [IO.File]::WriteAllText((Join-Path $fixture 'client.py'),@'
@@ -69,6 +70,8 @@ root=Path(__file__).resolve().parent
 notices=TrophyNotices(root,os.environ['THEHUNT_UI_SESSION'])
 assert os.environ['BBSC_ACCOUNT']=='fixture-hunter'
 assert os.environ['BBSC_PASSWORD']=='fixture-password'
+assert os.environ['THEHUNT_PUBLIC_ACCOUNT']=='Public_fixture'
+assert os.environ['THEHUNT_PUBLIC_PASSWORD']=='public-fixture-password'
 time.sleep(.15)
 with (root/'data/user/trophies.log').open('a') as f: f.write('36 1700000100\n')
 notices.poll()

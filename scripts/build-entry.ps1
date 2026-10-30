@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$out = Join-Path $repo '.build\BBSC-Launcher.exe'
+$out = Join-Path $repo '.build\TheHuntLauncher.exe'
 [void][IO.Directory]::CreateDirectory((Split-Path -Parent $out))
 & (Join-Path $PSScriptRoot 'make-icon.ps1')
 $icon = Join-Path $repo '.build\TheHunt.ico'

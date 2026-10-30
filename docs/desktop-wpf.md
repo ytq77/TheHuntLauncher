@@ -4,7 +4,7 @@
 
 后续的固定字体分区、页面图片、游戏中奖杯浮层与 PC 菜单汉化见 [桌面候选 2](desktop-candidate2.md)。
 
-客户端现在由 `BBSC-Launcher.exe` 直接创建 WPF 窗口并启动 Python 后端，不再通过 PowerShell 加载界面。保留现有 .NET Framework / Windows 环境，不新增 .NET SDK 或单独安装的桌面运行时依赖。PowerShell 仅用于构建、测试及既有更新助手。
+客户端现在由 `TheHuntLauncher.exe` 直接创建 WPF 窗口并启动 Python 后端，不再通过 PowerShell 加载界面。保留现有 .NET Framework / Windows 环境，不新增 .NET SDK 或单独安装的桌面运行时依赖。PowerShell 仅用于构建、测试及既有更新助手。
 
 启动器与 `server/Server.exe` 共用 `launcher/DesktopTheme.xaml` 和 `HuntTheme.cs` 的字体、侧栏、按钮、表单与颜色。本地开服仍是独立窗口，拥有自己的服务进程；退出游戏或关闭启动器不会停止它。关闭开服窗口会停止它所启动的服务。
 

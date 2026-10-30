@@ -27,7 +27,7 @@ class AutomaticUpdate(unittest.TestCase):
         parent.mkdir(exist_ok=True)
         area = Path(tempfile.mkdtemp(prefix='case-', dir=parent))
         root = area / 'installed'; root.mkdir()
-        entry = 'BBSC-Launcher.exe' if client else 'Server.exe'
+        entry = 'TheHuntLauncher.exe' if client else 'Server.exe'
         private = ({'.private/account.clixml': b'private-credential-marker',
                     'data/user/savedata/userdata0000': b'private-save-marker',
                     'profile.json': b'private-profile-marker',
@@ -88,12 +88,59 @@ class AutomaticUpdate(unittest.TestCase):
                 result = self.run_installer(plan)
                 self.assertEqual(result.returncode, 0, result.stderr[-2000:])
                 self.assertEqual((root / 'a.txt').read_bytes(), b'new-a')
+                if client:
+                    self.assertEqual((root / 'TheHuntLauncher.exe').read_bytes(), b'new-entry')
+                    self.assertFalse((root / 'BBSC-Launcher.exe').exists())
                 for name, data in private.items():
                     self.assertEqual((root / name).read_bytes(), data, name)
                 backup = next((root / 'update-backups').iterdir())
                 self.assertEqual((backup / 'program/a.txt').read_bytes(), b'old-a')
                 self.assertTrue(json.loads((backup / 'result.json').read_text())['success'])
                 self.assertFalse((backup / 'program/update-settings.json').exists())
+
+    def test_legacy_client_install_is_rejected_without_changes(self):
+        root, _, old, plan, _ = self.fixture(client=True)
+        (root / 'TheHuntLauncher.exe').rename(root / 'BBSC-Launcher.exe')
+        result = self.run_installer(plan)
+        self.assertNotEqual(result.returncode, 0)
+        for name, data in old.items():
+            target = root / ('BBSC-Launcher.exe' if name == 'TheHuntLauncher.exe' else name)
+            self.assertEqual(target.read_bytes(), data, name)
+        self.assertFalse((root / 'update-backups').exists())
+
+    def test_client_restarts_the_renamed_entry(self):
+        root, private, _, plan, request = self.fixture(client=True)
+        area = root.parent
+        source = area / 'Stub.cs'
+        source.write_text('using System; using System.IO; class Stub { static void Main() {'
+            'File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"restarted.txt"),"renamed entry"); }}')
+        compiler = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        compiled = subprocess.run([str(compiler), '/nologo', '/target:winexe', '/out:Stub.exe', 'Stub.cs'],
+                                  cwd=area, capture_output=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        archive = Path(request['archive'])
+        with zipfile.ZipFile(archive) as bundle:
+            files = {name: bundle.read(name) for name in bundle.namelist()}
+        files['Application/TheHuntLauncher.exe'] = (area / 'Stub.exe').read_bytes()
+        manifest = json.loads(files['Application/file-sha256.json'])
+        manifest['TheHuntLauncher.exe'] = sha(files['Application/TheHuntLauncher.exe'])
+        files['Application/file-sha256.json'] = json.dumps(manifest).encode()
+        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
+            for name, data in files.items():
+                bundle.writestr(name, data)
+        request['sha256'] = sha(archive.read_bytes())
+        plan.write_text(json.dumps(request), encoding='utf-8')
+        result = subprocess.run([str(POWERSHELL), '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', str(HELPER), '-Plan', str(plan), '-Headless'], capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        for _ in range(30):
+            if (root / 'restarted.txt').exists():
+                break
+            time.sleep(0.1)
+        self.assertEqual((root / 'restarted.txt').read_text(), 'renamed entry')
+        self.assertFalse((root / 'BBSC-Launcher.exe').exists())
+        for name, data in private.items():
+            self.assertEqual((root / name).read_bytes(), data, name)
 
     def test_locked_target_rolls_back_previously_replaced_files(self):
         root, private, old, plan, _ = self.fixture()

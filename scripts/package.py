@@ -92,7 +92,7 @@ def main():
         (ROOT / ".build/save-bridge/save-bridge.dll", "mod/save-bridge.dll"),
     ):
         subprocess.run([str(binary_dir / "llvm-strip.exe"), "--strip-debug", "-o", str(dest / target), str(source)], check=True)
-    shutil.copy2(ROOT / ".build/BBSC-Launcher.exe", dest)
+    shutil.copy2(ROOT / ".build/TheHuntLauncher.exe", dest)
     shutil.copy2(ROOT / ".build/HuntUpdates.dll", dest)
     shutil.copy2(ROOT / ".build/TheHunt.ico", dest)
     for path in (ROOT / "launcher").iterdir():
@@ -116,8 +116,8 @@ def main():
     for path in dest.glob("*.ps1"):
         text = path.read_text(encoding="utf-8-sig")
         path.write_text(text, encoding="utf-8-sig")
-    (dest / "START-BBSC.cmd").write_bytes(
-        b'@echo off\r\nstart "" "%~dp0BBSC-Launcher.exe"\r\n')
+    (dest / "START-TheHunt.cmd").write_bytes(
+        b'@echo off\r\nstart "" "%~dp0TheHuntLauncher.exe"\r\n')
     for name in ("README.md", "LICENSE", "NOTICE.md", "CONTRIBUTING.md", "upstream.lock.json"):
         shutil.copy2(ROOT / name, dest / name)
     copy_public_docs(ROOT / "docs", dest / "docs")
@@ -149,7 +149,7 @@ def main():
     # Include their small dependency closure, without the upstream GUI/accounts.
     (dest / "engine/launcher").mkdir()
     for name in ("bbport_driver_runtime", "bbport_exit_backup", "bbport_saves",
-                 "bbport_character", "bbport_trophies", "bbport_trophy_icons"):
+                 "bbport_character", "bbport_trophies", "bbport_trophy_icons", "bbport_tls"):
         shutil.copy2(args.port / "launcher" / (name + ".py"), dest / "engine/launcher" / (name + ".py"))
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
     pc_menu = dest / 'engine/scripts/pc_menu.py'
@@ -236,6 +236,9 @@ def main():
     info["features"].append("bundled-local-seamless-server")
     info["features"].extend(["native-csharp-wpf-desktop", "read-only-trophy-display"])
     info["local_server"] = {"version": server_info["label"], "location": "server/Server.exe"}
+    info["features"].extend(["public-online-password-account", "split-public-content-private-seamless", "renamed-launcher-entry"])
+    info["launcher_entry"] = "TheHuntLauncher.exe"
+    info["public_online_validation"] = "Existing-account NP authentication, hybrid metadata, public game login and read-only notes query passed through the actual bridge (HTTP 200 / ResKind 0; empty notes list in the selected query). Loopback protocol/HTTP and credential isolation regressions passed. No real game, public content write or two-player hybrid-session acceptance is claimed. Unchanged gameplay results are reused only within their scope."
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)
