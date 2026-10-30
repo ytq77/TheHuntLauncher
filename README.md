@@ -1,104 +1,104 @@
-# The Hunt — 无缝联机与开服
+# The Hunt
 
+**Bloodborne PC 无缝联机启动器与开服工具**
 
-从 preview.16 起，客户端与无缝服务端在本仓库统一维护。完整客户端包内置本地开服管理入口；远程 Windows 开服仍可下载独立服务端包，Linux 使用同版本部署配方。原 TheHuntServer 仓库作为历史只读仓库保留。
+The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-- 玩家：使用 `TheHuntLauncher-<版本>-windows-x64.zip`，在「本地与云端开服」打开内置管理窗口。
-- 专用 Windows 服务端：使用 `TheHuntServer-Windows-v<版本>.zip`，无需安装客户端引擎。
-- Linux 服务端：[部署说明](server/docs/deployment.md)与[配方](server/recipe/)。
-- 本地开服与账号保存：[开服说明](docs/local-server.md)。
-- 当前已通过项目、复用范围及剩余问题：[验收表](docs/validation-current.md)。
-- C# WPF 前台、统一开服窗口与只读奖杯显示：[实现与验证说明](docs/desktop-wpf.md)。首页固定文楷，其余页面及开服窗口固定黑体。
-- 奖杯浮层、页面图片与 PC 菜单汉化：[实现记录](docs/desktop-candidate2.md)。
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.17) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
-由 **iytq** 维护，适用于 Bloodborne PC 移植版的 BBSC 无缝联机启动器，提供独立运行环境、中文文本、本机配置同步与自动构建。
+![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. This is a community project, independent of the original BBSC, BBport, Sony and FromSoftware projects.
+当前版本为 **0.1.0-preview.17**，基于 **BBport 1.9.6**，仍处于预览阶段。1.9.6 运行和 comp 小窗口奖杯提示已获用户实机确认；历史灯点分支问题仍在调查。版本内容见[发布说明](docs/releases/v0.1.0-preview.17.md)，各项验证范围见[验收表](docs/validation-current.md)。
 
-窗口中的「检查更新」支持版本查询、自动下载校验、程序备份与替换，并保留账号和存档。网络与升级说明见 [自动更新](docs/updates.md)。
+## 功能
 
-![启动界面](docs/launcher.png)
-
-## 当前支持
-
-| 组件 | 固定版本 |
+| 功能 | 说明 |
 |---|---|
-| 游戏 | CUSA03173 1.09，自备游戏文件 |
-| BBport | 1.9.6 |
-| BBSC | 0.0.1_items，包含本仓库兼容补丁 |
-| 系统 | Windows 10 / 11，x64 |
-| 界面与模组文本 | 简体中文 |
+| 无缝联机 | 使用 BBSC 合作、跨区域召唤、提灯同行及对应猎具；在「功能与玩法」配置玩法和难度 |
+| 内置本地开服 | 从启动器打开独立管理窗口，选择监听地址、启停服务和管理联机账号 |
+| 独立与云端开服 | 提供独立 Windows 服务端、Linux 部署配方，以及启动器内的 SSH 云端状态与账号管理入口 |
+| 奖杯记录与提示 | 显示本体及老猎人共 40 项奖杯，启动和退出时刷新实际记录，新解锁可在游戏右上角提示，随游戏窗口同比缩放 |
+| 独立存档 | 无缝进度在独立目录保存，支持带备份的普通版导入与指定布局的离线转换 |
+| 本机配置 | 每次启动读取本机普通版的画质及按键配置，账号使用 Windows DPAPI 加密保存 |
+| 中文 WPF 界面 | 首页固定文楷，其余页面和开服窗口固定黑体，包含中文联机文本与 PC 菜单适配 |
 
-这是 **0.1.0-preview.17 预览版**。整合 C# WPF 前台、只读奖杯页与随窗口缩放的奖杯提示，并固定 BBport 1.9.6。只提供 TheHuntLauncher 名称的完整包，不再发布旧名称的同内容附件或增量兼容包。详见[本版说明](docs/releases/v0.1.0-preview.17.md)与[当前验收表](docs/validation-current.md)。
+奖杯只依据真实解锁记录显示，不根据角色进度推算或补发。人偶洗点在无缝版保持关闭。
 
-1.9.5 WPF 候选的内置开服经 Tailscale 入房已有用户确认；1.9.6 的核心构建、HTTPS 证书校验和兼容检查通过，未将旧版实机反馈扩大为 1.9.6 的游戏内验收。BBSC 奖励与恢复逻辑按未改范围复用既有验收。见[整合记录](docs/desktop-196-candidate.md)。
+## 下载
 
-游戏汉化MOD覆盖新增退出文字的问题已加入[退出文本兼容修正](docs/quit-to-desktop.md)，保留其他译文，并沿用普通版的功能开关。
+请从 [Releases](https://github.com/ytq77/TheHuntLauncher/releases) 下载完整包，解压到新目录，并使用自己的路径、账号和存档。
 
-合作退出与世界记录等待的说明见[世界恢复流程](docs/world-recovery.md)。如果刚退出合作，请关闭游戏窗口后再重启加载；不要手动删除待确认记录。
-
-## 使用
-
-1. 从 [Actions](https://github.com/ytq77/TheHuntLauncher/actions) 下载构建产物，或从 [Releases](https://github.com/ytq77/TheHuntLauncher/releases) 下载预览版。完整解压到新目录。
-2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。新电脑若缺少 VC++ 运行库，先运行包内 `prerequisites/VC_redist.x64.exe`；已有同版或新版可跳过。
-3. 在「游戏与联机」选择本机普通版 `Bloodborne.exe`、游戏 `eboot.bin` 以及普通版的 `bbport.ini`。
-4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「启动游戏」。
-5. 「功能与玩法」提供完整中文功能说明、开关与难度数值，支持恢复推荐。保存后下次启动生效，详见[功能与玩法说明](docs/features.md)。
-6. 自建服务管理员可在「服务器管理」通过 SSH 查看状态与账号、新建及验证账号；普通玩家不需要填写，见[管理说明](docs/server/client-admin.md)。
-
-需要先有能正常运行的 BBport 普通版。首次启动会复制本机存档与模组设置，此后无缝版存档保存在本包 `data/user` 中独立发展。普通版画质、帧率及同目录 `input.ini` 在每次启动时重新读取，因此低配置电脑不会继承其他电脑的画质。首次替换已有按键配置前会保留 `data/input.before-settings-sync.ini`；普通版文件不存在时保留无缝版现有按键。
-
-人偶洗点在无缝版继续关闭。需要时可在普通版洗点，先完成全部免费等级的重新分配并正常保存退出，再导入普通版存档；不要导入洗点到一半的角色。导入会整体替换无缝版全部角色进度，详见[洗点说明](docs/rebirth.md)。普通版设置保持不变。FSR 4.1.1 的 Vulkan/DX12 组件、DLSS 桥接及 NVIDIA SR/FG 运行库随包提供；1.9.5 的 FSR 4.1.2 及 ML-FG 4.0.2 还依赖相应 AMD 驱动与系统支持，功能可用性由上游能力检测决定。
-
-本项目不附带游戏本体、游戏字体/资源、存档、账号或私人服务器配置。游戏主体的汉化来自用户自己的游戏安装；BBSC 道具、联机提示由本项目提供中文文本。
-
-已有安装可通过「检查更新」下载、校验并自动替换程序。首次从不带更新模块的旧公开版升级时，仍需退出游戏和启动器，将新版程序覆盖到原目录；保留这台电脑自己的存档、账号和个人配置。单纯重启不会下载更新，详见[客户端升级说明](docs/upgrading.md)。
-
-## 从普通版更新存档
-
-首次启动自动复制普通版存档。之后普通版进度增加时，先正常退出游戏，在「存档」页核对来源和目标，再点击「从普通版导入」。
-
-导入会校验文件，自动将现有无缝存档备份到本包 `save-backups/`，再用普通版存档**整体替换全部角色**，不合并进度。普通版存档保持原样，画质和联机配置不受影响。游戏运行时禁止导入；复制或切换失败会保留或恢复原无缝存档。备份不会自动删除，可从同页打开备份目录。
-
-「无缝版 → 普通版」提供[离线转换](docs/save-conversion.md)：自动备份并处理副本，清理两栏无缝道具引用，原版联机道具只放背包。可直接导出 ZIP，或备份旧原版后替换；全程无需启动游戏。当前仅支持已验证布局与单角色条件。
-
-新建导入、转换任务会备份并合并真实奖杯记录，按编号去重并保留最早解锁时间；导出包携带记录，替换原版时一同合并。缺少记录会提示，不能只凭角色进度补齐历史奖杯，详见[奖杯同步](docs/trophies.md)。
-
-## 联机
-
-需要支持 BBSC 的 **shadNet + BBSC 游戏服务/Relay**。单有普通 shadNet 服务不等于已经具备无缝联机服务。地址字段的意义及配置示例见 [联机配置](docs/network.md)；自行部署、维护与排错见 [Ubuntu / Docker / Tailscale 服务端教程](docs/server/README.md)。
-
-两端使用兼容版本、同一个服务器和不同账号。服务端与路由环境仍由服务器管理员维护；本启动器不会自动修改路由器、防火墙或部署服务器。
-
-| 猎具 | 用途 |
+| 用途 | 下载内容 |
 |---|---|
-| 唤猎之铃 | 召来其他猎人，成为房主 |
-| 应猎之铃 | 加入另一位猎人的世界 |
-| 渴血之铃 | 入侵其他猎人的世界 |
-| 纷争之铃 | 在合作会话中切换玩家间战斗 |
-| 断鸣空弹 | 结束合作 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.17-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.17.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.17.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
-## 本仓库的改动
+发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
 
-- The Hunt 图形启动器：旧银色、铃铛蚀刻纹样与 iytq 署名，显示当前配置、启动状态和猎具准备耗时。
-- 深色标题栏、原创铃铛程序图标、清晰的页面选中状态与按需存档导入。
-- 把猎具初始化从读档后的首次游戏循环提前到安装钩子阶段，取消首次 5 秒等待；保留失败重试与未就绪保护。
-- 用安全的内存快照扫描处理页面权限变化，避免扫描时触发宿主的致命异常处理。
-- 排除独立环境下重复加载的内置补丁 XML，保留玩家选择的其他补丁。
-- 每次启动同步本机画质设置，账号通过 Windows DPAPI 按当前用户加密保存。
-- 210 条道具/菜单文本、18 处运行时提示及动态 Boss 提示的简体中文翻译。
+## 快速开始
 
-## 构建与贡献
+### 已有可连接的服务器
 
-见 [构建说明](docs/build.md)、[验证记录](docs/validation.md) 和 [贡献指南](CONTRIBUTING.md)。
+1. 准备能正常运行的 BBport 普通版及自己的游戏文件。
+2. 完整解压客户端，双击 **BBSC-Launcher.exe**。无需单独安装 Python；若电脑缺少 VC++ x64 运行库，可运行包内 `prerequisites/VC_redist.x64.exe`。
+3. 在「游戏与联机」选择普通版 `Bloodborne.exe`、游戏 `eboot.bin` 和普通版 `bbport.ini`。
+4. 填写服务器管理员提供的四项地址和你的联机账号，保存后点击「启动游戏」。
 
-GitHub Actions 在推送、PR 和手动触发时执行测试与 Windows 构建。版本标签 `v*` 生成 GitHub **预发布版**，同时附带二进制、完整应用源码和 SHA256 校验文件。上游源码固定到 `upstream.lock.json` 中的提交，升级需要显式修改并重新验证；MSYS2 工具链版本会记录在产物中，当前不承诺逐字节可重现。
+The Hunt 使用所填服务器上的账号，与普通版 SuperMedo 登录分开。联机双方使用兼容版本、同一服务器和不同账号。四项地址的含义见[联机配置](docs/network.md)。
+
+### 在本机开服
+
+1. 打开「本地与云端开服」→「打开本地开服管理」。
+2. 在管理窗口选择本机的局域网或 VPN IPv4，启动无缝服务，为每位玩家创建不同账号。
+3. 同机游玩可在启动器点击「填入本机服务地址」，再填写账号并保存；同伴使用开服窗口显示的局域网或 VPN 地址。
+
+开服管理窗口独立运行，关闭启动器或退出游戏不会自动停服。结束开服请在管理窗口停止服务或关闭该窗口。地址选择、端口与账号数据位置见[本地开服说明](docs/local-server.md)。
+
+![启动器中的本地与云端开服页面](docs/local-server.png)
+
+专用 Windows 主机见[服务端说明](server/README.md)，Linux 主机使用[部署教程](server/docs/deployment.md)。已有云端服务可通过启动器的 SSH 管理区域查看状态、新建和验证账号，详见[云端管理](docs/server/client-admin.md)。
+
+## 支持范围
+
+| 组件 | 当前范围 |
+|---|---|
+| 游戏文件 | CUSA03173 1.09，需自行提供 |
+| BBport | 固定 1.9.6 |
+| BBSC | 固定 `0.0.1_items`，包含本仓库兼容补丁 |
+| 客户端与图形开服窗口 | Windows 10 / 11，x64 |
+| Linux 服务端 | 使用同版本部署配方，按文档配置 Docker 与网络 |
+| 界面与联机文本 | 简体中文 |
+
+本项目为社区维护项目，由 **iytq** 维护，独立于 BBSC、BBport、Sony 和 FromSoftware。不附带游戏本体、游戏字体或奖杯图片、玩家存档、账号与私人服务器配置。界面字体附带许可，界面图片保留来源记录。
+
+## 存档、奖杯与更新
+
+首次启动会复制本机普通版的存档和模组设置，此后无缝进度在本包 `data/user` 中独立发展。画质和同目录 `input.ini` 每次启动重新读取本机普通版配置。
+
+在「存档」页从普通版导入时，会先备份现有无缝存档，再**整体替换全部角色进度**，不合并世界进度。「无缝版 → 普通版」提供带备份的离线转换，当前仅支持已验证布局和条件。操作前请阅读[导入与转换说明](docs/save-conversion.md)。
+
+导入与转换会备份并合并实际奖杯记录，按编号去重、保留最早解锁时间。原版未记录的历史奖杯不会仅凭存档进度自动点亮，见[奖杯同步](docs/trophies.md)。
+
+「检查更新」支持查询、下载校验、程序备份与替换，并保留账号和存档，见[自动更新](docs/updates.md)。合作结束后的世界恢复说明见[世界恢复流程](docs/world-recovery.md)；保留待确认记录，按提示关闭游戏并完成核对。
+
+## 文档与源码
+
+- [玩法与功能开关](docs/features.md)
+- [本地开服](docs/local-server.md)、[Windows 服务端](server/README.md)、[Linux 部署](server/docs/deployment.md)、[网络配置](docs/network.md)
+- [当前验收表](docs/validation-current.md)、[历史灯点调查](docs/lamp-investigation.md)
+- [C# WPF 与奖杯实现](docs/desktop-wpf.md)、[BBport 1.9.6 适配](docs/upstream-1.9.6-review.md)
+- [源码构建](docs/build.md)、[贡献指南](CONTRIBUTING.md)
+
+`launcher/` 为客户端前台与后端，`server/` 为服务端，`patches/` 为兼容与修复补丁。原 [TheHuntServer](https://github.com/ytq77/TheHuntServer) 仓库只读保留历史，新版本统一在本仓库维护和发布。
+
+GitHub Actions 执行自动检查和构建，`v*` 标签生成预发布版并附带匹配源码和校验文件。上游提交固定在 `upstream.lock.json`；工具链版本记录在发布附件中。
 
 ## 致谢与许可证
 
-- [CLSAMG22 / BBSC](https://github.com/CLSAMG22/BBSC)：无缝联机主体、加载器、服务器及原始道具机制。
-- [Supermedo / bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)：BBport 核心、画面与输入支持。
-- [shadPS4](https://github.com/shadps4-emu/shadPS4) 及上游贡献者。
-- [MSYS2](https://www.msys2.org/) 与各依赖项目。
+- [CLSAMG22 / BBSC](https://github.com/CLSAMG22/BBSC)：无缝联机主体、加载器、服务器与猎具机制。
+- [Supermedo / bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)：BBport 核心、画面和输入支持。
+- [shadPS4](https://github.com/shadps4-emu/shadPS4)、[MSYS2](https://www.msys2.org/) 及各依赖项目的贡献者。
 
-本项目代码使用 GPL-2.0-or-later；第三方代码保留原许可证和署名。详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。不宣称拥有上游项目或 Bloodborne 游戏资产。
+本项目代码使用 GPL-2.0-or-later；第三方代码和资源保留各自许可证与署名。详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。
