@@ -1,15 +1,18 @@
 ﻿param([Parameter(Mandatory=$true)][string]$AssemblyPath,[string]$FixtureDirectory)
 $ErrorActionPreference = 'Stop'
-# WPF caches private font handles until process exit. The parent owns cleanup.
+$repo = Split-Path $PSScriptRoot
+# FontCache can retain private fonts beyond process exit. Use the immutable
+# parent assets directly, keeping font files out of the disposable fixture.
+# The parent owns cleanup.
 if(-not $FixtureDirectory) {
-    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('the-hunt-desktop-' + [Guid]::NewGuid().ToString('N'))
+    $fixture = Join-Path $repo ('the-hunt-desktop-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($fixture)
     $testExit = 1
     try {
         & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -STA -ExecutionPolicy Bypass -File $PSCommandPath -AssemblyPath ([IO.Path]::GetFullPath($AssemblyPath)) -FixtureDirectory $fixture
         $testExit = $LASTEXITCODE
     } finally {
-        $full=[IO.Path]::GetFullPath($fixture); $base=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'
+        $full=[IO.Path]::GetFullPath($fixture); $base=[IO.Path]::GetFullPath($repo).TrimEnd('\')+'\'
         if(-not $full.StartsWith($base,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'the-hunt-desktop-*') { throw 'Unsafe fixture cleanup path' }
         try { Remove-Item -LiteralPath $full -Recurse -Force } catch { if($testExit -eq 0) { throw }; Write-Warning "Fixture cleanup also failed: $_" }
     }
@@ -25,7 +28,6 @@ public static class ToastStyleCheck {
 '@
 [void][Reflection.Assembly]::LoadFrom((Join-Path (Split-Path $AssemblyPath) 'HuntUpdates.dll'))
 [void][Reflection.Assembly]::LoadFrom($AssemblyPath)
-$repo = Split-Path $PSScriptRoot
 $fixture = $FixtureDirectory
 $utf8 = New-Object Text.UTF8Encoding $false
 $flags = [Reflection.BindingFlags]'Instance,NonPublic'
@@ -33,7 +35,7 @@ function Invoke-Private($object, [string]$name, [object[]]$arguments=@()) { $raw
 function Assert($value,[string]$message) { if(-not $value) { throw $message } }
 try {
     foreach($name in @('Launcher.xaml','feature-catalog.json','trophy-catalog.json')) { Copy-Item -LiteralPath (Join-Path $repo ('launcher\'+$name)) -Destination $fixture }
-    Copy-Item -LiteralPath (Join-Path $repo 'assets') -Destination $fixture -Recurse
+    Assert ([HuntTypography]::Assets($fixture) -eq (Join-Path $repo 'assets')) 'Fixture must use the immutable source assets'
     $credentials = Join-Path $fixture '.private\account.clixml'
     [void][IO.Directory]::CreateDirectory((Split-Path $credentials))
     $user = '猎人_x0041_ & < >'

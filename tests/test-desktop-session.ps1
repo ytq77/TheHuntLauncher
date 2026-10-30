@@ -1,10 +1,13 @@
 ﻿param([Parameter(Mandatory=$true)][string]$PackageRoot,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$GameDirectory,[string]$FixtureDirectory)
 $ErrorActionPreference='Stop'
+$PackageRoot=[IO.Path]::GetFullPath($PackageRoot)
 [void][IO.Directory]::CreateDirectory($OutputDirectory)
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-# WPF caches private font handles until process exit. The parent owns cleanup.
+# FontCache can retain private fonts beyond process exit. Use the immutable
+# parent assets directly, keeping font files out of the disposable fixture.
+# The parent owns cleanup.
 if(-not $FixtureDirectory) {
-    $fixture=Join-Path $OutputDirectory ('fixture-'+[Guid]::NewGuid().ToString('N'))
+    $fixture=Join-Path $PackageRoot ('fixture-'+[Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($fixture)
     $testExit=1
     try {
@@ -14,7 +17,7 @@ if(-not $FixtureDirectory) {
         $testExit=$LASTEXITCODE
     } finally {
         $full=[IO.Path]::GetFullPath($fixture)
-        if(-not $full.StartsWith($OutputDirectory.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'fixture-*') { throw 'Unsafe session fixture cleanup path' }
+        if(-not $full.StartsWith($PackageRoot.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -notlike 'fixture-*') { throw 'Unsafe session fixture cleanup path' }
         try { Remove-Item -LiteralPath $full -Recurse -Force } catch { if($testExit -eq 0) { throw }; Write-Warning "Fixture cleanup also failed: $_" }
     }
     exit $testExit
@@ -40,7 +43,6 @@ function Await-Task($task) {
 }
 try {
     Copy-Item -LiteralPath (Join-Path $PackageRoot 'runtime') -Destination $fixture -Recurse
-    Copy-Item -LiteralPath (Join-Path $PackageRoot 'assets') -Destination $fixture -Recurse
     foreach($name in @('Launcher.xaml','feature-catalog.json','trophy-catalog.json','trophy_view.py','trophy_sync.py','save_transfer.py','home_save_proof.py')) {
         if(Test-Path (Join-Path $PackageRoot $name)) { Copy-Item -LiteralPath (Join-Path $PackageRoot $name) -Destination $fixture }
     }
@@ -55,6 +57,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $fixture 'profile.json'),($profile|ConvertTo-Json -Depth 4),$utf8)
     [void][Reflection.Assembly]::LoadFrom((Join-Path $PackageRoot 'HuntUpdates.dll'))
     [void][Reflection.Assembly]::LoadFrom((Join-Path $PackageRoot 'BBSC-Launcher.exe'))
+    Assert ([HuntTypography]::Assets($fixture) -eq (Join-Path $PackageRoot 'assets')) 'Fixture must use the immutable packaged assets'
     [DesktopCredentials]::Save((Join-Path $fixture '.private\account.clixml'),'fixture-hunter','fixture-password')
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'data\user'))
     [IO.File]::WriteAllText((Join-Path $fixture 'data\user\trophies.log'),"7 1700000000`n14 1700000001`n21 1700000002`n",$utf8)
