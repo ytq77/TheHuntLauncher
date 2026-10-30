@@ -73,7 +73,7 @@ class Account:
             if kind != 3 or len(payload) < 4 or struct.unpack_from('<I', payload)[0] != 1:
                 raise ValueError('公共账号协议版本与当前客户端不一致。')
             login = text_field(1, name) + text_field(2, password)
-            login += text_field(4, 'CUSA03173') + text_field(5, 'Bloodborne') + b'\x30\x01'
+            login += text_field(4, 'CUSA03173') + text_field(5, 'Bloodborne')
             self.send(0, 1, login)
             reply = self.reply(0, 1)
             if not reply or reply[0] != 0:

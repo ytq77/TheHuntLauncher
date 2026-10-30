@@ -115,7 +115,7 @@ class PublicOnline(unittest.TestCase):
         self.assertEqual([row[0] for row in fixture.received], [0, 13])
         login = fixture.received[0][1]
         self.assertEqual(login[1], b'Public_fixture'); self.assertEqual(login[2], b'public-fixture-password')
-        self.assertEqual(login[6], 1)
+        self.assertNotIn(6, login)  # Keep BBport's normal online presence; do not force Appear-Offline.
         self.assertEqual(fixture.received[1][1][1], b'bbport/1.9.6')
 
     def test_rejected_account_is_not_retried_or_registered(self):
