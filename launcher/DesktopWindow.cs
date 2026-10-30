@@ -281,6 +281,7 @@ public sealed class DesktopWindow
         finally {
             if(worker!=null) { worker.Dispose(); worker=null; }
             toast.Stop(); noticeSession=null;
+            LoadPublic();
         }
         // Refresh even when exit recovery reports an error. Trophy failure has its own notice.
         trophies.Exited();
@@ -298,7 +299,7 @@ public sealed class DesktopWindow
         if(!worker.HasExited) PollTrophyNotices();
         try {
             string path=PathAt(@"data\user\public-online-state.json");
-            if(File.Exists(path)) {
+            if(!worker.HasExited && File.Exists(path)) {
                 var state=ReadJson(path);
                 if(Str(state,"ui_session")==noticeSession) Get<TextBlock>("PublicStatus").Text=!Flag(state,"account_connected") ? "公共账号连接已断开。": Convert.ToInt32(state["failures"])>0 ? "公共内容请求失败，请检查网络或重新启动。":Flag(state,"game_authenticated") ? "公共在线已连接 · 私服无缝保持独立。":"公共账号已连接，等待游戏登录。";
             }

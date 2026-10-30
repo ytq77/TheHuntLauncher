@@ -97,6 +97,7 @@ sys.exit(9)
     Assert ($desktop.Window.FindName('TrophySummary').Text -like '*4 / 40*') 'Failed-exit trophy refresh missing'
     Assert ($desktop.Window.FindName('TrophySession').Text -like '*1*') 'Session delta missing'
     Assert ($desktop.Window.FindName('StatusText').Text -eq 'fixture recovery error') 'Trophy refresh hid recovery error'
+    Assert ($desktop.Window.FindName('PublicStatus').Text -like '*启动时自动连接*') 'Ended worker retained a connected public-session status'
     Assert (Test-Path (Join-Path $fixture 'session-proof.json')) 'Worker did not receive credential environment'
     $events=Get-Content -LiteralPath (Join-Path $fixture 'data\user\ui-trophy-events.json') -Raw | ConvertFrom-Json
     Assert ($events.events.Count -eq 1 -and $events.events[0].id -eq 36) 'Actual backend notice bridge reported imported history or missed the new unlock'
