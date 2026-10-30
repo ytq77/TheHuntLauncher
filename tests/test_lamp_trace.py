@@ -166,9 +166,10 @@ class NativeLampObserver(unittest.TestCase):
     def setUpClass(cls):
         cls.area=tempfile.TemporaryDirectory();cls.root=Path(cls.area.name)
         (cls.root/'bbsc_lamp_trace_groups.h').write_text('constexpr std::array<u32,2> LampTraceGroups{12417,13407};\n',encoding='utf-8')
-        binary=Path('C:/bbsc-dev/msys64/clang64/bin');cls.env=dict(os.environ,PATH=str(binary)+os.pathsep+os.environ.get('PATH',''))
+        compiler=Path(shutil.which('clang++') or 'C:/bbsc-dev/msys64/clang64/bin/clang++.exe')
+        binary=compiler.parent;cls.env=dict(os.environ,PATH=str(binary)+os.pathsep+os.environ.get('PATH',''))
         cls.exe=cls.root/'observe.exe'
-        result=subprocess.run([str(binary/'clang++.exe'),'-std=c++23','-O1','-I'+str(cls.root),'-I'+str(ROOT/'patches'),str(ROOT/'tests/test_lamp_trace_native.cpp'),'-o',str(cls.exe)],capture_output=True,env=cls.env)
+        result=subprocess.run([str(compiler),'-std=c++23','-O1','-I'+str(cls.root),'-I'+str(ROOT/'patches'),str(ROOT/'tests/test_lamp_trace_native.cpp'),'-o',str(cls.exe)],capture_output=True,env=cls.env)
         if result.returncode:raise RuntimeError(result.stderr.decode(errors='replace'))
     @classmethod
     def tearDownClass(cls):cls.area.cleanup()
