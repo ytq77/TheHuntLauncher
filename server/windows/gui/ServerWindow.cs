@@ -89,7 +89,11 @@ internal sealed class DesktopManager
 
     public DesktopManager() {
         using (var stream = typeof(DesktopManager).Assembly.GetManifestResourceStream("TheHuntServer.Window.xaml"))
-            window = (Window)XamlReader.Load(stream);
+        using (var reader = new StreamReader(stream, Encoding.UTF8)) window = HuntTheme.Load(reader.ReadToEnd(),root);
+        HuntTypography.Bind(window,root);
+        Get<RadioButton>("ConnectionNav").Click += delegate { Get<TabControl>("MainTabs").SelectedIndex = 0; };
+        Get<RadioButton>("AccountsNav").Click += delegate { Get<TabControl>("MainTabs").SelectedIndex = 1; };
+        Get<TabControl>("MainTabs").SelectedIndex = 0;
         string icon = Path.Combine(root, "TheHunt.ico");
         if (File.Exists(icon)) window.Icon = BitmapFrame.Create(new Uri(icon));
         string build = Path.Combine(root, "BUILD-INFO.json");
@@ -309,6 +313,11 @@ internal sealed class DesktopManager
                     Get<DataGrid>("AccountGrid").SelectedIndex = 0;
                     if (Get<Button>("DeleteAccount").IsEnabled || !Get<Button>("VerifyAccount").IsEnabled) throw new InvalidOperationException("Live account controls incorrect");
                     if (!AllLinks().Contains("http://127.0.0.1:20443") || !AllLinks().Contains("127.0.0.1:20444")) throw new InvalidOperationException("Connection fields incorrect");
+                    if (!Get<TextBox>("CoopAddress").IsVisible) throw new InvalidOperationException("Connection page is not visible");
+                    Get<RadioButton>("AccountsNav").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                    window.UpdateLayout();
+                    if (!Get<DataGrid>("AccountGrid").IsVisible) throw new InvalidOperationException("Account navigation did not show its page");
+                    Get<RadioButton>("ConnectionNav").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                     window.UpdateLayout();
                     var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     bitmap.Render(window);
@@ -328,14 +337,17 @@ internal sealed class DesktopManager
         return application.Run(window);
     }
 
-    public void Validate(string capture) {
+    public void Validate(string capture, bool accounts = false) {
         foreach (string name in new [] { "StartButton", "StopButton", "CopyAll", "CreateAccount", "RenameAccount", "ResetAccount", "DeleteAccount", "VerifyAccount" })
             if (Get<Button>(name) == null) throw new InvalidOperationException("Missing UI control: " + name);
         var body = Get<Grid>("Body");
+        Get<TabControl>("MainTabs").SelectedIndex = accounts ? 1 : 0;
+        Get<RadioButton>(accounts ? "AccountsNav" : "ConnectionNav").IsChecked = true;
+        if (Get<TabControl>("MainTabs").SelectedContent == null) throw new InvalidOperationException("Missing selected server page");
         body.Background = window.Background;
-        body.Measure(new Size(950, 700)); body.Arrange(new Rect(0, 0, 950, 700)); body.UpdateLayout();
+        body.Measure(new Size(1160, 800)); body.Arrange(new Rect(0, 0, 1160, 800)); body.UpdateLayout();
         if (capture != null) {
-            var bitmap = new RenderTargetBitmap(1010, 760, 96, 96, PixelFormats.Pbgra32); bitmap.Render(body);
+            var bitmap = new RenderTargetBitmap(1160, 800, 96, 96, PixelFormats.Pbgra32); bitmap.Render(body);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var output = File.Create(capture)) encoder.Save(output);
         }
@@ -418,7 +430,7 @@ internal static class Entry
             if (args.Length == 0) HuntUpdates.EnsureNotUpdating(AppDomain.CurrentDomain.BaseDirectory);
             var application = new Application();
             var manager = new DesktopManager();
-            if (args.Length > 0 && args[0] == "--validate") { manager.Validate(args.Length > 1 ? args[1] : null); return 0; }
+            if (args.Length > 0 && args[0] == "--validate") { manager.Validate(args.Length > 1 ? args[1] : null, args.Length > 2 && args[2] == "accounts"); return 0; }
             if (args.Length > 0 && args[0] == "--test-lifecycle") { manager.LifecycleTest().GetAwaiter().GetResult(); return 0; }
             if (args.Length > 0 && args[0] == "--test-ui") return manager.Show(application, true);
             string identity;

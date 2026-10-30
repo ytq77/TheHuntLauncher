@@ -47,6 +47,7 @@ class AutomaticUpdate(unittest.TestCase):
                     'server.json': b'{"address":"100.64.1.2"}',
                     'normal/worlds.cfg': b'private-world-config-marker'})
         private['update-settings.json'] = b'private-update-options-marker'
+        private['desktop-settings.json'] = b'1'
         old = {entry: b'old-entry', 'a.txt': b'old-a', 'z.dll': b'old-z', **private}
         for name, data in old.items():
             target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)

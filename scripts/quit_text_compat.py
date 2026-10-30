@@ -6,6 +6,7 @@ import sys
 import uuid
 
 import quit_menu
+from pc_menu_zh import compatible_existing, localized
 
 
 def patched_archive(raw, language, pc_texts=None):
@@ -25,11 +26,17 @@ def patched_archive(raw, language, pc_texts=None):
     wanted={200:{quit_menu.TITLE_ID:name,quit_menu.SYSTEM_ID:name},
             201:{quit_menu.TITLE_ID:title_help,quit_menu.SYSTEM_ID:system_help},
             204:{quit_menu.DIALOG_ID:question}}
-    # 1.9.5's prepared PC menu adds its own 119xxx texts. Fill only missing
-    # entries after language mods, retaining any existing translated PC labels.
-    extra={category:{number:text for number,text in entries.items()
-                     if not strings[category].get(number)}
-           for category,entries in (pc_texts or {}).items()}
+    # Translate only the pinned English defaults (or missing entries). Existing
+    # third-party Chinese labels and all unrelated FMG entries retain priority.
+    chinese = language.casefold() == 'zhocn'
+    extra={}
+    for category,entries in (pc_texts or {}).items():
+        extra[category]={}
+        for number,text in entries.items():
+            current=strings[category].get(number)
+            wanted_text=(localized(text) if chinese else text) if not current or current==text else \
+                   compatible_existing(current) if chinese else current
+            if wanted_text!=current:extra[category][number]=wanted_text
     for category,entries in extra.items():wanted[category].update(entries)
     if all(all(strings[category].get(number)==text
                for number,text in entries.items()) for category,entries in wanted.items()):

@@ -1,9 +1,9 @@
 {
-  "version": "0.1.0-preview.16",
+  "version": "0.1.0-preview.17",
   "bbport": {
     "url": "https://github.com/Supermedo/bloodborne_pc.git",
-    "commit": "ff42e28bbd5ad02939560e039008a7896b26ae41",
-    "version": "1.9.5"
+    "commit": "41fa92047006ed5c78b833c3f68a8ecfdc601361",
+    "version": "1.9.6"
   },
   "bbsc": {
     "url": "https://github.com/CLSAMG22/BBSC.git",

@@ -9,7 +9,7 @@ import subprocess
 import zipfile
 from server_bundle import install_package
 from isolate_patches import patched_script
-from port_compat import patched_run_script, patched_mods_script, patched_coop_saves
+from port_compat import patched_run_script, patched_mods_script, patched_coop_saves, patched_pc_menu_script
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
@@ -17,7 +17,7 @@ PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups",
 PRIVATE_FILES = {"shadnet.cfg", ".server.lock","profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
                  "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
-                 "conversion-current.json", ".save-conversion.lock", "update-settings.json", ".update.lock", "insight-fix.json"}
+                 "conversion-current.json", ".save-conversion.lock", "update-settings.json", "desktop-settings.json", ".update.lock", "insight-fix.json"}
 DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
 
 
@@ -99,6 +99,19 @@ def main():
         if path.suffix in (".ps1", ".xaml", ".py"):
             shutil.copy2(path, dest / path.name)
     shutil.copy2(ROOT / "launcher/feature-catalog.json", dest / "feature-catalog.json")
+    shutil.copy2(ROOT / "launcher/trophy-catalog.json", dest / "trophy-catalog.json")
+    shutil.copytree(ROOT / 'assets', dest / 'assets')
+    vc = json.loads((ROOT / 'scripts/vc-runtime.lock.json').read_text('utf-8'))
+    vc_source = ROOT / '.build/vc-runtime'
+    vc_installer = vc_source / vc['file']
+    if vc_installer.stat().st_size != vc['size'] or digest(vc_installer) != vc['sha256']:
+        raise ValueError('Fetch and verify the pinned VC++ runtime installer before packaging.')
+    provenance = json.loads((vc_source / 'source.json').read_text('utf-8'))
+    if provenance.get('signature') != 'Valid' or provenance.get('sha256') != vc['sha256']:
+        raise ValueError('Microsoft runtime signature provenance is missing.')
+    (dest / 'prerequisites').mkdir()
+    shutil.copy2(vc_installer, dest / 'prerequisites' / vc['file'])
+    shutil.copy2(vc_source / 'source.json', dest / 'prerequisites/source.json')
     # Windows PowerShell 5.1 requires a BOM for Chinese source text.
     for path in dest.glob("*.ps1"):
         text = path.read_text(encoding="utf-8-sig")
@@ -136,12 +149,15 @@ def main():
     # Include their small dependency closure, without the upstream GUI/accounts.
     (dest / "engine/launcher").mkdir()
     for name in ("bbport_driver_runtime", "bbport_exit_backup", "bbport_saves",
-                 "bbport_character", "bbport_trophies"):
+                 "bbport_character", "bbport_trophies", "bbport_trophy_icons"):
         shutil.copy2(args.port / "launcher" / (name + ".py"), dest / "engine/launcher" / (name + ".py"))
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    pc_menu = dest / 'engine/scripts/pc_menu.py'
+    pc_menu.write_text(patched_pc_menu_script(pc_menu.read_text('utf-8')), encoding='utf-8')
     menu_mods = dest / "engine/scripts/mods.py"
     menu_mods.write_text(patched_mods_script(menu_mods.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copy2(ROOT / "scripts/quit_text_compat.py", dest / "engine/scripts/quit_text_compat.py")
+    shutil.copy2(ROOT / "scripts/pc_menu_zh.py", dest / "engine/scripts/pc_menu_zh.py")
     script = dest / "engine/scripts/patches.py"
     script.write_text(patched_script(script.read_text(encoding="utf-8")), encoding="utf-8")
     shutil.copytree(args.port / "patches", dest / "engine/patches")
@@ -213,21 +229,18 @@ def main():
     info["npc_recovery_validation"] = "BBport 1.9.4: two-PC isolated guest passed join, Hunter's Dream round trip, selected dismissal, normal save and standalone reload. Native function traces and both complete save generations preserve the original NPC group; another character remains unchanged. Death, crash, invasion and reversed-host combinations not re-tested. Existing damaged saves are not automatically repaired."
     info["save_safety_validation"] = "Stable verified import copies, settled auxiliary-record archiving, pending-record rejection, rollback and unconditional unchanged event-region checks are covered by the bundled regression suite. No production save is modified during packaging."
     info["features"].extend(["personal-shop-rewards", "single-personal-enemy-roll", "same-run-home-save-proof", "bbport-195-existing-save-root"])
-    info["personal_rewards_validation"] = "BBport 1.9.4 / unchanged BBSC candidate: user accepted personal shops, no historical NPC badge compensation, and one ordinary enemy drop. Same-run return home verified 979 recovery rows / 939 persistent positions, both native save generations, archived transaction and clean process exit on 2026-10-29. These results are reused for the unchanged BBSC gameplay code; they do not claim a 1.9.5 gameplay run."
-    info["bbport_upgrade_validation"] = "1.9.5: pinned source build and automated runner/package compatibility checks. Preserve The Hunt's existing isolated user/save paths and explicit server addresses, keep Rebirth disabled, include direct-runner imports. New graphics, PC menu interaction and online play on the 1.9.5 engine still require normal user feedback; no repetition of the unchanged reward checks is requested."
+    info["personal_rewards_validation"] = "Unchanged BBSC gameplay: user accepted personal shops, no historical NPC badge compensation, and one ordinary enemy drop on 1.9.4. Same-run return home verified 979 recovery rows / 939 persistent positions, both native save generations and clean exit. User subsequently confirmed 1.9.5 WPF candidate co-op and built-in local-server entry through Tailscale. Reuse these results only for unchanged paths; they do not claim a 1.9.6 gameplay run."
+    info["bbport_upgrade_validation"] = "1.9.6: pinned core built; 237 Python tests, native WPF and runner/menu compatibility checks passed. Upstream certificate tests passed offline and online, including whole-chain Windows acceptance and wrong-host rejection. Existing isolated save paths, explicit servers and disabled Rebirth remain. Existing 1.9.5 built-in-server/Tailscale gameplay acceptance is reused within unchanged scope; no new 1.9.6 gameplay is claimed."
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     server_info = install_package(args.server_package, dest / "server", lock["version"], check_public)
     info["features"].append("bundled-local-seamless-server")
+    info["features"].extend(["native-csharp-wpf-desktop", "read-only-trophy-display"])
     info["local_server"] = {"version": server_info["label"], "location": "server/Server.exe"}
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)
-    # Installed clients select this exact legacy asset name. Keep identical bytes
-    # available so renaming the public package does not break automatic updates.
-    legacy = out / ("BBSC-Launcher-" + lock["version"] + "-windows-x64.zip")
-    shutil.copy2(archive, legacy)
     (out / "SHA256SUMS.txt").write_text("".join(digest(path) + "  " + path.name + "\n"
-                                               for path in (archive, legacy, graphics_source)), encoding="utf-8")
+                                               for path in (archive, graphics_source)), encoding="utf-8")
     print(json.dumps({"archive": str(archive), "bytes": archive.stat().st_size, "files": len(files),
                       "sha256": digest(archive)}, indent=2))
 

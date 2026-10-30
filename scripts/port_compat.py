@@ -23,6 +23,16 @@ def patched_mods_script(text):
     return text.replace(before,after,1)
 
 
+def patched_pc_menu_script(text):
+    # The runtime's UpscalerFsr412 is enum value 6 (119100 + 6), while the pinned
+    # text generator ends at DLSS/value 5. Preserve all existing choice values.
+    before="(119100, ['Off', 'FSR 3.1', 'FSR 4', 'FSR 4.1.1', 'TAA', 'DLSS']),"
+    after="(119100, ['Off', 'FSR 3.1', 'FSR 4', 'FSR 4.1.1', 'TAA', 'DLSS', 'FSR 4.1.2']),"
+    if text.count(before)!=1:
+        raise ValueError('Unexpected PC upscaler text table; recheck runtime enum mapping.')
+    return text.replace(before,after,1)
+
+
 def patched_coop_saves(text):
     before = "    coop = user_dir / COOP_SAVES\n"
     after = '''    # The Hunt already owns an isolated save root and a run-bound recovery

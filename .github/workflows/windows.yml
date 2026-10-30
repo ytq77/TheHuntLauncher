@@ -148,6 +148,7 @@ jobs:
           python scripts/prepare_personal_rewards.py .build/bbsc
           python tests/test_quit_text_compat.py
           python tests/test_port_195.py
+          python scripts/generate-trophy-catalog.py --port .build/bbport --check
       - name: Build BBport
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'
@@ -164,11 +165,14 @@ jobs:
             tail -n 120 out/gpu-build.log || true
             exit 1
           fi
+          cmake --build out/gpu --target windows-trust-test
+          BB_TEST_OFFLINE=1 out/gpu/windows-trust-test.exe
           bash tools/fetch_fsr4_assets.sh
           python packaging/windows/fetch_fsr411_dx12.py
           python packaging/windows/fetch_fg401_dx12.py
           python packaging/windows/prepare_fsr4vk.py
           python "$launcher_root/scripts/fetch_dlss.py"
+          python "$launcher_root/scripts/fetch_vc_runtime.py"
       - name: Preserve failed core build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -190,6 +194,12 @@ jobs:
           python scripts/package.py --toolchain "$(cygpath -m /clang64)" --server-package ".build/server-release/TheHuntServer-Windows-v${version}.zip"
           python scripts/source_archive.py
           pacman -Q > dist/toolchain-packages.txt
+      - name: Check packaged C# session and trophy refresh
+        shell: powershell
+        run: |
+          $version = (Get-Content upstream.lock.json -Raw | ConvertFrom-Json).version
+          $package = Join-Path $PWD ("dist\TheHuntLauncher-" + $version + "-windows-x64")
+          .\tests\test-desktop-session.ps1 -PackageRoot $package -OutputDirectory (Join-Path $PWD '.build\desktop-qa')
       - uses: actions/upload-artifact@v4
         with:
           name: TheHuntLauncher-windows-x64

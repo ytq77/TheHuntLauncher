@@ -3,6 +3,12 @@
 BBSC Launcher is an independent community launcher and compatibility patch set.
 The Hunt launcher design, integration and compatibility work: iytq (2026).
 
+Private UI font assets: Noto Sans/Serif CJK (notofonts) and LXGW WenKai Screen
+(lxgw and upstream contributors), SIL Open Font License 1.1. Full copyright,
+reserved-name notices and licenses accompany the unmodified fonts in assets/fonts/.
+Artwork in this local desktop candidate was supplied and selected by the user;
+source-file hashes are recorded in assets/artwork/provenance.json.
+
 This project's original launcher code and patches are provided under
 SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices.
 
@@ -10,6 +16,11 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
   Source: https://github.com/CLSAMG22/BBSC
 - BBport: https://github.com/Supermedo/bloodborne_pc
   Its source and bundled shadPS4 components retain their GPL and other notices.
+  The trophy catalogue derives from its pinned bbport_trophies.py and
+  bbport_lang_trophies.py (official PSN text as identified by upstream).
+  Trophy images belong to their respective rights holders, including Sony and
+  FromSoftware. The desktop reads them from the user's local game in memory;
+  game trophy PNGs are not included in application distributions.
 - Some online components carry GPL-3.0 notices. Binary distributions retain these
   notices in `licenses/`, alongside the GPL-2.0-or-later application notices.
 - shadPS4 and shadp2p: their respective authors and contributors.

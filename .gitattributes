@@ -6,3 +6,4 @@
 *.cmd text eol=crlf
 *.png binary
 *.ico binary
+assets/fonts/*.txt text eol=lf whitespace=-blank-at-eol

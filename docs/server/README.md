@@ -1,5 +1,7 @@
 # 服务端说明
 
+本页保留早期客户端附带部署材料的范围；当前合仓服务端以[开服说明](../local-server.md)、[当前服务端配方](../../server/docs/deployment.md)和[验收表](../validation-current.md)为准。不要将下文旧配方的阶段性待办当作当前服务端或 Boss 验收状态。
+
 本文说明 The Hunt 使用的 **Ubuntu + Docker Compose + Tailscale + shadNet + BBSC 游戏服务/Relay**。客户端入口见[联机地址](../network.md)。
 
 整理日期：2026-10-20（香港时间）。依据是此前私服部署文件、固定版本源码及双人实测记录。本次文档整理没有修改正在运行的服务器。

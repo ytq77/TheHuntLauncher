@@ -1,7 +1,7 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="The Hunt Server · by iytq" Width="1010" Height="800" MinWidth="860" MinHeight="700"
-        Background="#131619" Foreground="#E1E0DA" FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13"
+        Title="The Hunt Server" Width="1160" Height="800" MinWidth="1000" MinHeight="740"
+        Background="#111214" Foreground="#E1E0DA" FontSize="13"
         WindowStartupLocation="CenterScreen" x:Name="MainWindow">
   <Window.Resources>
     <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#22272C"/>
@@ -13,7 +13,7 @@
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
         <Grid Background="{TemplateBinding Background}"><Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="{TemplateBinding Orientation}">
           <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
-          <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#64717A" CornerRadius="4" Margin="1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+          <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#68655C" CornerRadius="4" Margin="1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
           <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
         </Track></Grid>
       </ControlTemplate></Setter.Value></Setter>
@@ -65,58 +65,64 @@
         </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
-    <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#262E34"/><Setter Property="Foreground" Value="#C7CFD3"/>
+    <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#292826"/><Setter Property="Foreground" Value="#C7CFD3"/>
       <Setter Property="Padding" Value="10,10"/><Setter Property="BorderThickness" Value="0"/></Style>
-    <Style TargetType="DataGridRow"><Setter Property="Background" Value="#191F23"/><Setter Property="Foreground" Value="#DFE3E4"/>
-      <Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#3D4C57"/></Trigger></Style.Triggers>
+    <Style TargetType="DataGridRow"><Setter Property="Background" Value="#191A1C"/><Setter Property="Foreground" Value="#DFE3E4"/>
+      <Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#494134"/></Trigger></Style.Triggers>
     </Style>
     <Style TargetType="DataGridCell"><Setter Property="Padding" Value="10,8"/><Setter Property="BorderThickness" Value="0"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridCell"><Border Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}"><ContentPresenter/></Border></ControlTemplate></Setter.Value></Setter>
     </Style>
   </Window.Resources>
-  <Grid x:Name="Body" Margin="30,25,30,20">
+  <Grid x:Name="Body" Margin="0"><Grid.ColumnDefinitions><ColumnDefinition Width="208"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+<Border Background="#17181A" BorderBrush="#343436" BorderThickness="0,0,1,0"><DockPanel Margin="24,30"><StackPanel DockPanel.Dock="Bottom"><TextBlock Text="iytq" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3"/></StackPanel><StackPanel DockPanel.Dock="Top">
+<TextBlock Text="THE HUNT" FontSize="23" Foreground="#BBA47A"/>
+<TextBlock Text="本地开服管理" FontSize="11" Foreground="#92928D" Margin="0,10,0,36"/>
+<RadioButton x:Name="ConnectionNav" Content="连接信息" GroupName="ServerNavigation" IsChecked="True" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
+<RadioButton x:Name="AccountsNav" Content="联机账号" GroupName="ServerNavigation" Style="{StaticResource NavigationButton}"/>
+<TextBlock Text="服务与游戏独立运行" Foreground="#92928D" FontSize="11" Margin="0,40,0,8"/>
+<TextBlock Text="关闭此窗口会停止服务" Foreground="#92928D" FontSize="11"/>
+</StackPanel><Grid/></DockPanel></Border><Grid Grid.Column="1" Margin="30,28,30,24">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <Grid Margin="0,0,0,22">
-      <StackPanel><TextBlock Text="THE HUNT" FontFamily="Georgia" FontSize="29" Foreground="#D4D0C2"/>
-        <TextBlock Text="SERVER  /  本地开服管理" Foreground="#929FA8" FontSize="11" Margin="1,5,0,0"/></StackPanel>
-      <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center"><TextBlock Text="by iytq" HorizontalAlignment="Right" FontFamily="Georgia" FontStyle="Italic" FontSize="18" Foreground="#BBB9AF"/>
-        <TextBlock x:Name="VersionText" Text="Windows 原生服务" Margin="0,5,0,0" Foreground="#7E8D98" FontSize="11"/></StackPanel>
-    </Grid>
-    <Border Grid.Row="1" Background="#1C2227" BorderBrush="#353E45" BorderThickness="1" CornerRadius="7" Padding="20,17" Margin="0,0,0,18">
+<Border CornerRadius="8" BorderBrush="#3D3B40" BorderThickness="1" Margin="0,0,0,18" Height="128" ClipToBounds="True">
+<Grid><Grid.Background><ImageBrush ImageSource="@assets/artwork/hosting-messengers.png" Stretch="UniformToFill" Viewbox="0,0,1,1"/></Grid.Background>
+<Border><Border.Background><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#F8111214" Offset="0"/><GradientStop Color="#CA111214" Offset="0.5"/><GradientStop Color="#20111214" Offset="1"/></LinearGradientBrush></Border.Background></Border>
+<StackPanel VerticalAlignment="Center" Margin="24,0"><TextBlock Text="THE HUNT" FontSize="28" Foreground="#E4DDD0"/><TextBlock Text="本地无缝开服管理" Foreground="#ADA9A0" FontSize="12" Margin="0,10,0,0" TextWrapping="Wrap"/></StackPanel><TextBlock x:Name="VersionText" Text="Windows 原生服务" HorizontalAlignment="Right" VerticalAlignment="Top" Foreground="#B0A895" FontSize="11" Margin="0,16,16,0"/></Grid></Border>
+    <Border Grid.Row="1" Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" CornerRadius="7" Padding="20,17" Margin="0,0,0,18">
       <StackPanel>
         <Grid><TextBlock Text="BBSC 无缝联机" FontSize="17" Foreground="#D4D0C2" VerticalAlignment="Center"/>
           <TextBlock x:Name="StatusText" Text="● 未启动" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#AEB7BD" FontSize="14"/></Grid>
         <Grid Margin="0,15,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="本机地址" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="#ABB7BF"/>
-            <TextBox x:Name="AddressBox" Width="205" Text="127.0.0.1" MaxLength="15" FontFamily="Consolas"/>
+            <TextBlock Text="本机地址" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="#B8B2A2"/>
+            <TextBox x:Name="AddressBox" Width="205" Text="127.0.0.1" MaxLength="15"/>
             <Button x:Name="ChooseAddress" Content="本机地址 ▾" Margin="8,0,0,0" Padding="12,9"/>
           </StackPanel>
-          <Button Grid.Column="1" x:Name="StartButton" Content="启动服务" Background="#C3C3B8" Foreground="#15191D" BorderBrush="#DBDACE" FontWeight="SemiBold" Margin="14,0,8,0"/>
+          <Button Grid.Column="1" x:Name="StartButton" Content="启动服务" Background="#7D2837" Foreground="#F4EBDF" BorderBrush="#A24B55" FontWeight="SemiBold" Margin="14,0,8,0"/>
           <Button Grid.Column="2" x:Name="StopButton" Content="停止服务" IsEnabled="False"/>
         </Grid>
         <TextBlock x:Name="AddressHint" Text="仅限本机连接。双机游玩时，先选择这台电脑的局域网或 VPN 地址。" Foreground="#C5B98F" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12"/>
       </StackPanel>
     </Border>
-    <TabControl Grid.Row="2" x:Name="MainTabs">
+    <TabControl Grid.Row="2" x:Name="MainTabs"><TabControl.Template><ControlTemplate TargetType="TabControl"><ContentPresenter ContentSource="SelectedContent"/></ControlTemplate></TabControl.Template>
       <TabItem Header="连接信息">
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
-          <TextBlock x:Name="ClientHint" Text="填写位置：The Hunt → 游戏与联机。两位玩家使用不同账号，地址填写同一套。" Foreground="#9DACB5" Margin="0,0,0,15" TextWrapping="Wrap"/>
+          <TextBlock x:Name="ClientHint" Text="填写位置：The Hunt → 游戏与联机。两位玩家使用不同账号，地址填写同一套。" Foreground="#A6AAA8" Margin="0,0,0,15" TextWrapping="Wrap"/>
           <StackPanel>
             <Grid Margin="0,0,0,13"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBlock Text="shadNet 合作服务器" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="CoopAddress" IsReadOnly="True" FontFamily="Consolas"/>
+              <TextBlock Text="shadNet 合作服务器" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="CoopAddress" IsReadOnly="True"/>
               <Button Grid.Column="2" x:Name="CopyCoop" Content="复制" Margin="10,0,0,0"/>
             </Grid>
             <Grid Margin="0,0,0,13"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBlock Text="shadNet WebAPI" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="WebAddress" IsReadOnly="True" FontFamily="Consolas"/>
+              <TextBlock Text="shadNet WebAPI" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="WebAddress" IsReadOnly="True"/>
               <Button Grid.Column="2" x:Name="CopyWeb" Content="复制" Margin="10,0,0,0"/>
             </Grid>
             <Grid x:Name="GameRow" Margin="0,0,0,13"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBlock Text="BBSC 游戏服务器" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="GameAddress" IsReadOnly="True" FontFamily="Consolas"/>
+              <TextBlock Text="BBSC 游戏服务器" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="GameAddress" IsReadOnly="True"/>
               <Button Grid.Column="2" x:Name="CopyGame" Content="复制" Margin="10,0,0,0"/>
             </Grid>
             <Grid x:Name="RelayRow" Margin="0,0,0,13"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBlock Text="BBSC Relay" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="RelayAddress" IsReadOnly="True" FontFamily="Consolas"/>
+              <TextBlock Text="BBSC Relay" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="RelayAddress" IsReadOnly="True"/>
               <Button Grid.Column="2" x:Name="CopyRelay" Content="复制" Margin="10,0,0,0"/>
             </Grid>
           </StackPanel>
@@ -128,9 +134,9 @@
       </TabItem>
       <TabItem Header="联机账号">
         <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <TextBlock Text="新建账号前请先启动服务。改名、重置和删除前请停止此模式；每次修改前自动备份数据库。" Foreground="#9DACB5" TextWrapping="Wrap" Margin="0,0,0,14"/>
+          <TextBlock Text="新建账号前请先启动服务。改名、重置和删除前请停止此模式；每次修改前自动备份数据库。" Foreground="#A6AAA8" TextWrapping="Wrap" Margin="0,0,0,14"/>
           <DataGrid Grid.Row="1" x:Name="AccountGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
-                    SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" GridLinesVisibility="None" BorderBrush="#3A454D" BorderThickness="1" Background="#171C20" RowHeight="38">
+                    SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" GridLinesVisibility="None" BorderBrush="#3A454D" BorderThickness="1" Background="#17181A" RowHeight="38">
             <DataGrid.Columns><DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="70"/>
               <DataGridTextColumn Header="账号" Binding="{Binding Name}" Width="180"/>
               <DataGridTextColumn Header="邮箱字段" Binding="{Binding Email}" Width="*"/>
@@ -149,7 +155,7 @@
     </TabControl>
     <Border Grid.Row="3" BorderBrush="#354047" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,18,0,0">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel><TextBlock x:Name="MessageText" Text="选择服务模式和本机地址，即可开始开服。" TextWrapping="Wrap" Margin="0,0,12,4"/>
+        <StackPanel><TextBlock x:Name="MessageText" Text="选择本机地址，即可开始开服。" TextWrapping="Wrap" Margin="0,0,12,4"/>
           <TextBlock Text="关闭此窗口会停止本窗口启动的服务。" Foreground="#7F8D97" FontSize="11"/></StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <Button x:Name="CheckUpdates" Content="检查更新" Padding="11,7" Margin="0,0,7,0"/>
@@ -158,5 +164,5 @@
         </StackPanel>
       </Grid>
     </Border>
-  </Grid>
+  </Grid></Grid>
 </Window>

@@ -24,6 +24,15 @@ with zipfile.ZipFile(OUT / f"{prefix}.zip", "w", zipfile.ZIP_DEFLATED, compressl
     shared_updates = ROOT.parent / "launcher/HuntUpdates.cs"
     if shared_updates.is_file():
         bundle.write(shared_updates, f"{prefix}/windows/gui/HuntUpdates.cs")
+    for name in ("HuntTheme.cs", "HuntTypography.cs", "DesktopTheme.xaml"):
+        shared = ROOT.parent / "launcher" / name
+        if shared.is_file():
+            bundle.write(shared, f"{prefix}/windows/gui/{name}")
+    assets = ROOT.parent / 'assets'
+    if assets.is_dir():
+        for path in sorted(assets.rglob('*')):
+            if path.is_file():
+                bundle.write(path, f"{prefix}/windows/gui/assets/{path.relative_to(assets).as_posix()}")
     for name, digest in fixed:
         path = ROOT / "windows/downloads" / name
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, f"Source hash mismatch: {name}"

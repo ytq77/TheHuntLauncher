@@ -1,0 +1,282 @@
+[
+  {
+    "id": 0,
+    "name": "Bloodborne",
+    "description": "已获得所有战利品。脱帽!",
+    "grade": "platinum",
+    "group": "base"
+  },
+  {
+    "id": 1,
+    "name": "亚南日出",
+    "description": "你在经历过猎杀后活了下来，并看到了新的一天。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 2,
+    "name": "履行愿望",
+    "description": "因月亮的出现而被迷惑，\n你发誓要照看好猎人之梦。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 3,
+    "name": "童年的开始",
+    "description": "你成为大神的转世婴儿，\n领导人类进入下一个幼年时期。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 4,
+    "name": "亚南，修梅里安女王",
+    "description": "击败亚南，古旧迷宫的血之女王。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 5,
+    "name": "猎人的精髓",
+    "description": "获得所有猎人武器。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 6,
+    "name": "猎人的手工",
+    "description": "获得所有特殊的猎人工具。",
+    "grade": "gold",
+    "group": "base"
+  },
+  {
+    "id": 7,
+    "name": "武器大师",
+    "description": "获取一把最高级别的武器。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 8,
+    "name": "神血宝石大师",
+    "description": "获得一颗极端稀有的神血宝石。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 9,
+    "name": "符文大师",
+    "description": "获得一枚极端稀有的卡丽尔符文。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 10,
+    "name": "凯因赫斯特",
+    "description": "进入凯因赫斯特，被遗忘的废墟城堡。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 11,
+    "name": "圣诗班",
+    "description": "进入圣诗班的领域，\n他们是治愈教会中的高层人员。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 12,
+    "name": "梦之源",
+    "description": "探索废弃的旧工场，这里是猎人的梦境之源。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 13,
+    "name": "噩梦讲堂",
+    "description": "进入拜伦维斯教学楼，\n它漂流在噩梦的领域之中。",
+    "grade": "silver",
+    "group": "base"
+  },
+  {
+    "id": 14,
+    "name": "加斯科因神父",
+    "description": "击败曾是加斯科因神父的怪兽。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 15,
+    "name": "代理人阿梅利亚",
+    "description": "击败曾是薇卡•阿梅利亚的怪兽",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 16,
+    "name": "亚南的影子",
+    "description": "击败亚南的影子。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 17,
+    "name": "罗姆，空虚的蜘蛛",
+    "description": "击败大神: 空虚的蜘蛛罗姆。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 18,
+    "name": "重生之神",
+    "description": "击败重生之神。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 19,
+    "name": "米克拉什，噩梦之主",
+    "description": "击败噩梦之主米克拉什。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 20,
+    "name": "墨戈的乳母",
+    "description": "击败大神: 墨戈的乳母。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 21,
+    "name": "神职人员怪兽",
+    "description": "击败神职人员怪兽。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 22,
+    "name": "缺血的怪兽",
+    "description": "击败缺血的怪兽。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 23,
+    "name": "亨维科的女巫",
+    "description": "击败亨维科女巫。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 24,
+    "name": "黑暗怪兽帕阿尔",
+    "description": "击败黑暗怪兽帕阿尔。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 25,
+    "name": "阿米戈达拉",
+    "description": "击败大神: 阿米戈达拉。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 26,
+    "name": "殉道者洛加留斯",
+    "description": "击败殉道者洛加留斯。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 27,
+    "name": "天庭使者",
+    "description": "击败大神: 天庭使者。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 28,
+    "name": "埃波利耶塔，宇宙之女",
+    "description": "击败大神: 宇宙之女埃波利耶塔。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 29,
+    "name": "神血宝石新手",
+    "description": "获得可为猎人武器附加特别力量的血之宝石。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 30,
+    "name": "符文联系人",
+    "description": "获得可为猎人自身附加特别力量的卡丽尔符文。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 31,
+    "name": "修梅露圣杯",
+    "description": "获得封印着构成亚南地下蛛网般结构的墓穴的修梅露圣杯。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 32,
+    "name": "贫瘠洛然圣杯",
+    "description": "获得封印着深藏在沙漠中、发生了惨剧的贫瘠之地洛然的圣杯。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 33,
+    "name": "伊兹圣杯",
+    "description": "获得伊兹大圣杯，它封印着宇宙眷族的居所。",
+    "grade": "bronze",
+    "group": "base"
+  },
+  {
+    "id": 34,
+    "name": "老猎人的精华",
+    "description": "获得所有老猎人武器。",
+    "grade": "gold",
+    "group": "dlc"
+  },
+  {
+    "id": 35,
+    "name": "科斯孤儿",
+    "description": "打败大神：科斯孤儿。",
+    "grade": "silver",
+    "group": "dlc"
+  },
+  {
+    "id": 36,
+    "name": "路德维格，神圣之剑",
+    "description": "打败曾经是路德维希的野兽，神圣之剑。",
+    "grade": "bronze",
+    "group": "dlc"
+  },
+  {
+    "id": 37,
+    "name": "精神钟塔的玛利亚修女",
+    "description": "打败精神钟塔的玛利亚修女。",
+    "grade": "bronze",
+    "group": "dlc"
+  },
+  {
+    "id": 38,
+    "name": "失败者",
+    "description": "击败没能成为大神的人。",
+    "grade": "bronze",
+    "group": "dlc"
+  },
+  {
+    "id": 39,
+    "name": "劳伦斯，第一个代理人",
+    "description": "打败曾经是劳伦斯的野兽，第一个代理人。",
+    "grade": "bronze",
+    "group": "dlc"
+  }
+]

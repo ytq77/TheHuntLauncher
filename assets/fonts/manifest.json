@@ -1,0 +1,36 @@
+{
+  "noto_commit": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+  "wenkai_release": "v1.530",
+  "files": {
+    "NotoSansCJKsc-Regular.otf": {
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+      "size": 16437364,
+      "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+    },
+    "NotoSerifCJKsc-Regular.otf": {
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Regular.otf",
+      "size": 24543080,
+      "sha256": "2a2eae2628df83556c54018c41e20fa532c1b862c5256ae8b3f23feb918d12ca"
+    },
+    "NotoSans-OFL.txt": {
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
+      "size": 4301,
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+    },
+    "NotoSerif-OFL.txt": {
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Serif/LICENSE",
+      "size": 4301,
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+    },
+    "WenKai-OFL.txt": {
+      "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai-Screen/v1.530/OFL.txt",
+      "size": 6027,
+      "sha256": "ba38832f9d7e0ad601a1ab90d58f251ba957532885ef80dca050a611962fd8b6"
+    },
+    "LXGWWenKaiScreen.ttf": {
+      "url": "https://github.com/lxgw/LxgwWenKai-Screen/releases/download/v1.530/LXGWWenKaiScreen.ttf",
+      "size": 26095590,
+      "sha256": "abd13364163e3cd84372b333f2fdcee9efb848634668f1c0ce5788dcd059ee61"
+    }
+  }
+}

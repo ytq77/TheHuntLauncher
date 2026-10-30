@@ -6,7 +6,10 @@
 - 玩家：使用 `TheHuntLauncher-<版本>-windows-x64.zip`，在「本地与云端开服」打开内置管理窗口。
 - 专用 Windows 服务端：使用 `TheHuntServer-Windows-v<版本>.zip`，无需安装客户端引擎。
 - Linux 服务端：[部署说明](server/docs/deployment.md)与[配方](server/recipe/)。
-- 本地开服、远程服务端迁移与账号保存：[开服说明](docs/local-server.md)。
+- 本地开服与账号保存：[开服说明](docs/local-server.md)。
+- 当前已通过项目、复用范围及剩余问题：[验收表](docs/validation-current.md)。
+- C# WPF 前台、统一开服窗口与只读奖杯显示：[实现与验证说明](docs/desktop-wpf.md)。首页固定文楷，其余页面及开服窗口固定黑体。
+- 奖杯浮层、页面图片与 PC 菜单汉化：[实现记录](docs/desktop-candidate2.md)。
 
 由 **iytq** 维护，适用于 Bloodborne PC 移植版的 BBSC 无缝联机启动器，提供独立运行环境、中文文本、本机配置同步与自动构建。
 
@@ -21,12 +24,14 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 | 组件 | 固定版本 |
 |---|---|
 | 游戏 | CUSA03173 1.09，自备游戏文件 |
-| BBport | 1.9.5 |
+| BBport | 1.9.6 |
 | BBSC | 0.0.1_items，包含本仓库兼容补丁 |
 | 系统 | Windows 10 / 11，x64 |
 | 界面与模组文本 | 简体中文 |
 
-这是 **0.1.0 预览版**。preview.14 整合个人商店、历史 NPC 奖励误补发、重复掉落与返家保存核对修复，并适配 BBport 1.9.5。这些 BBSC 修复已在 1.9.4 的独立双机副本中实测通过；1.9.5 已完成固定源码构建与启动/打包兼容检查，沿用未改路径的验收，不把旧实机结果标成新引擎的实机验证。详见[本版说明](docs/releases/v0.1.0-preview.14.md)与[验证范围](docs/validation.md)。
+这是 **0.1.0-preview.17 预览版**。整合 C# WPF 前台、只读奖杯页与随窗口缩放的奖杯提示，并固定 BBport 1.9.6。只提供 TheHuntLauncher 名称的完整包，不再发布旧名称的同内容附件或增量兼容包。详见[本版说明](docs/releases/v0.1.0-preview.17.md)与[当前验收表](docs/validation-current.md)。
+
+1.9.5 WPF 候选的内置开服经 Tailscale 入房已有用户确认；1.9.6 的核心构建、HTTPS 证书校验和兼容检查通过，未将旧版实机反馈扩大为 1.9.6 的游戏内验收。BBSC 奖励与恢复逻辑按未改范围复用既有验收。见[整合记录](docs/desktop-196-candidate.md)。
 
 游戏汉化MOD覆盖新增退出文字的问题已加入[退出文本兼容修正](docs/quit-to-desktop.md)，保留其他译文，并沿用普通版的功能开关。
 
@@ -35,7 +40,7 @@ A Windows launcher and compatibility layer for BBSC seamless co-op on BBport. Th
 ## 使用
 
 1. 从 [Actions](https://github.com/ytq77/TheHuntLauncher/actions) 下载构建产物，或从 [Releases](https://github.com/ytq77/TheHuntLauncher/releases) 下载预览版。完整解压到新目录。
-2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。
+2. 双击 **BBSC-Launcher.exe**。无需安装 Python 或修改普通版启动器。新电脑若缺少 VC++ 运行库，先运行包内 `prerequisites/VC_redist.x64.exe`；已有同版或新版可跳过。
 3. 在「游戏与联机」选择本机普通版 `Bloodborne.exe`、游戏 `eboot.bin` 以及普通版的 `bbport.ini`。
 4. 填写服务器管理员提供的四个联机地址与个人账号，保存后点击「启动游戏」。
 5. 「功能与玩法」提供完整中文功能说明、开关与难度数值，支持恢复推荐。保存后下次启动生效，详见[功能与玩法说明](docs/features.md)。

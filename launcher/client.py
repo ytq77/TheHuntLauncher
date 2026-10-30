@@ -11,6 +11,7 @@ import uuid
 import time
 import world_recovery
 import trophy_sync
+from trophy_notices import TrophyNotices
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
@@ -169,6 +170,7 @@ def main():
         raise ValueError("请先填写联机账号与密码。")
     feature_environment(ROOT)  # Reject invalid preferences before preparing saves.
     prepare(profile)
+    trophy_notices = TrophyNotices(ROOT, os.environ.get('THEHUNT_UI_SESSION'))
     recovery_env = world_recovery.begin(ROOT)
     state("preparing", "正在同步这台电脑的画质与操作设置…")
     settings_env, snapshot = sync_settings(ROOT, profile)
@@ -193,6 +195,7 @@ def main():
                                   stdout=output, stderr=subprocess.STDOUT,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
         while result.poll() is None:
+            trophy_notices.poll()
             try:
                 world_recovery.poll(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
             except (ValueError, OSError) as error:

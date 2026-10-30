@@ -27,7 +27,7 @@ def main():
     args = parser.parse_args()
     out = ROOT / "dist/TheHuntLauncher-sources.zip"
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        for folder in ("launcher", "scripts", "patches", "locales", "tests", "docs", ".github"):
+        for folder in ("launcher", "scripts", "patches", "locales", "tests", "docs", "assets", ".github"):
             paths = (public_docs(ROOT / folder) if folder == "docs" else
                      launcher_sources(ROOT / folder))
             for path in paths:

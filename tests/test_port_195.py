@@ -12,7 +12,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 PORT=Path(os.environ.get('BBSC_PORT_SOURCE',ROOT/'.build/bbport'))
 sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT/'launcher'))
-from port_compat import patched_coop_saves,patched_run_script
+from port_compat import patched_coop_saves,patched_run_script,patched_pc_menu_script
 from settings_bridge import sync_settings
 
 @unittest.skipUnless((PORT/'run.py').exists(),'fetch the pinned BBport source first')
@@ -77,5 +77,15 @@ class Port195Compatibility(unittest.TestCase):
 
     def test_unknown_upstream_save_switch_is_rejected(self):
         with self.assertRaises(ValueError):patched_coop_saves('upstream changed')
+
+    def test_pc_upscaler_labels_match_runtime_fsr412_enum(self):
+        source=(PORT/'scripts/pc_menu.py').read_text('utf-8')
+        scope={'__file__':str(PORT/'scripts/pc_menu.py'),'__name__':'patched_pc_menu'}
+        exec(compile(patched_pc_menu_script(source),'pc_menu.py','exec'),scope)
+        names=scope['texts']()[200]
+        self.assertEqual(names[119106],'FSR 4.1.2')
+        self.assertEqual(names[119103],'FSR 4.1.1')
+        self.assertEqual(names[119105],'DLSS')
+        with self.assertRaises(ValueError):patched_pc_menu_script('unknown upstream')
 
 if __name__=='__main__':unittest.main()

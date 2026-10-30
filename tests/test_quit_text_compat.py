@@ -106,7 +106,7 @@ class QuitTextCompatibility(unittest.TestCase):
         generated=compat.prepare_layer([lower,upper],self.out,mods.mod_files)
         data=bodies((generated[1]/'dvdroot_ps4/msg/zhocn/menu.msgbnd.dcx').read_bytes())
         names=q.read_fmg(data[200])
-        self.assertEqual(names[119001],'PC Graphics');self.assertEqual(names[119002],'PC Effects')
+        self.assertEqual(names[119001],'PC 画面');self.assertEqual(names[119002],'PC 特效')
         self.assertEqual(names[110000],'保留这份完整汉化')
 
     def test_existing_translated_pc_labels_are_preserved(self):
@@ -116,7 +116,52 @@ class QuitTextCompatibility(unittest.TestCase):
         lower=self.layer('quit_text',prepared);upper=self.layer('translation',translated)
         generated=compat.prepare_layer([lower,upper],self.out,mods.mod_files)
         names=q.read_fmg(bodies((generated[1]/'dvdroot_ps4/msg/zhocn/menu.msgbnd.dcx').read_bytes())[200])
-        self.assertEqual(names[119001],'电脑画面设置');self.assertEqual(names[119003],'PC Options')
+        self.assertEqual(names[119001],'电脑画面设置');self.assertEqual(names[119003],'PC 设置')
+
+    def test_all_pinned_pc_names_choices_and_help_are_localized(self):
+        import pc_menu
+        from pc_menu_zh import ZH
+        extra=pc_menu.texts()
+        prepared=q.menu_texts(archive(),q.TEXTS['zhocn'],extra)
+        raw=compat.patched_archive(prepared,'zhocn',compat.prepared_pc_texts(prepared))
+        tables={category:q.read_fmg(data) for category,data in bodies(raw).items()}
+        self.assertEqual({category:set(entries) for category,entries in extra.items()},
+                         {category:{n for n in tables[category] if 119000<=n<120000} for category in extra})
+        for category,entries in extra.items():
+            for number,text in entries.items():
+                self.assertEqual(tables[category][number],ZH.get(text,text),(category,number))
+                # Branded names, numeric settings and ratios retain their original spelling.
+                if text not in ZH:
+                    self.assertTrue(text in {'FSR 3.1','FSR 4','FSR 4.1.1','TAA','DLSS','AMD ML','PlayStation','Xbox','Switch','-'} or
+                                    not any(c.isalpha() for c in text.replace('FPS','').replace('x','')),
+                                    'Untranslated UI text: '+text)
+        self.assertEqual(tables[201][119003],'设置镜头、界面、按键提示及其他 PC 选项。')
+
+    def test_non_chinese_pc_defaults_remain_unchanged(self):
+        import pc_menu
+        extra=pc_menu.texts()
+        prepared=q.menu_texts(archive('Opinion Box','Original text'),q.TEXTS['engus'],extra)
+        self.assertEqual(compat.patched_archive(prepared,'engus',compat.prepared_pc_texts(prepared)),prepared)
+
+    def test_menu_text_avoids_observed_missing_game_glyphs(self):
+        from pc_menu_zh import ZH
+        text=''.join(ZH.values())
+        self.assertNotIn('帧',text)
+        self.assertNotIn('渲',text)
+        self.assertEqual(ZH['Frame Rate'],'zhen 率')
+        self.assertEqual(ZH['Frame Generation'],'zhen 生成')
+
+    def test_existing_pc_translation_missing_glyphs_are_repaired_in_scope(self):
+        import pc_menu
+        prepared=q.menu_texts(archive(),q.TEXTS['zhocn'],pc_menu.texts())
+        translated=q.menu_texts(archive(extra='原有帧字保持原样'),q.TEXTS['zhocn'],
+                               {200:{119013:'帧生成',119016:'帧率'},201:{119013:'在渲染的帧之间生成画面。'}})
+        raw=compat.patched_archive(translated,'zhocn',compat.prepared_pc_texts(prepared))
+        result=bodies(raw)
+        self.assertEqual(q.read_fmg(result[200])[119013],'zhen 生成')
+        self.assertEqual(q.read_fmg(result[200])[119016],'zhen 率')
+        self.assertEqual(q.read_fmg(result[201])[119013],'在输出的zhen之间生成画面。')
+        self.assertEqual(q.read_fmg(result[200])[110000],'原有帧字保持原样')
 
     def test_unchanged_input_reuses_output_without_rewriting(self):
         layers=[self.layer('quit_text',archive())]
@@ -145,6 +190,7 @@ class QuitTextCompatibility(unittest.TestCase):
         engine=self.root/'engine';engine.mkdir()
         (engine/'mods.py').write_text(patched_mods_script((PORT/'scripts/mods.py').read_text('utf-8')),encoding='utf-8')
         shutil.copyfile(ROOT/'scripts/quit_text_compat.py',engine/'quit_text_compat.py')
+        shutil.copyfile(ROOT/'scripts/pc_menu_zh.py',engine/'pc_menu_zh.py')
         game=self.root/'game';(game/'dvdroot_ps4').mkdir(parents=True)
         lower=self.layer('quit_text',compat.patched_archive(archive(),'zhocn'))
         upper=self.layer('mods/translation',archive(extra='整合测试的中文译文'))

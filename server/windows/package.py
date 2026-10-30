@@ -14,7 +14,7 @@ PREFIX = Path(os.environ.get("WIN_SERVER_TOOLCHAIN", r"C:\bbsc-dev\msys64\clang6
 from build_config import OUT, VERSION
 if (OUT / "normal").exists():
     raise ValueError("Staging contains an obsolete normal profile; use a fresh output directory.")
-for name in ("bbsc/db", "bbsc/shadnet.cfg", "bbsc/online-data.json", "bbsc/logs", "backups"):
+for name in ("bbsc/db", "bbsc/shadnet.cfg", "bbsc/online-data.json", "bbsc/logs", "backups", "desktop-settings.json"):
     if (OUT / name).exists():
         raise ValueError("Server staging contains private state; use a fresh output directory.")
 BIN = OUT / "runtime" / "bin"
@@ -78,6 +78,7 @@ shutil.copytree(ROOT / "bbsc-game", OUT / "bbsc-game", dirs_exist_ok=True,
 shutil.copytree(ROOT / "package-src", OUT, dirs_exist_ok=True)
 copy(ROOT / "build-ui" / "Server.exe", OUT / "Server.exe")
 copy(ROOT / "build-ui" / "TheHunt.ico", OUT / "TheHunt.ico")
+shutil.copytree(ROOT / 'build-ui/assets', OUT / 'assets', dirs_exist_ok=True)
 copy(ROOT.parent / "docs" / "updates.md", OUT / "docs" / "updates.md")
 copy(ROOT.parent / "docs" / "summon-polling.md", OUT / "docs" / "summon-polling.md")
 (OUT / "server.json").write_text('{"address": "127.0.0.1"}\n', encoding="ascii")

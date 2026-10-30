@@ -42,7 +42,7 @@ function Safe-Relative([string]$name) {
     }
     $private = @('.private','data','user','logs','captures','save-backups','save-conversion-backups','conversion-jobs','update-backups','guest-items','own-world','shared-progress','__pycache__','.git','backups')
     foreach ($part in $name.Split('/')) { if ($part -in $private) { throw 'Private state found in update package' } }
-    if ($name -match '(^|/)(profile.json|account.clixml|features.json|server-admin.json|update-settings.json|launcher-state.json|settings-snapshot.json|conversion-current.json|save-transfer-result.json|last-exit.json|bbport.ini|input.ini|mods.json|patches.json|shadnet.cfg|\.env|\.save-import.lock|\.save-conversion.lock|\.update.lock)$' -or $name -match '^(server/)?(normal|bbsc)/(db/|online-data.json$)' -or $name -match '(^|/)\.server\.lock$') { throw 'Private configuration found in update package' }
+    if ($name -match '(^|/)(profile.json|account.clixml|features.json|server-admin.json|update-settings.json|desktop-settings.json|launcher-state.json|settings-snapshot.json|conversion-current.json|save-transfer-result.json|last-exit.json|bbport.ini|input.ini|mods.json|patches.json|shadnet.cfg|\.env|\.save-import.lock|\.save-conversion.lock|\.update.lock)$' -or $name -match '^(server/)?(normal|bbsc)/(db/|online-data.json$)' -or $name -match '(^|/)\.server\.lock$') { throw 'Private configuration found in update package' }
     return $name.Replace('/',[IO.Path]::DirectorySeparatorChar)
 }
 function Check-Parents([string]$path) {
