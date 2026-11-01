@@ -34,9 +34,10 @@ std::string BbscBannerText() {
 }
 
 // Observe the message builder before it queries category 101 and then category 30.
-// The fixed game's selected-player dismissal reads role-table +0x40. BBSC's
-// reconstructed guests can have role zero. If that lookup provides no message,
-// repair only this call's missing ID; never change roles or the shared text tables.
+// Selected-player dismissal reads role-table +0x40; a peer's voluntary return
+// reads +0x48. The peer may already be absent from WorldChrMan, making the native
+// lookup fall back to role zero (missing message). Repair only these two callers'
+// missing IDs; never change roles or the shared text tables.
 void PS4_SYSV_ABI BbscEventTextHook(u64, const GuestRegisterSnapshot* registers) {
     if (registers == nullptr) {
         return;
@@ -61,17 +62,21 @@ void PS4_SYSV_ABI BbscEventTextHook(u64, const GuestRegisterSnapshot* registers)
                     "session={}", id, caller_offset, found101, found30, GetSessionState());
     constexpr u64 HostDismissCaller = 0x01387CA8;
     constexpr u32 HostDismissMessage = 20000400;
-    if (id == 0 && caller_offset == HostDismissCaller && GetSessionState() == 3 &&
+    constexpr u64 GuestReturnCaller = 0x0138A2A8;
+    constexpr u32 GuestReturnMessage = 20000402;
+    const u32 replacement = caller_offset == HostDismissCaller ? HostDismissMessage :
+                            caller_offset == GuestReturnCaller ? GuestReturnMessage : 0;
+    if (id == 0 && replacement != 0 && GetSessionState() == 3 &&
         !found101 && !found30) {
-        const u64 slot = FindBbscMessageSlot(30, HostDismissMessage, &fmg);
+        const u64 slot = FindBbscMessageSlot(30, replacement, &fmg);
         const u64 offset = slot != 0 ? ReadValue<u64>(slot, 0) : 0;
         if (offset != 0 && ReadablePointer(fmg + offset, 2) &&
             ReadValue<u16>(fmg + offset, 0) != 0) {
             // The hook owns a mutable saved-register frame. Its trampoline restores
             // RSI from this frame before executing the original message builder.
-            const_cast<GuestRegisterSnapshot*>(registers)->rsi = HostDismissMessage;
-            LOG_INFO(Debug, "BBSC dismiss text: recovered empty role message 0 -> {}",
-                     HostDismissMessage);
+            const_cast<GuestRegisterSnapshot*>(registers)->rsi = replacement;
+            LOG_INFO(Debug, "BBSC dismiss text: recovered empty role message 0 -> {} (caller {:#x})",
+                     replacement, caller_offset);
         }
     }
 }

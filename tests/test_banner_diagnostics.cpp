@@ -107,6 +107,30 @@ int main() {
     assert(registers.rsi == 20000400); // reproduce role-zero selected-player dismissal
     assert(memory == before_repair); // no roles, messages, stack or world state changed
     assert(logs.back().find("recovered empty role message") != std::string::npos);
+    // 2026-11-01: comp uses its own Blank; the host's +0x48 lookup gets role
+    // zero after that peer has disappeared and previously showed ?ActionEventInfo?.
+    Put<u64>(stack, image_base + 0x138a2a8);
+    slots[{30, 20000402}] = image_base + 0x1120;
+    Put<u64>(image_base + 0x1120, 0x700);
+    Text(image_base + 0x700, u"Cooperator <?leaveName?> returned to their own world.");
+    const auto before_return = memory;
+    registers.rsi = 0;
+    BbscEventTextHook(0, &registers);
+    assert(registers.rsi == 20000402); // voluntary return is not a host dismissal
+    assert(memory == before_return);
+    registers.rsi = 102001;
+    BbscEventTextHook(0, &registers);
+    assert(registers.rsi == 102001); // preserve a valid native ID at this caller too
+    registers.rsi = 0;
+    session_state = 6;
+    BbscEventTextHook(0, &registers);
+    assert(registers.rsi == 0); // do not rewrite the departing guest's own notice
+    session_state = 3;
+    Put<u64>(image_base + 0x1120, 0);
+    BbscEventTextHook(0, &registers);
+    assert(registers.rsi == 0); // require the matching return text, not the dismiss text
+    slots.erase({30, 20000402});
+    Put<u64>(stack, image_base + 0x1387ca8);
     registers.rsi = 0;
     session_state = 6;
     BbscEventTextHook(0, &registers);
@@ -133,5 +157,5 @@ int main() {
     Put<u64>(stack, image_base + 0x1bfcad6);
     BbscEventTextHook(0, &registers);
     assert(logs.size() == count); // ordinary per-frame menu help is ignored
-    std::puts("PASS: banner storage, bounds, Chinese text, role-zero dismissal and unchanged unrelated calls");
+    std::puts("PASS: banner storage, bounds, Chinese text, role-zero dismissal/return and unchanged unrelated calls");
 }

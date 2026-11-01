@@ -63,6 +63,25 @@ class Port195Compatibility(unittest.TestCase):
             r=subprocess.run([sys.executable,'-I','-B','-c',code,str(target)],capture_output=True)
             self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
 
+    def test_restart_refreshes_frame_pacing_and_keeps_explicit_measurement_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ini=Path(temporary)/'bbport.ini'
+            refresh=self.function('refresh_shared_graphics')
+            pacing=self.function('frame_pacing')
+            env={'BB_SHARED_GRAPHICS_CONFIG':'1'}
+            for mode,expected in [('uncap','0'),('30','60'),('90','90'),('60','60')]:
+                ini.write_text('fps_mode='+mode+'\nframe_cap=120\n')
+                refresh(env,ini);pacing(env,env['BB_FPS'])
+                self.assertEqual(env['BB_VBLANK_HZ'],expected)
+                self.assertEqual(env['BB_AUTO_VBLANK'],'1')
+                self.assertEqual(env['BB_FPS_LIMIT'],'120')
+            ini.write_text('fps_mode=uncap\nframe_cap=auto\n')
+            refresh(env,ini);pacing(env,env['BB_FPS'])
+            self.assertNotIn('BB_FPS_LIMIT',env)
+            explicit={'BB_VBLANK_HZ':'144'}
+            pacing(explicit,'30')
+            self.assertEqual(explicit,{'BB_VBLANK_HZ':'144'})
+
     def test_new_graphics_choices_sync_while_rebirth_remains_disabled(self):
         with tempfile.TemporaryDirectory() as temporary:
             temp=Path(temporary);normal=temp/'normal';normal.mkdir();root=temp/'thehunt';root.mkdir()

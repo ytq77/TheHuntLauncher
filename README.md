@@ -6,11 +6,11 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.18) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.19) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.18**，基于 **BBport 1.9.6**，仍处于预览阶段。新增独立 SuperMedo 账号和公共在线内容分流，私服继续负责无缝合作。账号认证、公共游戏登录与只读笔记接口已通过协议验证；公共内容的游戏内显示与双人混合联机仍待定向验收。既有 1.9.6 运行及小窗口奖杯验收按未改范围复用；历史灯点问题仍在调查。详见[发布说明](docs/releases/v0.1.0-preview.18.md)与[验收表](docs/validation-current.md)。
+当前版本为 **0.1.0-preview.19**，基于 **BBport 1.9.7**，仍处于预览阶段。本次纳入上游重启/在线会话修正，以及已定向验证的主客切换、空枪返回提示和 NPC 个人赠礼保护。公共账号与私服分流保持现有流程。旧版实机结果按未改范围复用，1.9.7 的实际运行与重启重连仍待确认；历史灯点和启动停顿继续调查，洗点关闭。详见[发布说明](docs/releases/v0.1.0-preview.19.md)与[验收表](docs/validation-current.md)。
 
 ## 功能
 
@@ -32,9 +32,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.18-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.18.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.18.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.19-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.19.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.19.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
@@ -67,7 +67,7 @@ The Hunt 使用所填服务器上的账号，与普通版 SuperMedo 登录分开
 | 组件 | 当前范围 |
 |---|---|
 | 游戏文件 | CUSA03173 1.09，需自行提供 |
-| BBport | 固定 1.9.6 |
+| BBport | 固定 1.9.7 |
 | BBSC | 固定 `0.0.1_items`，包含本仓库兼容补丁 |
 | 客户端与图形开服窗口 | Windows 10 / 11，x64 |
 | Linux 服务端 | 使用同版本部署配方，按文档配置 Docker 与网络 |
@@ -90,7 +90,7 @@ The Hunt 使用所填服务器上的账号，与普通版 SuperMedo 登录分开
 - [玩法与功能开关](docs/features.md)
 - [本地开服](docs/local-server.md)、[Windows 服务端](server/README.md)、[Linux 部署](server/docs/deployment.md)、[网络配置](docs/network.md)
 - [当前验收表](docs/validation-current.md)、[历史灯点调查](docs/lamp-investigation.md)
-- [C# WPF 与奖杯实现](docs/desktop-wpf.md)、[BBport 1.9.6 适配](docs/upstream-1.9.6-review.md)
+- [C# WPF 与奖杯实现](docs/desktop-wpf.md)、[BBport 1.9.7 适配](docs/upstream-1.9.7-review.md)
 - [源码构建](docs/build.md)、[贡献指南](CONTRIBUTING.md)
 
 `launcher/` 为客户端前台与后端，`server/` 为服务端，`patches/` 为兼容与修复补丁。原 [TheHuntServer](https://github.com/ytq77/TheHuntServer) 仓库只读保留历史，新版本统一在本仓库维护和发布。

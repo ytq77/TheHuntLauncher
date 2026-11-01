@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import shutil
+from bell_session import apply as apply_bell_session
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -42,6 +43,27 @@ def apply_home_proof(core):
     shutil.copy2(ROOT/'patches/bbsc_home_save_proof.inc',core/'bbsc_home_save_proof.inc')
 
 def apply(text):
+    text=once(text,
+        '        allowed = std::ranges::find(BbscDreamGuestEvents, event) != BbscDreamGuestEvents.end();',
+        '''        // Common 9040's client End completes every gift slot: 9040 + slot is
+        // the NPC's personal request flag. A foreign guest must wait for their own
+        // dialogue instead; this grants nothing and never clears saved flags.
+        allowed = event == 9040 ||
+                  (BbscDreamEnabled() && std::ranges::find(BbscDreamGuestEvents, event) !=
+                                             BbscDreamGuestEvents.end());''')
+    text=once(text,'    if (event > 0) {\n        NoteBbscBossRewardEvent(event);',
+        '    if (event > 0 && BbscDreamEnabled()) {\n        NoteBbscBossRewardEvent(event);')
+    text=once(text,'void InstallBbscDreamHooks() {\n    if (image_base == 0 || !BbscDreamEnabled()) {',
+        'void InstallBbscDreamHooks() {\n    if (image_base == 0) {')
+    text=once(text,'    const bool talk = InstallGuestCodeHook(\n',
+        '    const bool dream = BbscDreamEnabled();\n'
+        '    const bool talk = dream && InstallGuestCodeHook(\n')
+    text=once(text,'    if (!talk || !type) {\n', '    if ((dream && !talk) || !type) {\n')
+    text=once(text,'    LOG_INFO(Debug,\n             "BBSC Dream: a guest in the host\'s Hunter\'s Dream can use the Doll, Gehrman, the "',
+        '    if (!dream) {\n'
+        '        LOG_INFO(Debug, "BBSC NPC gifts: personal gift guard installed; Dream interactions disabled");\n'
+        '        return;\n    }\n'
+        '    LOG_INFO(Debug,\n             "BBSC Dream: a guest in the host\'s Hunter\'s Dream can use the Doll, Gehrman, the "')
     text=once(text,'constexpr std::array<s64, 21> BbscDreamGuestEvents{\n',
         '// Common event 5500 must reach its own weapon-possession check for a guest.\n'
         '// Its early client End otherwise completes every slot and unlocks all 22 shelves.\n'
@@ -116,10 +138,11 @@ s32 BbscItemFlags(u32 id) {''')
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('source',type=Path);args=parser.parse_args()
     core=args.source/'emulator/src/core';path=core/'bloodborne_re_zh_cn.cpp'
-    text=path.read_text(encoding='utf-8');updated=apply(text)
+    text=path.read_text(encoding='utf-8');updated=apply_bell_session(apply(text))
     header=core/'bbsc_patch_tables.h'
     updated_header=apply_header(header.read_text(encoding='utf-8'))
-    for name in ['bbsc_personal_rewards.inc','bbsc_personal_rewards_policy.h']:
+    for name in ['bbsc_personal_rewards.inc','bbsc_personal_rewards_policy.h',
+                 'bbsc_summon_type.inc','bbsc_blank_menu.inc']:
         shutil.copy2(ROOT/'patches'/name,core/name)
     path.write_text(updated,encoding='utf-8',newline='\n')
     header.write_text(updated_header,encoding='utf-8',newline='\n')

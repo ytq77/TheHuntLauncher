@@ -30,6 +30,10 @@ clang++ -std=c++23 -fms-extensions -I"$src/src" \
 "$out/test-memscan.exe" race
 clang++ -std=c++23 tests/test_banner_diagnostics.cpp -o "$out/test-banner.exe"
 "$out/test-banner.exe"
+clang++ -std=c++23 tests/test_summon_type.cpp -o "$out/test-summon-type.exe"
+"$out/test-summon-type.exe"
+clang++ -std=c++23 tests/test_blank_menu.cpp -o "$out/test-blank-menu.exe"
+"$out/test-blank-menu.exe"
 clang++ -std=c++23 tests/test_insight_refund.cpp -o "$out/test-insight-refund.exe"
 "$out/test-insight-refund.exe"
 clang++ -std=c++23 tests/test_empty_host_cancel.cpp -o "$out/test-empty-host-cancel.exe"
@@ -44,6 +48,9 @@ clang++ -std=c++23 -I"$src/src/core" "$out/test-personal-rewards-runtime.cpp" -o
 python scripts/prepare_npc_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-npc-prejoin.cpp"
 clang++ -std=c++23 -DEXPECT_FIXED "$out/test-npc-prejoin.cpp" -o "$out/test-npc-prejoin.exe"
 "$out/test-npc-prejoin.exe"
+python scripts/prepare_gift_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-npc-gift.cpp"
+clang++ -std=c++23 -DEXPECT_FIXED "$out/test-npc-gift.cpp" -o "$out/test-npc-gift.exe"
+"$out/test-npc-gift.exe"
 clang++ -std=c++23 tests/test_save_proof.cpp -o "$out/test-save-proof.exe" -lbcrypt
 mkdir -p "$out/save-proof-fixture"
 "$out/test-save-proof.exe" "$out/save-proof-fixture"

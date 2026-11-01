@@ -83,7 +83,7 @@ class Account:
             self.user_id = fields(reply[5:]).get(2)
             if type(self.user_id) is not int or not 0 < self.user_id < 2**64:
                 raise ValueError('公共服没有返回有效账号身份。')
-            self.send(13, 2, text_field(1, 'bbport/1.9.6'))
+            self.send(13, 2, text_field(1, 'bbport/1.9.7'))
             version_reply = self.reply(13, 2)
             # Like BBport, version reporting is optional metadata, not an authentication gate.
             # Older compatible shadNet servers return Invalid for command 13.

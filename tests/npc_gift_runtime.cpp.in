@@ -1,0 +1,100 @@
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ranges>
+#include <span>
+using u8=uint8_t; using s8=int8_t; using s32=int32_t; using u32=uint32_t; using u64=uint64_t; using s64=int64_t;
+#define PS4_SYSV_ABI
+#define LOG_INFO(...) ((void)0)
+#define LOG_ERROR(...) ((void)0)
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); std::exit(1); } } while(false)
+struct GuestRegisterSnapshot {u64 rdi,rdx;};
+std::array<u8,0x40> condition{};
+bool guest=true, accessible=true;
+bool dream=true;
+u64 image_base=0x10000000;
+constexpr u64 TalkClientCheckedOffset=0x0204C694,CharacterTypeCheckOffset=0x017A3BE0;
+std::array<int,11> BbscDreamGuestTalks{};
+unsigned talk_hooks=0,type_hooks=0,boss_notes=0;
+bool BbscDreamEnabled(){return dream;}
+void BbscDreamTalkHook(u64,const GuestRegisterSnapshot*){}
+template<class... T>bool InstallGuestCodeHook(void* p,std::span<const u8>,T...){
+    if(reinterpret_cast<u64>(p)==image_base+TalkClientCheckedOffset)++talk_hooks;
+    else {CHECK(reinterpret_cast<u64>(p)==image_base+CharacterTypeCheckOffset);++type_hooks;}
+    return true;
+}
+int character_type=1;
+s64 event_id=9040;
+u8 bbsc_dream_type_skip=0;
+std::array<u64,64> bbsc_dream_type_conditions{};
+size_t bbsc_dream_type_next=0;
+std::array<s64,32> bbsc_dream_type_logged{};
+// GIFT_DECLARATIONS
+bool ReadablePointer(u64,size_t){return accessible;}
+template<class T>T ReadValue(u64 p,u64 off=0){T v{};std::memcpy(&v,reinterpret_cast<void*>(p+off),sizeof(v));return v;}
+template<class T>void WriteValue(u64 p,u64 off,T value){std::memcpy(reinterpret_cast<void*>(p+off),&value,sizeof(value));}
+bool BbscGuestInHostWorld(){return guest && character_type>0 && character_type!=8;}
+s64 BbscEventIdOf(u64){return event_id;}
+void NoteBbscBossRewardEvent(s64){++boss_notes;}
+// GIFT_CALLBACK
+// GIFT_INSTALL
+bool run(s64 event,int type,bool in_host=true,int wanted=0,int entity=10000){
+    event_id=event;character_type=type;guest=in_host;
+    condition.fill(0);bbsc_dream_type_skip=0;bbsc_dream_type_conditions.fill(0);
+    WriteValue<int>(reinterpret_cast<u64>(condition.data()),0x28,entity);
+    WriteValue<s8>(reinterpret_cast<u64>(condition.data()),0x2C,wanted);
+    GuestRegisterSnapshot r{reinterpret_cast<u64>(condition.data()),0x10000};
+    const auto registers_before=r;
+    const auto bytes_before=condition;
+    BbscDreamTypeCheckHook(0,&r);
+    CHECK(r.rdi==registers_before.rdi && r.rdx==registers_before.rdx);
+    for(size_t i=0;i<condition.size();++i)if(i!=0x10)CHECK(condition[i]==bytes_before[i]);
+    CHECK((condition[0x10]&~1)==0);
+    return (condition[0x10]&1)!=0;
+}
+int main(){
+    // Native 9040: request-on-at-load -> End; otherwise check Human, End if
+    // false, wait for own request, then award. Each slot's End writes 9040+slot,
+    // the same flag used by its dialogue. Old callback reproduces premature End.
+    const bool human_answer=run(9040,1);
+#ifdef EXPECT_FIXED
+    CHECK(human_answer);
+    bool request=false;unsigned awards=0;
+    const bool ended_early=!human_answer;
+    if(ended_early)request=true;
+    CHECK(!ended_early && !request && awards==0);
+    request=true; // only the player's actual dialogue requests the reward
+    if(human_answer && request)++awards;
+    CHECK(awards==1);
+    // Every foreign phantom can otherwise poison the same persistent gift bits,
+    // including invaders. Only this event's Human guard is answered; no reward
+    // occurs until the player's own dialogue actually requests one.
+    for(int t:{1,2,12,13})CHECK(run(9040,t));
+#else
+    CHECK(!human_answer); // unmodified callback: all 30 slots end without gifts
+    for(int t:{1,2,12,13})CHECK(!run(9040,t));
+#endif
+    for(int t:{0,8,-1})CHECK(!run(9040,t));
+    CHECK(!run(9040,1,false));
+    CHECK(!run(9040,1,true,1));CHECK(!run(9040,1,true,0,10001));
+    for(s64 e:{9039,9041,9042,9054,9075,12400657})CHECK(!run(e,1));
+    CHECK(run(5500,1));CHECK(run(12100112,1));
+#ifdef EXPECT_FIXED
+    dream=false;boss_notes=0;
+    CHECK(run(9040,1));CHECK(!run(5500,1));CHECK(!run(12100112,1));CHECK(boss_notes==0);
+    InstallBbscDreamHooks();CHECK(type_hooks==1 && talk_hooks==0);
+#else
+    dream=false;
+    InstallBbscDreamHooks();CHECK(type_hooks==0 && talk_hooks==0);
+#endif
+    dream=true;talk_hooks=type_hooks=0;
+    InstallBbscDreamHooks();CHECK(type_hooks==1 && talk_hooks==1);
+    image_base=0;talk_hooks=type_hooks=0;
+    InstallBbscDreamHooks();CHECK(type_hooks==0 && talk_hooks==0);
+    accessible=false;CHECK(!run(9040,1));
+    BbscDreamTypeCheckHook(0,nullptr);
+    std::puts("PASS: production gift callback, native early-End regression, foreign phantom waiting, and host/other-event guards");
+}
