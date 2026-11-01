@@ -21,7 +21,7 @@ constexpr u64 ItemManagerPointerOffset=0x0553D6E0;
 constexpr u64 ItemManPointerOffset=ItemManagerPointerOffset;
 constexpr u64 AwardItemLotOffset=0x017DDC50;
 u64 image_base=0,manager_address=0;
-bool guest=true,filter_patched=true;int awarded=0;s64 event_id=5500;
+bool guest=true,filter_patched=true,dream=true;int awarded=0;s64 event_id=5500;
 std::array<u8,32> global{};
 std::array<u8,125> own_badges{};
 std::vector<std::pair<u64,std::size_t>> regions;
@@ -40,6 +40,7 @@ template<class T>T ReadValue(u64 at,std::size_t offset){
 }
 template<class T>void WriteValue(u64 at,std::size_t offset,T value){assert(ReadablePointer(at+offset,sizeof(T)));std::memcpy(reinterpret_cast<void*>(at+offset),&value,sizeof(T));}
 bool BbscGuestInHostWorld(){return guest;}
+bool BbscDreamEnabled(){return dream;}
 s32 GetSessionState(){return guest?6:0;}
 s32 GetLocalPlayerType(){return 1;}
 u64 GetLocalPlayerCharacter(){return 0;}
@@ -122,6 +123,8 @@ int main(){
     condition[0x10]=0;bbsc_dream_type_skip=0;event_id=5501;
     BbscDreamTypeCheckHook(0,&check);assert(bbsc_dream_type_skip==0 && condition[0x10]==0);
     event_id=5500;guest=false;BbscDreamTypeCheckHook(0,&check);assert(condition[0x10]==0);guest=true;
+    dream=false;BbscDreamTypeCheckHook(0,&check);
+    assert(bbsc_dream_type_skip==0 && condition[0x10]==0);dream=true;
 
     // Run the actual map-copy lambda: badge shelves use the guest prejoin
     // baseline, while starter sales and unrelated quest/lamp bits stay intact.
