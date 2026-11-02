@@ -25,7 +25,7 @@ def main():
     payload=subprocess.check_output(['git','-c','safe.directory='+upstream.as_posix(),'-C',str(upstream),'archive',lock['bbsc']['commit']])
     tree.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(payload)) as bundle:bundle.extractall(tree,filter='data')
-    for name in ('prepare_sources.py','localize.py','prepare_session_recovery.py','prepare_personal_rewards.py'):
+    for name in ('prepare_sources.py','localize.py','prepare_session_recovery.py','prepare_personal_rewards.py','prepare_kit_initialization.py'):
         subprocess.run([sys.executable,'-B',str(ROOT/'scripts'/name),str(tree)],check=True)
     core=tree/'emulator/src/core';path=core/'bloodborne_re_zh_cn.cpp';source=path.read_text('utf-8')
     before={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in core.iterdir() if p.is_file() and (p.name.startswith('bbsc_') or p.name=='bloodborne_re_zh_cn.cpp')}

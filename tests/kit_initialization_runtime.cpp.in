@@ -1,0 +1,180 @@
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string>
+#include <string_view>
+#include <vector>
+using u8=std::uint8_t;using u16=std::uint16_t;using u32=std::uint32_t;using u64=std::uint64_t;
+using s16=std::int16_t;using s32=std::int32_t;using s64=std::int64_t;
+#define PS4_SYSV_ABI __attribute__((sysv_abi))
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARNING(...) ((void)0)
+constexpr size_t GoodsRowSize=108,SpEffectRowSize=528;
+constexpr u32 BbscDuelBellGoodsId=4313,BbscDuelBellEffectId=7511;
+constexpr u32 BbscDuelBellSourceEffectId=9000,BbscInvadableEffectId=9020;
+constexpr u64 EventFlagManPointerOffset=0x0553B100;
+const u64 image_base=0x100000000;
+enum class MemoryProt {CpuWrite};
+std::vector<std::pair<u64,size_t>> regions;
+u64 readonly_begin=0,readonly_end=0,repository=0;
+std::array<u8,0x500> repo{},goods_resource{},goods_holder{},effect_resource{},effect_holder{};
+std::array<u8,0x1600> global{};
+std::array<u8,0x500> player{};
+std::atomic<bool> bbsc_duel_bell_ready{false},bbsc_zero_cost_bell_ready{false};
+std::vector<u64> bbsc_duel_bell_effect_rows,bbsc_blank_effect_rows,bbsc_invadable_effect_rows;
+std::mutex bbsc_kit_rows_mutex;
+s64 now=100000;int scans=0,backups=0,announcements=0,removals=0,adds=0;
+bool backup_ok=true;std::map<u64,std::set<u32>> inventory;
+std::vector<u64> scan_goods,scan_effects;
+
+u64 memory(void* p,size_t n){auto a=reinterpret_cast<u64>(p);regions.push_back({a,n});return a;}
+template<class T>T read(u64 a){T value{};std::memcpy(&value,reinterpret_cast<void*>(a),sizeof(T));return value;}
+template<class T>void put(u64 a,T value){std::memcpy(reinterpret_cast<void*>(a),&value,sizeof(T));}
+bool ReadablePointer(u64 a,size_t n){
+    if(a==image_base+0x05540340)return n<=8;
+    for(auto [start,size]:regions)if(a>=start && a-start<=size && n<=size-(a-start))return true;
+    return false;
+}
+bool HasMemoryAccess(u64 a,size_t n,MemoryProt){
+    return ReadablePointer(a,n) && !(a<readonly_end && a+n>readonly_begin);
+}
+template<class T>T ReadValue(u64 a,size_t offset){
+    if(a+offset==image_base+0x05540340)return static_cast<T>(repository);
+    assert(ReadablePointer(a+offset,sizeof(T)));return read<T>(a+offset);
+}
+template<class T>void WriteValue(u64 a,size_t offset,T value){
+    assert(HasMemoryAccess(a+offset,sizeof(T),MemoryProt::CpuWrite));put(a+offset,value);
+}
+s64 SteadyNowMs(){return now;}
+std::vector<u64> FindBbscParamTables(std::string_view type,u16=1000,u32=0){
+    ++scans;now+=type=="EQUIP_PARAM_GOODS_ST"?55000:37000;
+    return type=="EQUIP_PARAM_GOODS_ST"?scan_goods:scan_effects;
+}
+// KIT_DECLARATIONS
+// ROW_ACCESS
+
+struct Table {
+    std::vector<u8> bytes;u64 address;
+    Table(const char* type,std::vector<u32> ids,u16 count,size_t row_size):
+        bytes(0x40+count*0x18+count*row_size),address(memory(bytes.data(),bytes.size())) {
+        while(ids.size()<count)ids.push_back(100000+static_cast<u32>(ids.size()));
+        std::sort(ids.begin(),ids.end());put<u16>(address+0xA,count);
+        std::memcpy(bytes.data()+0xC,type,std::strlen(type)+1);
+        for(size_t i=0;i<ids.size();++i){
+            put<u32>(address+0x40+i*0x18,ids[i]);
+            put<u64>(address+0x48+i*0x18,0x40+count*0x18+i*row_size);
+        }
+    }
+    u64 row(u32 id,size_t n=8){return BbscParamRow(address,id,n);}
+    void drop(u32 id){
+        const auto count=read<u16>(address+0xA);
+        for(size_t i=0;i<count;++i)if(read<u32>(address+0x40+i*0x18)==id){put<u32>(address+0x40+i*0x18,999999);return;}
+        assert(false);
+    }
+};
+u64 GetLocalPlayerCharacter(){return reinterpret_cast<u64>(player.data());}
+u64 GetGlobalState(){return reinterpret_cast<u64>(global.data());}
+s32 GetCharacterHp(u64){return 100;}
+u64 BbscCarriedInventory(){return 1;}
+u64 BbscStorageInventory(){return 2;}
+bool BbscInventoryHas(u64 inv,u32 code){return inventory[inv].contains(code);}
+bool BackupBbscSaves(){++backups;return backup_ok;}
+bool BbscInventoryRemove(u64 inv,u32 code){assert(backups && backup_ok);++removals;return inventory[inv].erase(code)!=0;}
+bool BbscEventFlag(u32){assert(false);return false;}
+void BbscAnnounce(const char16_t*,const char*){++announcements;}
+s32 PS4_SYSV_ABI Fits(u64,const u32*,s32 n){assert(backups && backup_ok);return n;}
+s32 PS4_SYSV_ABI Add(u64 inv,const u32* key,s32 n){
+    assert(backups && backup_ok && n==1);++adds;inventory[inv].insert(0x40000000u|(*key&0x0FFFFFFF));return adds;
+}
+const u64 InventoryFitsOffset=reinterpret_cast<u64>(&Fits)-image_base;
+const u64 InventoryAddOffset=reinterpret_cast<u64>(&Add)-image_base;
+// KIT_CALLBACKS
+
+int main(int argc,char** argv){
+    assert(argc==2);const std::string mode=argv[1];
+    Table goods("EQUIP_PARAM_GOODS_ST",{1,111,200,205,225,4016,4121,4313,11201,11251},128,GoodsRowSize);
+    Table effects("SP_EFFECT_PARAM_ST",{0,7,7511,9000,9020},1001,SpEffectRowSize);
+    Table fallback("SP_EFFECT_PARAM_ST",{0,7,7511,9000,9020},1001,SpEffectRowSize);
+    for(auto* table:{&effects,&fallback}){
+        auto row=table->row(9000,SpEffectRowSize);std::memset(reinterpret_cast<void*>(row),0x32,SpEffectRowSize);
+    }
+    for(auto [id,ref]:{std::pair<u32,u32>{200,9000},{205,9005},{225,9025},{111,7}}){
+        put<u32>(goods.row(id)+0,ref);put<u8>(goods.row(id)+68,0x1F);put<u8>(goods.row(id)+56,1);
+    }
+    repository=memory(repo.data(),repo.size());
+    for(auto* value:{&goods_resource,&goods_holder,&effect_resource,&effect_holder})memory(value->data(),value->size());
+    memory(global.data(),global.size());memory(player.data(),player.size());
+    put<s32>(repository+0x148,1);put<s32>(repository+0x4A8,1);
+    put<u64>(repository+0x150,reinterpret_cast<u64>(goods_resource.data()));
+    put<u64>(reinterpret_cast<u64>(goods_resource.data())+0x70,reinterpret_cast<u64>(goods_holder.data()));
+    put<u64>(reinterpret_cast<u64>(goods_holder.data())+0x70,goods.address);
+    put<u64>(repository+0x4B0,reinterpret_cast<u64>(effect_resource.data()));
+    put<u64>(reinterpret_cast<u64>(effect_resource.data())+0x70,reinterpret_cast<u64>(effect_holder.data()));
+    put<u64>(reinterpret_cast<u64>(effect_holder.data())+0x70,effects.address);
+    scan_goods={goods.address};scan_effects={effects.address};
+    for(u32 id:{200u,205u,225u,111u})inventory[1].insert(0x40000000u|id);
+
+    // Before full effect preparation, the actual inventory callback must grant/remove nothing.
+    TickBbscDuelBellGive();assert(adds==0 && removals==0 && backups==0);
+    bool refused=false;
+    if(mode=="pending"){put<s32>(repository+0x4A8,0);refused=true;}
+    else if(mode=="null-repo"){repository=0;refused=true;}
+    else if(mode=="missing-effect"){effects.drop(7);refused=true;}
+    else if(mode=="missing-goods"){goods.drop(225);refused=true;}
+    else if(mode=="readonly"){
+        readonly_begin=effects.row(7511);readonly_end=readonly_begin+SpEffectRowSize;refused=true;
+    } else if(mode=="truncated-index"){put<u16>(effects.address+0xA,65535);refused=true;}
+    else if(mode=="fallback"){
+        put<u8>(effects.address+0xC,'!');scan_effects={fallback.address};
+    } else if(mode=="backup-failure"){backup_ok=false;}
+    else if(mode=="existing" || mode=="storage"){
+        inventory.clear();for(const auto& item:BbscKit)inventory[mode=="storage"?2:1].insert(0x40000000u|item.id);
+    } else assert(mode=="fresh");
+    const auto before_goods=goods.bytes,before_effects=effects.bytes;
+    PrepareBbscDuelBell();
+    if(refused){
+        assert(!bbsc_duel_bell_ready && goods.bytes==before_goods && effects.bytes==before_effects);
+        assert(bbsc_duel_bell_effect_rows.empty() && bbsc_blank_effect_rows.empty() && bbsc_invadable_effect_rows.empty());
+        if(mode=="pending" || mode=="null-repo")assert(scans==0);
+        TickBbscDuelBellGive();assert(adds==0 && removals==0 && backups==0);
+    }else{
+        assert(bbsc_duel_bell_ready && bbsc_zero_cost_bell_ready);
+#ifdef EXPECT_OLD_SCAN
+        assert(scans==2 && now==192000);
+        std::puts("PASS: preview.19 actual initializer reproduces two-scan dependency (simulated 92 s)");return 0;
+#else
+        assert(scans==(mode=="fallback"?2:0));
+#endif
+        const auto& active=mode=="fallback"?fallback:effects;
+        assert(bbsc_duel_bell_effect_rows==std::vector<u64>{BbscParamRow(active.address,7511)});
+        assert(bbsc_blank_effect_rows==std::vector<u64>{BbscParamRow(active.address,7)});
+        assert(bbsc_invadable_effect_rows==std::vector<u64>{BbscParamRow(active.address,9020)});
+        auto expected=std::array<u8,SpEffectRowSize>{};
+        std::memcpy(expected.data(),reinterpret_cast<void*>(BbscParamRow(active.address,9000)),expected.size());
+        const float duration=1.0f;std::memcpy(expected.data()+8,&duration,4);expected[0x156]=expected[0x157]=0;
+        assert(std::memcmp(expected.data(),reinterpret_cast<void*>(BbscParamRow(active.address,7511)),expected.size())==0);
+        for(const auto& item:BbscKit){
+            const auto row=goods.row(item.id);assert(read<u8>(row+56)==0 && read<s32>(row+100)==-1 && read<s32>(row+104)==-1);
+            assert(read<u16>(row+44)==item.icon);
+        }
+        assert(read<u32>(goods.row(4313))==7511 && read<u8>(goods.row(4313)+68)==0x1F);
+        const auto patched_goods=goods.bytes,patched_effects=active.bytes;
+        const auto scans_before=scans;PrepareBbscDuelBell();assert(scans==scans_before && goods.bytes==patched_goods && active.bytes==patched_effects);
+        TickBbscDuelBellGive();
+        if(mode=="backup-failure")assert(adds==0 && removals==0 && backups==1 && inventory[1].size()==4);
+        else if(mode=="existing" || mode=="storage")assert(adds==0 && removals==0 && backups==0 && announcements==0);
+        else{
+            assert(backups==1 && adds==5 && removals==4 && announcements==1 && inventory[1].size()==5);
+            for(const auto& item:BbscKit)assert(inventory[1].contains(0x40000000u|item.id));
+        }
+        now+=6000;TickBbscDuelBellGive();assert(backups<=1); // no repeated grant for this character
+    }
+    std::printf("PASS: actual kit initialization and inventory callback: %s\n",mode.c_str());
+}

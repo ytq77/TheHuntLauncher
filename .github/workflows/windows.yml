@@ -146,6 +146,7 @@ jobs:
           python scripts/localize.py .build/bbsc
           python scripts/prepare_session_recovery.py .build/bbsc
           python scripts/prepare_personal_rewards.py .build/bbsc
+          python scripts/prepare_kit_initialization.py .build/bbsc
           python tests/test_quit_text_compat.py
           python tests/test_port_195.py
           python scripts/generate-trophy-catalog.py --port .build/bbport --check

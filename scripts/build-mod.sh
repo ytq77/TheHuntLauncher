@@ -51,6 +51,11 @@ clang++ -std=c++23 -DEXPECT_FIXED "$out/test-npc-prejoin.cpp" -o "$out/test-npc-
 python scripts/prepare_gift_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-npc-gift.cpp"
 clang++ -std=c++23 -DEXPECT_FIXED "$out/test-npc-gift.cpp" -o "$out/test-npc-gift.exe"
 "$out/test-npc-gift.exe"
+python scripts/prepare_kit_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-kit-initialization.cpp"
+clang++ -std=c++23 "$out/test-kit-initialization.cpp" -o "$out/test-kit-initialization.exe"
+for mode in pending null-repo missing-effect missing-goods readonly truncated-index fallback fresh backup-failure existing storage; do
+    "$out/test-kit-initialization.exe" "$mode"
+done
 clang++ -std=c++23 tests/test_save_proof.cpp -o "$out/test-save-proof.exe" -lbcrypt
 mkdir -p "$out/save-proof-fixture"
 "$out/test-save-proof.exe" "$out/save-proof-fixture"
