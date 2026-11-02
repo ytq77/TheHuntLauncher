@@ -3,7 +3,7 @@
 基线：preview.19 / BBport 1.9.7，发布提交
 `7fe9bdffa074bafd282d1f8c157dfa74f370fcfc`，固定 BBSC
 `315f76c38b1ca5843b082f93f47927a9193ad94a`。
-以下修正在独立本地候选中验证，尚未发布。
+以下修正在独立本地候选中验证，并纳入 preview.20。
 
 ## 原因与改动
 

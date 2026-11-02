@@ -6,11 +6,11 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.19) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.20) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.19**，基于 **BBport 1.9.7**，仍处于预览阶段。本次纳入上游重启/在线会话修正，以及已定向验证的主客切换、空枪返回提示和 NPC 个人赠礼保护。公共账号与私服分流保持现有流程。旧版实机结果按未改范围复用，1.9.7 的实际运行与重启重连仍待确认；历史灯点和启动停顿继续调查，洗点关闭。详见[发布说明](docs/releases/v0.1.0-preview.19.md)与[验收表](docs/validation-current.md)。
+当前版本为 **0.1.0-preview.20**，基于 **BBport 1.9.7**，仍处于预览阶段。本次优化五件猎具初始化，优先读取并校验游戏当前参数仓库，减少首次补发前的长时间等待；已完成定向实机核对。保留发放前备份、防重复发放和现有联机流程。游戏内重启后的在线重连、公共内容游戏内可见性与历史灯点仍分别待核实，读档卡顿尚未定位，洗点关闭。详见[发布说明](docs/releases/v0.1.0-preview.20.md)与[验收表](docs/validation-current.md)。
 
 ## 功能
 
@@ -32,9 +32,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.19-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.19.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.19.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.20-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.20.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.20.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
