@@ -7,6 +7,7 @@ from banner_diagnostics import apply as banner_diagnostics
 from insight_refund import apply as insight_refund
 from empty_host_cancel import apply as empty_host_cancel
 from npc_prejoin import apply as npc_prejoin
+from p2p_bind import apply as p2p_bind
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,6 +83,8 @@ def main():
     core = args.source / "emulator/src/core"
     path = core / "bloodborne_re.cpp"
     edits = {path: npc_prejoin(empty_host_cancel(banner_diagnostics(insight_refund(early_items(path.read_text(encoding="utf-8"))))))}
+    channel = args.source / "emulator/mod/bbsc_channel.cpp"
+    edits[channel] = p2p_bind(channel.read_text(encoding="utf-8"))
     for name in ("bbsc_http.cpp", "bbsc_relay.cpp"):
         path = args.source / "emulator/mod" / name
         text = path.read_text(encoding="utf-8")

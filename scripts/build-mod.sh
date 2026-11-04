@@ -40,6 +40,16 @@ clang++ -std=c++23 tests/test_empty_host_cancel.cpp -o "$out/test-empty-host-can
 "$out/test-empty-host-cancel.exe"
 clang++ -std=c++23 tests/test_empty_host_cancel_runtime.cpp -o "$out/test-empty-host-cancel-runtime.exe"
 "$out/test-empty-host-cancel-runtime.exe"
+clang++ -std=c++23 tests/test_guest_return.cpp -o "$out/test-guest-return.exe"
+"$out/test-guest-return.exe"
+python scripts/prepare_guest_return_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-guest-return-session.cpp"
+clang++ -std=c++23 "$out/test-guest-return-session.cpp" -o "$out/test-guest-return-session.exe"
+"$out/test-guest-return-session.exe"
+python scripts/prepare_guest_items_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-guest-items.cpp"
+clang++ -std=c++23 "$out/test-guest-items.cpp" -o "$out/test-guest-items.exe"
+for mode in closed drops home; do
+    "$out/test-guest-items.exe" "$mode"
+done
 clang++ -std=c++23 tests/test_personal_rewards.cpp -o "$out/test-personal-rewards.exe"
 "$out/test-personal-rewards.exe"
 python scripts/prepare_personal_rewards_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-personal-rewards-runtime.cpp"
@@ -56,6 +66,11 @@ clang++ -std=c++23 "$out/test-kit-initialization.cpp" -o "$out/test-kit-initiali
 for mode in pending null-repo missing-effect missing-goods readonly truncated-index fallback fresh backup-failure existing storage; do
     "$out/test-kit-initialization.exe" "$mode"
 done
+python scripts/prepare_pvp_regression.py "$src/src/core/bloodborne_re_zh_cn.cpp" "$out/test-pvp-runtime.cpp"
+clang++ -std=c++23 "$out/test-pvp-runtime.cpp" -o "$out/test-pvp-runtime.exe"
+for mode in host guest legacy-request host-sync co-op-end outside broadcast; do
+    "$out/test-pvp-runtime.exe" "$mode"
+done
 clang++ -std=c++23 tests/test_save_proof.cpp -o "$out/test-save-proof.exe" -lbcrypt
 mkdir -p "$out/save-proof-fixture"
 "$out/test-save-proof.exe" "$out/save-proof-fixture"
@@ -66,8 +81,9 @@ for mode in noaccess unmapped null guest already protect-failure write-failure l
     "$out/test-slot-guard.exe" "$mode"
 done
 clang++ "${flags[@]}" tests/test_menu_quit.cpp "$out/bbsc_hooks.o" -o "$out/test-menu-quit.exe"
-"$out/test-menu-quit.exe" valid
-"$out/test-menu-quit.exe" mismatch
+for mode in valid mismatch stale active different-map guest host foreign-world invalid-global dead unwritable empty pending-mode stale-lamp observed-lamp active-lamp invalid-point cleared-lamp pending-info unknown-map; do
+    "$out/test-menu-quit.exe" "$mode"
+done
 python scripts/test_world_recovery_native.py
 python scripts/prepare_save_bridge.py .build/bbsc .build/save-bridge
 bridge="$root/.build/save-bridge"

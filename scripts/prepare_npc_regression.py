@@ -39,6 +39,7 @@ def generate(source, destination):
     marker='// NPC_FUNCTIONS'
     protocol_stubs='''bool BbscWorldRecoveryEnabled(){return false;}
 bool BbscWorldRecoveryCanCapture(){return true;}
+void CaptureBbscGuestReturnOrigin(){} // Separate return-placement fixture covers this capture.
 bool BbscRestoreWorldTransaction(std::string_view){return false;}
 std::vector<int> bbsc_recovery_rows;
 '''

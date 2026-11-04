@@ -104,6 +104,7 @@ int main(int argc,char** argv){
     Table fallback("SP_EFFECT_PARAM_ST",{0,7,7511,9000,9020},1001,SpEffectRowSize);
     for(auto* table:{&effects,&fallback}){
         auto row=table->row(9000,SpEffectRowSize);std::memset(reinterpret_cast<void*>(row),0x32,SpEffectRowSize);
+        put<u16>(row+0x13E,100); // Real native recruitment bells share category 100.
     }
     for(auto [id,ref]:{std::pair<u32,u32>{200,9000},{205,9005},{225,9025},{111,7}}){
         put<u32>(goods.row(id)+0,ref);put<u8>(goods.row(id)+68,0x1F);put<u8>(goods.row(id)+56,1);
@@ -159,7 +160,9 @@ int main(int argc,char** argv){
         auto expected=std::array<u8,SpEffectRowSize>{};
         std::memcpy(expected.data(),reinterpret_cast<void*>(BbscParamRow(active.address,9000)),expected.size());
         const float duration=1.0f;std::memcpy(expected.data()+8,&duration,4);expected[0x156]=expected[0x157]=0;
+        expected[0x13E]=expected[0x13F]=0; // PvP must not replace a recruitment effect.
         assert(std::memcmp(expected.data(),reinterpret_cast<void*>(BbscParamRow(active.address,7511)),expected.size())==0);
+        assert(read<u16>(BbscParamRow(active.address,9000)+0x13E)==100);
         for(const auto& item:BbscKit){
             const auto row=goods.row(item.id);assert(read<u8>(row+56)==0 && read<s32>(row+100)==-1 && read<s32>(row+104)==-1);
             assert(read<u16>(row+44)==item.icon);

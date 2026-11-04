@@ -1,0 +1,81 @@
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+using u8=std::uint8_t;using s32=std::int32_t;using s64=std::int64_t;
+#define LOG_INFO(...) ((void)0)
+std::uint64_t image_base=1;
+std::atomic<bool> bbsc_duel_bell_ready{true},bbsc_pvp_on{false};
+std::atomic<int> bbsc_pvp_host_state{-1};std::atomic<s64> bbsc_pvp_host_state_ms{0};
+#ifdef EXPECT_ORIGINAL
+std::atomic<int> bbsc_pvp_request{-1};
+#endif
+constexpr s64 BbscPvpSendMs=1000;
+s64 now=10000;int session=0,team_updates=0;bool bell=false;
+std::vector<std::pair<u8,bool>> packets;
+std::vector<std::string> notices;
+s64 SteadyNowMs(){return now;}
+s32 GetSessionState(){return session;}
+bool BbscDuelBellEffectActive(){return bell;}
+void SendBbscPvpPacket(u8 kind,bool on){packets.emplace_back(kind,on);}
+void BbscAnnounce(const char16_t*,const char* tag){notices.emplace_back(tag);}
+void ApplyBbscPvpTeams(){++team_updates;}
+void StartBbscDuelBell(){}
+void TickBbscDuelBellGive(){}
+void TickBbscHostBlank(){}
+void TickBbscEmptyHostCancel(){}
+void TickBbscInvadable(){}
+// PVP_CALLBACKS
+
+int main(int argc,char** argv){
+    assert(argc==2);const std::string_view mode=argv[1];
+    if(mode=="host"){
+        session=3;TickBbscPvp();packets.clear();
+        bell=true;TickBbscPvp();assert(bbsc_pvp_on && packets.size()==1);
+        assert(packets.back()==std::make_pair(u8{0},true));
+        TickBbscPvp();assert(packets.size()==1 && notices.size()==1); // One toggle per ring.
+        bell=false;TickBbscPvp();bell=true;TickBbscPvp();
+        assert(!bbsc_pvp_on && packets.size()==2 && !packets.back().second);
+    }else if(mode=="guest"){
+        session=6;bell=true;TickBbscPvp();
+#ifdef EXPECT_ORIGINAL
+        assert(!bbsc_pvp_on && packets.size()==1 && packets.back().first==1);
+        std::puts("BASELINE: guest sends a PvP request without host confirmation");return 0;
+#else
+        assert(!bbsc_pvp_on && packets.empty() && notices==std::vector<std::string>{"pvp host only"});
+        TickBbscPvp();assert(notices.size()==1); // No per-frame notice spam.
+        bell=false;TickBbscPvp();OnBbscPvpPacket(0,1);TickBbscPvp();assert(bbsc_pvp_on);
+        bell=true;TickBbscPvp();assert(bbsc_pvp_on && packets.empty() && notices.back()=="pvp host only");
+#endif
+    }else if(mode=="legacy-request"){
+        session=3;OnBbscPvpPacket(1,1);TickBbscPvp();
+#ifdef EXPECT_ORIGINAL
+        assert(bbsc_pvp_on);
+        std::puts("BASELINE: host automatically accepts the guest request");return 0;
+#else
+        assert(!bbsc_pvp_on); // An old guest cannot enable it.
+        bell=true;TickBbscPvp();assert(bbsc_pvp_on);
+        bell=false;TickBbscPvp();OnBbscPvpPacket(1,0);TickBbscPvp();assert(bbsc_pvp_on);
+        OnBbscPvpPacket(2,0);OnBbscPvpPacket(0,0);TickBbscPvp();assert(bbsc_pvp_on);
+        for(auto [kind,on]:packets)assert(kind==0);
+#endif
+    }else if(mode=="host-sync"){
+        session=6;OnBbscPvpPacket(0,1);TickBbscPvp();assert(bbsc_pvp_on);
+        OnBbscPvpPacket(0,0);now+=6000;TickBbscPvp();assert(bbsc_pvp_on); // Stale state ignored.
+        OnBbscPvpPacket(0,0);TickBbscPvp();assert(!bbsc_pvp_on && packets.empty());
+    }else if(mode=="co-op-end"){
+        session=6;OnBbscPvpPacket(0,1);TickBbscPvp();assert(bbsc_pvp_on);
+        session=0;TickBbscPvp();assert(!bbsc_pvp_on && notices.back()=="pvp off");
+        assert(team_updates==2); // The existing team restore callback still runs.
+    }else if(mode=="outside"){
+        bell=true;TickBbscPvp();assert(!bbsc_pvp_on && packets.empty() && notices.back()=="pvp alone");
+    }else if(mode=="broadcast"){
+        session=3;TickBbscPvp();assert(packets.size()==1 && !packets.back().second);
+        now+=1000;TickBbscPvp();assert(packets.size()==2 && packets.back().first==0);
+    }else assert(false);
+    std::printf("PASS: actual PvP callbacks: %s\n",argv[1]);
+}
