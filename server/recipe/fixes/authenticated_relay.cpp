@@ -5,7 +5,6 @@
 #include "database.h"
 #include "trusted_network.h"
 #include <QCryptographicHash>
-#include <QDebug>
 #include <QElapsedTimer>
 #include <QMessageAuthenticationCode>
 #include <QRandomGenerator>
@@ -20,7 +19,6 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
-#include <deque>
 
 namespace {
 template<class T> void Append(QByteArray& out, T value) {
@@ -41,11 +39,6 @@ constexpr int MaxConnections = 64;
 constexpr qint64 MaxBacklog = 256 * 1024;
 constexpr qint64 AdmissionMs = 5000;
 constexpr qint64 StallMs = 5000;
-constexpr qint64 MatchingRetryMs = 1500;
-constexpr int PlacementShortRetryMs = 10;
-constexpr qint64 PlacementShortWindowMs = 2000;
-constexpr qsizetype MaxDeferredBytes = 256 * 1024;
-constexpr size_t MaxDeferredFrames = 32;
 constexpr quint32 FramesPerSecond = 256;
 constexpr quint32 BytesPerSecond = 1024 * 1024;
 }
@@ -166,7 +159,6 @@ struct AuthenticatedRelay::Impl {
         bool operator==(const Context& b) const {
             return SameMembership(b) && owner == b.owner && peers == b.peers && npid == b.npid;
         }
-        RelayAuth::SummonRoom SummonRoom() const { return {room, joined, member}; }
     };
     struct Peer {
         QTcpSocket* socket = nullptr;
@@ -177,33 +169,18 @@ struct AuthenticatedRelay::Impl {
         bool authenticated = false, dead = false, haveContext = false, visibility = false;
         QByteArray roster;
         Context context;
-        std::deque<QByteArray> deferred;
-        qsizetype deferredBytes = 0;
-        qint64 deferredSince = 0;
     };
-    struct Placement : RelayAuth::PlacementRequest {
-        quint64 generation = 0;
-        qint64 expires = 0, shortRetryUntil = 0;
+    struct Placement {
+        quint64 generation = 0, host = 0, target = 0;
+        Context hostContext;
+        QByteArray hostHash, targetHash, text;
+        qint64 expires = 0;
         quint64 deliveredTo = 0;
-        bool matchingBusy = false;
-        const char* deferredReason = nullptr;
-    };
-    struct MatchingRead {
-        SharedState& state;
-        bool rooms, clients;
-        explicit MatchingRead(SharedState& s)
-            : state(s), rooms(s.matching.roomsLock.tryLockForRead()),
-              clients(rooms && s.clientsLock.tryLockForRead()) {}
-        ~MatchingRead() {
-            if (clients) state.clientsLock.unlock();
-            if (rooms) state.matching.roomsLock.unlock();
-        }
-        explicit operator bool() const { return clients; }
     };
     AuthenticatedRelay* self;
     SharedState* shared;
     QTcpServer listener;
-    QTimer timer, placementRetryTimer;
+    QTimer timer;
     QElapsedTimer clock;
     std::unique_ptr<Database> db;
     std::vector<std::unique_ptr<Peer>> peers;
@@ -218,17 +195,12 @@ struct AuthenticatedRelay::Impl {
         timer.setInterval(250);
         timer.setTimerType(Qt::PreciseTimer);
         QObject::connect(&timer, &QTimer::timeout, self, [this] { Tick(); });
-        placementRetryTimer.setSingleShot(true);
-        placementRetryTimer.setTimerType(Qt::PreciseTimer);
-        placementRetryTimer.setInterval(PlacementShortRetryMs);
-        QObject::connect(&placementRetryTimer, &QTimer::timeout, self, [this] { RetryPlacements(true); });
         QObject::connect(&listener, &QTcpServer::newConnection, self, [this] { Accept(); });
         listener.setMaxPendingConnections(16);
     }
     void Close(Peer& p) {
         if (p.dead) return;
         p.dead = true;
-        p.deferred.clear();
         p.key.fill(0); p.nonce.fill(0); p.tokenHash.fill(0);
         p.socket->abort();
     }
@@ -266,14 +238,22 @@ struct AuthenticatedRelay::Impl {
         }
         return true;
     }
-    RelayAuth::SummonAdmission SummonAdmission(quint64 user) {
-        using Access = RelayAuth::SummonAccess;
-        const MatchingRead lock(*shared);
-        if (!lock) return {Access::Busy, {}};
+    bool IsHost(quint64 user) {
+        if (!shared->matching.roomsLock.tryLockForRead()) return false;
+        if (!shared->clientsLock.tryLockForRead()) { shared->matching.roomsLock.unlock(); return false; }
+        const auto c = Resolve(user);
+        shared->clientsLock.unlock(); shared->matching.roomsLock.unlock();
+        return c.room && c.owner == user;
+    }
+    SharedState::SummonSearchAccess SearchAccess(quint64 user) {
+        using Access = SharedState::SummonSearchAccess;
+        if (!shared->matching.roomsLock.tryLockForRead()) return Access::Denied;
+        if (!shared->clientsLock.tryLockForRead()) { shared->matching.roomsLock.unlock(); return Access::Denied; }
         bool noRoom = false;
         const auto c = Resolve(user, &noRoom);
-        if (c.room && c.owner == user) return {Access::Owner, c.SummonRoom()};
-        return {noRoom ? Access::NoRoom : Access::Denied, {}};
+        shared->clientsLock.unlock(); shared->matching.roomsLock.unlock();
+        if (c.room && c.owner == user) return Access::Owner;
+        return noRoom ? Access::NoRoom : Access::Denied;
     }
     bool HashCurrent(quint64 user, const QByteArray& expected) {
         const auto token = Token(user);
@@ -282,7 +262,7 @@ struct AuthenticatedRelay::Impl {
     }
     bool PlacementFrame(Peer& guest, const Placement& grant, quint32 ttl) {
         QByteArray out("THP2",4);
-        Append(out,grant.generation); Append(out,grant.room.room);
+        Append(out,grant.generation); Append(out,grant.hostContext.room);
         Append(out,static_cast<quint32>(grant.host)); Append(out,static_cast<quint32>(grant.target));
         Append(out,ttl);
         if(ttl) out += grant.text;
@@ -293,130 +273,28 @@ struct AuthenticatedRelay::Impl {
             if(!p->dead && p->authenticated && p->user==grant.target && p->connection==grant.deliveredTo &&
                RelayAuth::Equal(p->tokenHash,grant.targetHash)) PlacementFrame(*p,grant,0);
     }
-    void PlacementLog(const Placement& grant, const char* reason) {
-        qInfo() << "Relay placement" << reason << "record" << grant.record << "generation" << grant.generation
-                << "room" << grant.room.room << "host" << grant.host << "target" << grant.target;
+    void CancelPlacements(quint64 user) {
+        for(auto it=placements.begin();it!=placements.end();)
+            if(it->host==user || it->target==user) { Revoke(*it);it=placements.erase(it); } else ++it;
     }
-    void CancelPlacement(quint64 record) {
-        for (auto it = placements.begin(); it != placements.end(); ++it) {
-            if (it->record != record) continue;
-            PlacementLog(*it, "cancelled-by-broker");
-            Revoke(*it);
-            placements.erase(it);
-            return;
-        }
-    }
-    bool DeferPlacement(Placement& grant, const char* reason) {
-        if (!grant.deferredReason || std::strcmp(grant.deferredReason, reason) != 0)
-            PlacementLog(grant, reason);
-        grant.deferredReason = reason;
-        return true;
-    }
-    bool DropPlacement(Placement& grant, const char* reason) {
-        PlacementLog(grant, reason);
-        Revoke(grant);
-        return false;
-    }
-    bool TryPlacement(Placement& grant) {
-        grant.matchingBusy = false;
-        if (grant.expires <= clock.elapsed()) return DropPlacement(grant, "expired");
-        // Credential queries precede matching locks. Both identities are checked on every attempt.
-        if (!HashCurrent(grant.host, grant.hostHash) || !HashCurrent(grant.target, grant.targetHash))
-            return DropPlacement(grant, "credential-invalid");
-        const MatchingRead lock(*shared);
-        if (!lock) {
-            if (!grant.deliveredTo) {
-                grant.matchingBusy = true;
-                if (!grant.shortRetryUntil)
-                    grant.shortRetryUntil = clock.elapsed() + PlacementShortWindowMs;
-            }
-            return DeferPlacement(grant, "deferred-matching-busy");
-        }
-        const Context host = Resolve(grant.host);
-        if (host.owner != grant.host || !(host.SummonRoom() == grant.room))
-            return DropPlacement(grant, "host-ownership-or-membership-changed");
-        bool noRoom = false, inRoom = false;
-        Resolve(grant.target, &noRoom, &inRoom);
-        if (inRoom) {
-            // The matching THX2 hands the already sent hint to the native
-            // summon load. Do not revoke it before that load can consume it.
-            // A different room's THX2 invalidates it on the client.
-            PlacementLog(grant, "target-already-in-room");
-            return false;
-        }
-        if (!noRoom) return DeferPlacement(grant, "deferred-target-np-not-ready");
-        for (auto& item : peers) {
-            Peer& guest = *item;
-            if (guest.dead || !guest.authenticated || guest.user != grant.target ||
-                !RelayAuth::Equal(guest.tokenHash, grant.targetHash)) continue;
-            if (grant.deliveredTo == guest.connection) return true;
-            // Keep the membership read locks through the bounded socket enqueue so JoinRoom
-            // cannot commit between the prejoin check and the positive v2 THP2.
-            Update(guest, {}, false);
-            const qint64 remaining = grant.expires - clock.elapsed();
-            if (remaining <= 0) return DropPlacement(grant, "expired");
-            if (PlacementFrame(guest, grant, static_cast<quint32>(remaining))) {
-                grant.deliveredTo = guest.connection;
-                grant.deferredReason = nullptr;
-                PlacementLog(grant, "socket-enqueued");
-                return true;
-            }
-            return DeferPlacement(grant, "deferred-target-write-failed");
-        }
-        return DeferPlacement(grant, "deferred-target-relay-offline");
-    }
-    void QueuePlacement(const RelayAuth::PlacementRequest& request) {
-        Placement grant;
-        static_cast<RelayAuth::PlacementRequest&>(grant) = request;
-        if (!grant.record || !grant.room.room || grant.host == grant.target || grant.ttlMs <= 0 ||
-            grant.ttlMs > RelayAuth::PlacementTtlMs || !RelayAuth::ValidPlacement(grant.text)) {
-            PlacementLog(grant, "invalid-request");
-            return;
-        }
-        if (nextPlacement == std::numeric_limits<quint64>::max() ||
-            (!placements.contains(grant.target) && placements.size() >= 256)) {
-            PlacementLog(grant, "queue-limit");
-            return;
-        }
-        const auto old = placements.find(grant.target);
-        if (old != placements.end()) {
-            DropPlacement(*old, "superseded");
-            placements.erase(old);
-        }
-        grant.generation = ++nextPlacement;
-        grant.expires = clock.elapsed() + grant.ttlMs;
-        if (TryPlacement(grant)) placements.insert(grant.target, std::move(grant));
-        ScheduleShortPlacementRetry();
-    }
-    bool ShortRetryDue(const Placement& grant, qint64 now) const {
-        return grant.matchingBusy && now < grant.shortRetryUntil && now < grant.expires;
-    }
-    void ScheduleShortPlacementRetry() {
-        if (placementRetryTimer.isActive()) return;
-        const auto now = clock.elapsed();
-        for (const auto& grant : placements) if (ShortRetryDue(grant, now)) {
-            placementRetryTimer.start();
-            break;
-        }
-    }
-    void RetryPlacements(bool shortOnly = false) {
-        if (shortOnly) {
-            // Avoid retrying every credential query while the same lock is busy.
-            // TryPlacement still revalidates credentials and matching under its own locks.
-            const MatchingRead lock(*shared);
-            if (!lock) { ScheduleShortPlacementRetry(); return; }
-        }
-        for (auto it = placements.begin(); it != placements.end();) {
-            if (shortOnly && !ShortRetryDue(*it, clock.elapsed())) { ++it; continue; }
-            if (TryPlacement(*it)) ++it;
-            else it = placements.erase(it);
-        }
-        ScheduleShortPlacementRetry();
+    void QueuePlacement(quint64 host, const QByteArray& hostHash, quint64 target,
+                        const QByteArray& targetHash, const QByteArray& text) {
+        // This callback is used only by the authenticated native summon broker.
+        if (host == target || !RelayAuth::ValidPlacement(text) || !HashCurrent(host, hostHash) ||
+            !HashCurrent(target, targetHash) || nextPlacement == std::numeric_limits<quint64>::max()) return;
+        if (!shared->matching.roomsLock.tryLockForRead()) return;
+        if (!shared->clientsLock.tryLockForRead()) { shared->matching.roomsLock.unlock(); return; }
+        const Context c = Resolve(host);
+        shared->clientsLock.unlock(); shared->matching.roomsLock.unlock();
+        if (!c.room || c.owner != host) return;
+        if (!placements.contains(target) && placements.size() >= 256) return;
+        const auto old=placements.constFind(target);
+        if(old!=placements.cend()) Revoke(*old);
+        placements.insert(target, {++nextPlacement, host, target, c, hostHash, targetHash, text, clock.elapsed() + 10000});
     }
     // Caller holds roomsLock THEN clientsLock, matching the existing native order.
-    Context Resolve(quint64 user, bool* noRoom = nullptr, bool* inRoom = nullptr) const {
+    Context Resolve(quint64 user, bool* noRoom = nullptr) const {
         if (noRoom) *noRoom = false;
-        if (inRoom) *inRoom = false;
         const auto client = shared->clients.constFind(static_cast<qint64>(user));
         if (client == shared->clients.cend() || client->npid.isEmpty()) return {};
         Context result;
@@ -424,7 +302,6 @@ struct AuthenticatedRelay::Impl {
         for (auto r = shared->matching.rooms.cbegin(); r != shared->matching.rooms.cend(); ++r) {
             for (auto member = r->members.cbegin(); member != r->members.cend(); ++member) {
                 if (member->userId != static_cast<qint64>(user)) continue;
-                if (inRoom) *inRoom = true;
                 if (++found != 1 || member->npid != client->npid || member.key() != member->memberId ||
                     r.key().first.isEmpty() || r.key().second == 0 || r->roomId != r.key().second)
                     return {};
@@ -471,60 +348,27 @@ struct AuthenticatedRelay::Impl {
             p.haveContext = true;
         }
     }
-    void DeferData(Peer& sender, const QByteArray& inner) {
-        if (sender.deferred.size() >= MaxDeferredFrames ||
-            sender.deferredBytes + inner.size() > MaxDeferredBytes) {
-            qInfo() << "Relay matching retry queue limit, closing account" << sender.user;
-            Close(sender);
+    void Refresh(Peer* sender = nullptr, const QByteArray& inner = {}) {
+        std::vector<Peer*> active;
+        for (auto& p : peers)
+            if (!p->dead && p->authenticated && Current(*p)) active.push_back(p.get());
+        if (sender && sender->dead) return;
+        // Account checks run outside matching locks; grants carry BOTH token
+        // generations and never survive reset/ban of either participant.
+        for (auto it = placements.begin(); it != placements.end();) {
+            if (it->expires <= clock.elapsed() || !HashCurrent(it->host, it->hostHash) ||
+                !HashCurrent(it->target, it->targetHash)) { Revoke(*it);it = placements.erase(it); }
+            else ++it;
+        }
+        // Never wait for game threads while the relay event loop is processing.
+        if (!shared->matching.roomsLock.tryLockForRead()) {
+            for (Peer* p : active) Update(*p, {}, !sender);
             return;
         }
-        if (sender.deferred.empty()) sender.deferredSince = clock.elapsed();
-        sender.deferred.push_back(inner);
-        sender.deferredBytes += inner.size();
-    }
-    void Forward(Peer& sender, const QByteArray& inner, const Context& from,
-                 const std::vector<Peer*>& active, const std::vector<Context>& contexts) {
-        if (sender.dead || !from.room) return;
-        for (size_t i = 0; i < active.size(); ++i) {
-            Peer& to = *active[i];
-            const Context& c = contexts[i];
-            if (&to == &sender || to.dead || !c.room || c.room != from.room || c.com != from.com ||
-                !RelayAuth::Allowed(inner, sender.user == from.owner, to.user == c.owner)) continue;
-            if(inner[4]==0x28 && (!sender.visibility || !to.visibility || Read<quint32>(inner,8)!=to.user)) continue;
-            if(inner[4]==0x28 && inner[5]==2 &&
-               (Read<quint64>(inner,56)!=from.room || Read<quint64>(inner,64)!=from.joined ||
-                Read<quint64>(inner,72)!=c.joined)) continue;
-            QByteArray out("THS2", 4);
-            Append(out, from.room);
-            Append(out, static_cast<quint32>(sender.user));
-            Append(out, from.owner);
-            QByteArray packet = inner;
-            // Private v2 life keys are authenticated account IDs.
-            if (packet[4] == 0x23)
-                qToLittleEndian(static_cast<quint32>(sender.user), packet.data() + 5);
-            out += packet;
-            Signed(to, out);
-        }
-    }
-    bool Refresh(Peer* sender = nullptr, const QByteArray& inner = {}) {
-        std::vector<Peer*> active;
-        const qint64 now = clock.elapsed();
-        for (auto& p : peers) {
-            // The first deferred frame owns an absolute deadline. Enforce it
-            // before a recovered matching lock can drain an expired queue,
-            // including after an event-loop pause or on a newly arrived frame.
-            if (!p->dead && !p->deferred.empty() && now - p->deferredSince >= MatchingRetryMs) {
-                qInfo() << "Relay matching retry expired, closing account" << p->user;
-                Close(*p);
-            }
-            if (!p->dead && p->authenticated && Current(*p)) active.push_back(p.get());
-        }
-        if (sender && sender->dead) return true;
-        // Never wait for game threads while the relay event loop is processing.
-        const MatchingRead lock(*shared);
-        if (!lock) {
-            if (sender) DeferData(*sender, inner);
-            return false;
+        if (!shared->clientsLock.tryLockForRead()) {
+            shared->matching.roomsLock.unlock();
+            for (Peer* p : active) Update(*p, {}, !sender);
+            return;
         }
         std::vector<Context> contexts;
         for (Peer* p : active) contexts.push_back(Resolve(p->user));
@@ -535,15 +379,10 @@ struct AuthenticatedRelay::Impl {
                 if (i != j && contexts[j].room == c.room && contexts[j].com == c.com)
                     ++c.peers;
         }
+        Context from;
         for (size_t i = 0; i < active.size(); ++i) {
             Peer& p = *active[i];
             const auto& fresh = contexts[i];
-            if (!p.deferred.empty() &&
-                (!p.haveContext || !p.context.SameMembership(fresh) || p.context.owner != fresh.owner)) {
-                qInfo() << "Relay matching retry discarded after membership change, account" << p.user;
-                p.deferred.clear();
-                p.deferredBytes = 0;
-            }
             QByteArray roster;
             if(p.visibility && fresh.room) {
                 for(size_t j=0;j<active.size();++j) {
@@ -560,18 +399,52 @@ struct AuthenticatedRelay::Impl {
                 }
             }
             if (!p.dead) Update(p, fresh, !sender,roster);
+            if (active[i] == sender) from = contexts[i];
         }
-        for (size_t i = 0; i < active.size(); ++i) {
-            Peer& p = *active[i];
-            while (!p.deferred.empty() && !p.dead) {
-                const auto frame = std::move(p.deferred.front());
-                p.deferred.pop_front();
-                Forward(p, frame, contexts[i], active, contexts);
+        for (auto it = placements.begin(); it != placements.end();) {
+            const Context host = Resolve(it->host);
+            if (!host.room || host.owner != it->host || !host.SameMembership(it->hostContext)) {
+                Revoke(*it);it = placements.erase(it); continue;
             }
-            p.deferredBytes = 0;
-            if (&p == sender) Forward(p, inner, contexts[i], active, contexts);
+            bool completed = false;
+            for (size_t i = 0; i < active.size(); ++i) {
+                Peer& guest = *active[i];
+                if (guest.dead || guest.user != it->target ||
+                    !RelayAuth::Equal(guest.tokenHash, it->targetHash)) continue;
+                if(contexts[i].room) { completed=true;break; } // Fresh THX2 membership clears the hint.
+                if(it->deliveredTo==guest.connection) continue;
+                const qint64 remaining = it->expires - clock.elapsed();
+                if (remaining <= 0) break;
+                if(PlacementFrame(guest,*it,static_cast<quint32>(remaining))) it->deliveredTo=guest.connection;
+            }
+            if (completed) it = placements.erase(it); else ++it;
         }
-        return true;
+        if (sender && !sender->dead && from.room) {
+            for (size_t i = 0; i < active.size(); ++i) {
+                Peer& to = *active[i];
+                const Context& c = contexts[i];
+                if (&to == sender || to.dead || !c.room || c.room != from.room || c.com != from.com ||
+                    !RelayAuth::Allowed(inner, sender->user == from.owner, to.user == c.owner)) continue;
+                if(inner[4]==0x28 && (!sender->visibility || !to.visibility || Read<quint32>(inner,8)!=to.user)) continue;
+                if(inner[4]==0x28 && inner[5]==2 &&
+                   (Read<quint64>(inner,56)!=from.room || Read<quint64>(inner,64)!=from.joined ||
+                    Read<quint64>(inner,72)!=c.joined)) continue;
+                QByteArray out("THS2", 4);
+                Append(out, from.room);
+                Append(out, static_cast<quint32>(sender->user));
+                Append(out, from.owner);
+                QByteArray packet = inner;
+                // Private v2 life keys are authenticated account IDs. The
+                // receiver maps the signed sender ID to its life-state entry.
+                // Keep dead/sequence gameplay fields unchanged.
+                if (packet[4] == 0x23)
+                    qToLittleEndian(static_cast<quint32>(sender->user), packet.data() + 5);
+                out += packet;
+                Signed(to, out);
+            }
+        }
+        shared->clientsLock.unlock();
+        shared->matching.roomsLock.unlock();
     }
     void Payload(Peer& p, const QByteArray& payload) {
         if (!p.authenticated) {
@@ -596,15 +469,11 @@ struct AuthenticatedRelay::Impl {
             p.tokenHash = QCryptographicHash::hash(token, QCryptographicHash::Sha256);
             p.nonce.fill(0);
             p.authenticated = true;
-            p.visibility=visibility;
-            QByteArray ack(visibility?"THO4":"THO2", 4);
+            p.visibility = visibility;
+            QByteArray ack(visibility ? "THO4" : "THO2", 4);
             Append(ack, user);
             Send(p, ack + RelayAuth::Mac(p.key, ack));
             Refresh(); // Ack always precedes the first context, sequence starts at 1.
-            const auto pending = placements.find(p.user);
-            if (pending != placements.end() && !TryPlacement(*pending))
-                placements.erase(pending);
-            ScheduleShortPlacementRetry();
             return;
         }
         if (payload.size() < 49 || !payload.startsWith("THD2") ||
@@ -681,7 +550,6 @@ struct AuthenticatedRelay::Impl {
             else if (now - p.blockedSince >= StallMs) Close(p);
         }
         Refresh();
-        RetryPlacements();
         // Destroy signal/continuation contexts before freeing their captured Peer.
         for (auto& p : peers) if (p->dead) {
             QObject::disconnect(p->socket, nullptr, self, nullptr);
@@ -712,11 +580,13 @@ bool AuthenticatedRelay::Listen(const QHostAddress& address, quint16 port, const
     }
     m->shared->relayAuthReady.store(true);
     // WebAPI routes and relay callbacks all execute on this Qt event thread.
-    m->shared->relaySummonAdmission = [this](quint64 user) { return m->SummonAdmission(user); };
-    m->shared->relayPlacement = [this](const RelayAuth::PlacementRequest& placement) {
-        m->QueuePlacement(placement);
+    m->shared->relayHost = [this](quint64 user) { return m->IsHost(user); };
+    m->shared->relaySearchAccess = [this](quint64 user) { return m->SearchAccess(user); };
+    m->shared->relayPlacement = [this](quint64 host, const QByteArray& hostHash, quint64 target,
+                                      const QByteArray& targetHash, const QByteArray& text) {
+        m->QueuePlacement(host,hostHash,target,targetHash,text);
     };
-    m->shared->relayCancelPlacement = [this](quint64 record) { m->CancelPlacement(record); };
+    m->shared->relayCancelPlacement = [this](quint64 user) { m->CancelPlacements(user); };
     m->timer.start();
     return true;
 }
@@ -724,13 +594,13 @@ quint16 AuthenticatedRelay::Port() const { return m->listener.serverPort(); }
 void AuthenticatedRelay::Stop() {
     if (m->shared) {
         m->shared->relayAuthReady.store(false);
-        m->shared->relaySummonAdmission = {};
+        m->shared->relayHost = {};
+        m->shared->relaySearchAccess = {};
         m->shared->relayPlacement = {};
         m->shared->relayCancelPlacement = {};
     }
     m->placements.clear();
     m->timer.stop();
-    m->placementRetryTimer.stop();
     m->listener.close();
     for (auto& p : m->peers) {
         m->Close(*p);

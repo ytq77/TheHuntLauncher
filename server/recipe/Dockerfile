@@ -18,7 +18,8 @@ COPY relay_auth.py /security/relay_auth.py
 COPY tests/ /security/tests/
 RUN python3 /security/security.py --shadnet /src \
     && python3 /security/account_helper.py --shadnet /src \
-    && python3 /security/relay_auth.py --shadnet /src
+    && python3 /security/relay_auth.py --shadnet /src \
+    && python3 /security/fixes/join-claim-lifecycle/apply.py --shadnet /src
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
        -DFETCHCONTENT_SOURCE_DIR_ABSL=/src/externals/abseil-cpp \
        -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DABSL_PROPAGATE_CXX_STD=ON \

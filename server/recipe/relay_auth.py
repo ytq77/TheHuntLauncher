@@ -53,11 +53,10 @@ NATIVE_TEST_CMAKE = '''
 # The Hunt authenticated relay: actual native unit and opt-in integration CLI.
 if(BUILD_TESTING)
     add_executable(test_relay_auth EXCLUDE_FROM_ALL tests/test_relay_auth.cpp
-        src/authenticated_relay.cpp src/database.cpp src/config.cpp src/bloodborne_summon_broker.cpp
-        src/webapi_auth.cpp src/webapi_routes_bloodborne.cpp "${PROTO_OUT}/shadnet.pb.h")
+        src/authenticated_relay.cpp src/database.cpp src/config.cpp src/bloodborne_summon_broker.cpp "${PROTO_OUT}/shadnet.pb.h")
     target_include_directories(test_relay_auth PRIVATE src "${PROTO_OUT}"
         "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src")
-    target_link_libraries(test_relay_auth PRIVATE Qt6::Core Qt6::Network Qt6::Sql Qt6::HttpServer libprotobuf)
+    target_link_libraries(test_relay_auth PRIVATE Qt6::Core Qt6::Network Qt6::Sql libprotobuf)
     add_test(NAME relay_auth COMMAND test_relay_auth)
 
     set(RELAY_PROTO "${CMAKE_CURRENT_BINARY_DIR}/relay_client_proto")
@@ -94,12 +93,13 @@ def patch_shadnet(root):
          '        QMetaObject::invokeMethod(m_socket, [socket = m_socket] {\n'
          '            socket->disconnectFromHost();\n'
          '        }, Qt::QueuedConnection);')
-    edit("src/client_session.h", "#pragma once", '#pragma once\n#include "summon_placement.h"')
     edit("src/client_session.h", "    ConfigManager* config;", "    ConfigManager* config;\n"
          "    std::atomic<bool> relayAuthReady{false}; // True only after native relay listen succeeds.\n"
          "    // Main Qt thread only: authenticated broker -> relay admission, never client claims.\n"
-         "    std::function<RelayAuth::SummonAdmission(quint64)> relaySummonAdmission;\n"
-         "    std::function<void(const RelayAuth::PlacementRequest&)> relayPlacement;\n"
+         "    std::function<bool(quint64)> relayHost;\n"
+         "    enum class SummonSearchAccess { Denied, NoRoom, Owner };\n"
+         "    std::function<SummonSearchAccess(quint64)> relaySearchAccess;\n"
+         "    std::function<void(quint64,const QByteArray&,quint64,const QByteArray&,const QByteArray&)> relayPlacement;\n"
          "    std::function<void(quint64)> relayCancelPlacement;")
     edit("src/client_session.h", "        uint32_t matchingContextId = 0;",
          "        uint32_t matchingContextId = 0;\n"
@@ -146,7 +146,7 @@ def patch_shadnet(root):
             raise ValueError("Conflicting relay auth target")
         changes[cmake] = text + NATIVE_TEST_CMAKE
     fixed = {root / "src" / name: (ROOT / "fixes" / name).read_bytes()
-             for name in ("authenticated_relay.h", "authenticated_relay.cpp", "summon_placement.h")}
+             for name in ("authenticated_relay.h", "authenticated_relay.cpp")}
     fixed.update({root / "tests" / name: (ROOT / "tests" / name).read_bytes()
                   for name in ("test_relay_auth.cpp", "relay_auth_integration.cpp")})
     # The pinned clientsample lags the pinned server's Matching protocol. Use an
@@ -178,14 +178,13 @@ def patch_summon(edit):
     header = "src/bloodborne_summon_broker.h"
     cpp = "src/bloodborne_summon_broker.cpp"
     routes = "src/webapi_routes_bloodborne.cpp"
-    edit(header, "#include <optional>", '#include <optional>\n#include <functional>\n#include "summon_placement.h"')
-    edit(cpp, "#include <QMutexLocker>", "#include <QMutexLocker>\n#include <QScopeGuard>")
+    edit(header, "#include <optional>", "#include <optional>\n#include <functional>")
     edit(header, "class SummonBroker {", '''// Server-owned identity; never parsed from JSON UserId/TargetUserId/CharaId.
 struct SummonIdentity { quint64 user = 0; QByteArray tokenHash; };
 
 class SummonBroker {''')
     edit(header, "        bool seamlessAnywhereSummons = false;", '''        bool seamlessAnywhereSummons = false;
-        std::function<void(const RelayAuth::PlacementRequest&)> relayPlacement;
+        std::function<void(const SummonIdentity&, const SummonIdentity&, const QByteArray&)> relayPlacement;
         std::function<void(quint64)> relayCancelPlacement;''')
     edit(header, "        QByteArray pendingClaim;\n        QByteArray pendingHostPlacement;",
          "        QByteArray pendingClaim;\n        QByteArray pendingHostPlacement;\n        bool authorized = true;")
@@ -198,29 +197,14 @@ class SummonBroker {''')
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
                       const QByteArray& hostPlacement = {});
     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs);''', '''    QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
-                             const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {},
-                             const RelayAuth::SummonRoom& room = {});
+                             const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {});
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
-                      const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {},
-                      const RelayAuth::SummonRoom& room = {});
+                      const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {});
     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs, const SummonIdentity& caller = {});''')
     edit(header, "        State state = State::Advertised;\n        QJsonObject advertisement;",
-         '''        State state = State::Advertised;
-        SummonIdentity publisher, claimant;
-        RelayAuth::SummonRoom claimantRoom;
-        quint64 placementRecord = 0;
-        qint64 reservationExpires = 0;
-        bool publisherRemoved = false;
-        QJsonObject advertisement;''')
-    edit(header, "    void PurgeExpiredLocked(qint64 nowMs);", '''    void PurgeExpiredLocked(qint64 nowMs, QList<quint64>& cancelled);
-    bool Expired(const Record& record, qint64 nowMs) const;
-    void ClearReservation(Record& record, QList<quint64>& cancelled);
-    void FlushRelay(const QList<quint64>& cancelled,
-                    const RelayAuth::PlacementRequest& placement = {});
-    RelayAuth::PlacementRequest PlacementFor(Record& record, qint64 ttlMs);''')
-    edit(header, "    QMutex m_mutex;", '''    std::function<void(const RelayAuth::PlacementRequest&)> m_relayPlacement;
+         "        State state = State::Advertised;\n        SummonIdentity publisher, claimant;\n        QJsonObject advertisement;")
+    edit(header, "    QMutex m_mutex;", '''    std::function<void(const SummonIdentity&, const SummonIdentity&, const QByteArray&)> m_relayPlacement;
     std::function<void(quint64)> m_relayCancelPlacement;
-    quint64 m_nextPlacementRecord = 0;
     QMutex m_mutex;''')
     edit(cpp, "      m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop) {}",
          "      m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop),\n"
@@ -237,19 +221,11 @@ class SummonBroker {''')
             if (old->advertisement.value(QStringLiteral("SessionId")) == body.value(QStringLiteral("SessionId")) &&
                 old->publisher.user && old->publisher.user != caller.user)
                 return {State::Advertised, {}, {}, false};
-        if (it == m_records.end()) {
-            if (m_records.size() >= 1024) return {State::Advertised, {}, {}, false};
-            for (auto old = m_records.begin(); old != m_records.end(); ++old) {
-                if (old->publisher.user != caller.user ||
-                    old->state == State::Consumed) continue;
-                cancelled.append(old->placementRecord);
-                old->state = State::Consumed;
-                old->reservationExpires = 0;
-            }
-        }
+        if (it == m_records.end() && m_records.size() >= 1024) return {State::Advertised, {}, {}, false};
+        if (it == m_records.end() && m_relayCancelPlacement) m_relayCancelPlacement(caller.user);
         if (it != m_records.end() && (it->publisher.tokenHash != caller.tokenHash ||
             it->advertisement.value(QStringLiteral("CharaId")) != body.value(QStringLiteral("CharaId")))) {
-            cancelled.append(it->placementRecord);
+            if (m_relayCancelPlacement) m_relayCancelPlacement(caller.user);
             it->state = State::Consumed;
         }
     }
@@ -257,218 +233,50 @@ class SummonBroker {''')
     edit(cpp, "        record.state = State::Advertised;\n        record.advertisement = body;",
          "        record.state = State::Advertised;\n        record.publisher = caller;\n        record.advertisement = body;")
     edit(cpp, "    it->advertisement = body;\n    it->rawAdvertisement = rawBody;",
-         "    if (caller.user) it->publisher = caller;\n    it->publisherRemoved = false;\n    it->advertisement = body;\n    it->rawAdvertisement = rawBody;")
-    edit(cpp, '''        it->state = State::Advertised;
-        it->preparationRequester = -1;''', '''        it->state = State::Advertised;
-        it->preparationRequester = -1; // Private reservation remains until Claim or its original deadline.''')
+         "    if (caller.user) it->publisher = caller;\n    it->advertisement = body;\n    it->rawAdvertisement = rawBody;")
     edit(cpp, '''QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                                        const QByteArray& hostPlacement) {''', '''QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
-                                       const QByteArray& hostPlacement, const SummonIdentity& caller,
-                                       const RelayAuth::SummonRoom& room) {
-    if (caller.user) return SearchPrivate(request, nowMs, hostPlacement, caller, room);''')
-    edit(header, "    void PurgeExpiredLocked", '''    QList<QByteArray> SearchPrivate(const QJsonObject& request, qint64 nowMs,
-                                    const QByteArray& hostPlacement, const SummonIdentity& caller,
-                                    const RelayAuth::SummonRoom& room);
-    void PurgeExpiredLocked''')
+                                       const QByteArray& hostPlacement, const SummonIdentity& caller) {''')
+    edit(cpp, '''    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+        if (it->state == State::Advertised &&''', '''    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+        if (caller.user && (!it->publisher.user || it->publisher.user == caller.user ||
+            (it->claimant.user && it->claimant.user != caller.user))) continue;
+        if (caller.user && it->state == State::Preparing && it->claimant.user == caller.user &&
+            MatchesSearch(request, it->advertisement, anywhereSummons) && !hostPlacement.isEmpty()) {
+            if (m_relayPlacement) m_relayPlacement(caller,it->publisher,hostPlacement);
+        }
+        if (it->state == State::Advertised &&''')
+    edit(cpp, "                it->preparationRequester = requester;\n                it->updatedAtMs = nowMs;", '''                it->preparationRequester = requester;
+                it->claimant = caller;
+                if (caller.user && m_relayPlacement) m_relayPlacement(caller,it->publisher,hostPlacement);
+                it->updatedAtMs = nowMs;''')
     edit(cpp, '''SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
                                               const QByteArray& rawRequest, qint64 nowMs,
                                               const QByteArray& hostPlacement) {''', '''SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
                                               const QByteArray& rawRequest, qint64 nowMs,
-                                              const QByteArray& hostPlacement, const SummonIdentity& caller,
-                                              const RelayAuth::SummonRoom& room) {
-    RelayAuth::PlacementRequest placement;''')
-    edit(cpp, "    result.targetUserId = Integer(", '''    if (target->publisherRemoved)
-        return {ClaimStatus::Conflict, result.targetSessionId, -1};
-    if (caller.user && (!room.room || !target->publisher.user || target->publisher.user == caller.user ||
-        (target->claimant.user && (target->claimant.user != caller.user ||
-          target->claimant.tokenHash != caller.tokenHash ||
-          (target->reservationExpires && !(target->claimantRoom == room)))) ||
+                                              const QByteArray& hostPlacement, const SummonIdentity& caller) {''')
+    edit(cpp, "    ClaimResult result;\n    result.targetSessionId", '''    if (caller.user && (!target->publisher.user || target->publisher.user == caller.user ||
+        (target->claimant.user && target->claimant.user != caller.user) ||
         (targetUser.has_value() && Integer(target->advertisement,QStringLiteral("UserId"),-1) != *targetUser) ||
         (!targetChara.isUndefined() && !targetChara.isNull() && target->advertisement.value(QStringLiteral("CharaId")) != targetChara)))
-        return {ClaimStatus::Conflict, result.targetSessionId, -1};
-    result.targetUserId = Integer(''')
-    edit(cpp, "    if (target->state == State::Claimed || target->state == State::Delivered) {", '''    const bool activeClaim = target->state == State::Claimed || target->state == State::Delivered;
-    const bool rebind = caller.user && activeClaim && !(target->claimantRoom == room);
-    if (activeClaim && !rebind && target->claim != request) {
-        result.status = ClaimStatus::Conflict;
-        return result;
-    }
-    // Claim is authoritative only after the target and its ownership are validated.
-    if (caller.user) {
-        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
-            if (it != target && it->reservationExpires && it->claimant.user == caller.user &&
-                it->claimant.tokenHash == caller.tokenHash)
-                ClearReservation(*it, cancelled);
-        }
-    }
-    if (activeClaim && !rebind) {''')
-    edit(cpp, '''            target->claim == request ? ClaimStatus::AlreadyClaimed : ClaimStatus::Conflict;
-        return result;''', '''            ClaimStatus::AlreadyClaimed;
-        if (caller.user && !hostPlacement.isEmpty()) {
-            target->hostPlacement = hostPlacement;
-            placement = PlacementFor(*target, std::min(RelayAuth::PlacementTtlMs,
-                m_seamlessTtlMs - (nowMs - target->updatedAtMs) + 1));
-        }
-        return result;''')
-    edit(cpp, "    target->state = State::Claimed;\n    target->claim = request;", '''    target->state = State::Claimed;
-    if (rebind) {
-        cancelled.append(target->placementRecord);
-        target->placementRecord = 0;
-    }
-    target->claimant = caller;
-    target->claimantRoom = room;
-    target->reservationExpires = 0;
-    target->claim = request;''')
+        return {ClaimStatus::Conflict, {}, -1};
+    ClaimResult result;
+    result.targetSessionId''')
+    edit(cpp, "    target->state = State::Claimed;\n    target->claim = request;", "    target->state = State::Claimed;\n    target->claimant = caller;\n    target->claim = request;")
     edit(cpp, "    result.status = ClaimStatus::Claimed;\n    return result;", '''    result.status = ClaimStatus::Claimed;
-    if (caller.user && !target->hostPlacement.isEmpty())
-        placement = PlacementFor(*target, std::min(RelayAuth::PlacementTtlMs, m_seamlessTtlMs));
-    else if (caller.user)
-        cancelled.append(target->placementRecord);
+    if (caller.user && m_relayPlacement && !target->hostPlacement.isEmpty())
+        m_relayPlacement(caller,target->publisher,target->hostPlacement);
     return result;''')
     edit(cpp, "SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qint64 nowMs) {",
          "SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qint64 nowMs, const SummonIdentity& caller) {")
     edit(cpp, "        if (sessionMatches && userMatches && it->state != State::Consumed) {", '''        if (sessionMatches && userMatches && it->state != State::Consumed) {
             if (caller.user && it->publisher.user != caller.user) return {0,0,{},false};''')
-    edit(cpp, "            if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {",
-         """            if (m_seamlessCoop && !forceConsume && (IsSeamlessActiveState(it->state) || it->reservationExpires)) {
-                if (it->reservationExpires) it->publisherRemoved = true;""")
-    edit(cpp, "            it->state = State::Consumed;\n            ++result.consumed;", '''            // A cancelled prejoin reservation must neither occupy the owner's
-            // slot nor return to Advertised when its old deadline expires.
-            if (caller.user) ClearReservation(*it, cancelled);
-            it->state = State::Consumed;
+    edit(cpp, "            it->state = State::Consumed;\n            ++result.consumed;", '''            it->state = State::Consumed;
+            if (it->publisher.user && m_relayCancelPlacement) m_relayCancelPlacement(it->publisher.user);
             ++result.consumed;''')
-    # The scope guard runs after QMutexLocker destruction, including early returns.
-    for anchor, outgoing in (
-        ("const QByteArray& rawBody, qint64 nowMs, const SummonIdentity& caller) {", "{}"),
-        ("    RelayAuth::PlacementRequest placement;", "placement"),
-        ("SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qint64 nowMs, const SummonIdentity& caller) {", "{}"),
-        ("qint64 nowMs) {\n    QMutexLocker lock(&m_mutex);\n    PurgeExpiredLocked(nowMs);\n    const auto it = m_records.constFind", None),
-        ("int SummonBroker::Size(qint64 nowMs) {", "{}"),
-        ("    if (caller.user) return SearchPrivate(request, nowMs, hostPlacement, caller, room);", "{}"),
-    ):
-        guard = f"\n    QList<quint64> cancelled;\n    const auto flush = qScopeGuard([&] {{ FlushRelay(cancelled, {outgoing or '{}'}); }});"
-        if outgoing is None:
-            edit(cpp, anchor, anchor.replace(" {\n", " {" + guard + "\n", 1)
-                 .replace("PurgeExpiredLocked(nowMs);", "PurgeExpiredLocked(nowMs, cancelled);"))
-        else:
-            before = anchor + "\n    QMutexLocker lock(&m_mutex);\n    PurgeExpiredLocked(nowMs);"
-            edit(cpp, before, anchor + guard + "\n    QMutexLocker lock(&m_mutex);\n    PurgeExpiredLocked(nowMs, cancelled);")
-    edit(cpp, '''void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
-    for (auto it = m_records.begin(); it != m_records.end();) {
-        const qint64 ttl =
-            m_seamlessCoop && IsSeamlessActiveState(it->state) ? m_seamlessTtlMs : m_ttlMs;
-        if (nowMs - it->updatedAtMs > ttl) {
-            it = m_records.erase(it);''', '''bool SummonBroker::Expired(const Record& record, qint64 nowMs) const {
-    const qint64 ttl = m_seamlessCoop && IsSeamlessActiveState(record.state) &&
-        (!record.reservationExpires || nowMs < record.reservationExpires) ? m_seamlessTtlMs : m_ttlMs;
-    return nowMs - record.updatedAtMs > ttl;
-}
-
-void SummonBroker::ClearReservation(Record& record, QList<quint64>& cancelled) {
-    cancelled.append(record.placementRecord);
-    record.placementRecord = 0;
-    record.state = record.publisherRemoved ? State::Consumed : State::Advertised;
-    record.claimant = {};
-    record.claimantRoom = {};
-    record.reservationExpires = 0;
-    record.hostPlacement.clear();
-    record.preparationRequester = -1;
-}
-
-void SummonBroker::FlushRelay(const QList<quint64>& cancelled, const RelayAuth::PlacementRequest& placement) {
-    if (m_relayCancelPlacement)
-        for (const quint64 record : cancelled)
-            if (record) m_relayCancelPlacement(record);
-    if (placement.record && m_relayPlacement) m_relayPlacement(placement);
-}
-
-RelayAuth::PlacementRequest SummonBroker::PlacementFor(Record& record, qint64 ttlMs) {
-    if (!record.placementRecord) record.placementRecord = ++m_nextPlacementRecord;
-    return {record.placementRecord, record.claimant.user, record.publisher.user, record.claimantRoom,
-            record.claimant.tokenHash, record.publisher.tokenHash, record.hostPlacement, ttlMs};
-}
-
-void SummonBroker::PurgeExpiredLocked(qint64 nowMs, QList<quint64>& cancelled) {
-    for (auto it = m_records.begin(); it != m_records.end();) {
-        if (it->reservationExpires && nowMs >= it->reservationExpires)
-            ClearReservation(*it, cancelled);
-        if (Expired(*it, nowMs)) {
-            cancelled.append(it->placementRecord);
+    edit(cpp, "        if (nowMs - it->updatedAtMs > ttl) {\n            it = m_records.erase(it);", '''        if (nowMs - it->updatedAtMs > ttl) {
+            if (it->publisher.user && m_relayCancelPlacement) m_relayCancelPlacement(it->publisher.user);
             it = m_records.erase(it);''')
-    edit(cpp, "SummonBroker::ClaimResult SummonBroker::Claim(", '''QList<QByteArray> SummonBroker::SearchPrivate(const QJsonObject& request, qint64 nowMs,
-                                              const QByteArray& hostPlacement, const SummonIdentity& caller,
-                                              const RelayAuth::SummonRoom& room) {
-    RelayAuth::PlacementRequest placement;
-    QList<quint64> cancelled;
-    const auto flush = qScopeGuard([&] { FlushRelay(cancelled, placement); });
-    QMutexLocker lock(&m_mutex);
-    // The native first search happens before CreateRoom. Even cleanup is read-only on that path.
-    if (room.room) PurgeExpiredLocked(nowMs, cancelled);
-    const bool anywhere = m_seamlessCoop && m_seamlessAnywhereSummons;
-    const auto hostMap = HostPlacementMap(hostPlacement);
-    const auto maxCount = std::max<qint64>(0, Integer(request, QStringLiteral("GetMaxCount"), 20));
-    if (!maxCount) return {};
-
-    QList<QString> ownedClaims, candidates;
-    QString reservation;
-    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
-        if (room.room && it->reservationExpires && it->claimant.user == caller.user) {
-            if (!(it->claimantRoom == room) || it->claimant.tokenHash != caller.tokenHash) {
-                ClearReservation(*it, cancelled);
-            } else {
-                reservation = it.key();
-            }
-        }
-        if (!it->publisher.user || it->publisher.user == caller.user || Expired(*it, nowMs) ||
-            !MatchesSearch(request, it->advertisement, anywhere)) continue;
-        if (room.room && (it->state == State::Claimed || it->state == State::Delivered) &&
-            it->claimant.user == caller.user && it->claimant.tokenHash == caller.tokenHash) {
-            ownedClaims.append(it.key());
-        } else if (it->state == State::Advertised || (it->state == State::Preparing && it->reservationExpires)) {
-            if (!it->reservationExpires || nowMs >= it->reservationExpires) candidates.append(it.key());
-        }
-    }
-    const auto newer = [&](const QString& a, const QString& b) {
-        const auto& left = *m_records.constFind(a);
-        const auto& right = *m_records.constFind(b);
-        return left.updatedAtMs == right.updatedAtMs ? a < b : left.updatedAtMs > right.updatedAtMs;
-    };
-    std::sort(ownedClaims.begin(), ownedClaims.end(), newer);
-    std::sort(candidates.begin(), candidates.end(), newer);
-
-    QList<QByteArray> results;
-    for (const auto& key : ownedClaims) {
-        const auto& sign = *m_records.constFind(key);
-        results.append(PrepareAdvertisementForSearch(sign.rawAdvertisement, sign.advertisement, request, anywhere));
-        if (results.size() >= maxCount) return results;
-    }
-    if (!reservation.isEmpty()) {
-        const auto& sign = *m_records.constFind(reservation);
-        if (!sign.publisherRemoved && sign.state == State::Advertised &&
-            MatchesSearch(request, sign.advertisement, anywhere))
-            results.append(PrepareAdvertisementForSearch(sign.rawAdvertisement, sign.advertisement, request, anywhere));
-        return results;
-    }
-    for (const auto& key : candidates) {
-        auto& sign = *m_records.find(key);
-        if (room.room && anywhere && hostMap && results.isEmpty() && sign.state == State::Advertised &&
-            Integer(sign.advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
-            sign.state = State::Preparing;
-            sign.claimant = caller;
-            sign.claimantRoom = room;
-            const auto ttl = std::min(RelayAuth::PlacementTtlMs, m_seamlessTtlMs);
-            sign.reservationExpires = nowMs + ttl;
-            sign.hostPlacement = hostPlacement;
-            placement = PlacementFor(sign, ttl);
-            break;
-        }
-        results.append(PrepareAdvertisementForSearch(sign.rawAdvertisement, sign.advertisement, request, anywhere));
-        if (results.size() >= maxCount) break;
-    }
-    return results;
-}
-
-SummonBroker::ClaimResult SummonBroker::Claim(''')
 
     edit("src/webapi_routes_bloodborne.h", "class QHttpServer;", "class QHttpServer;\nclass Database;\nstruct SharedState;")
     edit("src/webapi_routes_bloodborne.h", "void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop);",
@@ -483,11 +291,12 @@ SummonBroker::ClaimResult SummonBroker::Claim(''')
     edit(routes, "void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {",
          "void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, Database& db, SharedState& shared) {")
     edit(routes, "    options.seamlessCoop = seamlessCoop;", '''    options.seamlessCoop = seamlessCoop;
-    options.relayPlacement = [&shared](const RelayAuth::PlacementRequest& placement) {
-        if (shared.relayPlacement) shared.relayPlacement(placement);
+    options.relayPlacement = [&shared](const Bloodborne::SummonIdentity& host,
+                                      const Bloodborne::SummonIdentity& guest, const QByteArray& text) {
+        if (shared.relayPlacement) shared.relayPlacement(host.user,host.tokenHash,guest.user,guest.tokenHash,text);
     };
-    options.relayCancelPlacement = [&shared](quint64 record) {
-        if (shared.relayCancelPlacement) shared.relayCancelPlacement(record);
+    options.relayCancelPlacement = [&shared](quint64 user) {
+        if (shared.relayCancelPlacement) shared.relayCancelPlacement(user);
     };''')
     # All four endpoint lambdas have the same capture. Use one exact whole-file
     # transformation via route-specific Trace anchors so duplicate anchors fail.
@@ -511,50 +320,30 @@ SummonBroker::ClaimResult SummonBroker::Claim(''')
     edit(routes, '''                   const QList<QByteArray> signs =
                        broker->Search(*body, QDateTime::currentMSecsSinceEpoch(),
                                       request.value(HostPlacementHeader));''', '''                   QByteArray placement = request.value(HostPlacementHeader);
-                   RelayAuth::SummonAdmission admission;
                    if (caller.user) {
-                       using Access = RelayAuth::SummonAccess;
-                       if (shared.relaySummonAdmission) admission = shared.relaySummonAdmission(caller.user);
-                       if (admission.access == Access::Busy) {
-                           qInfo() << "Bloodborne summon: search matching busy for account" << caller.user;
-                           return SummonListResponse({});
-                       }
-                       if (admission.access == Access::Denied)
+                       using Access = SharedState::SummonSearchAccess;
+                       const auto access = shared.relaySearchAccess ? shared.relaySearchAccess(caller.user) : Access::Denied;
+                       if (access == Access::Denied)
                            return SummonListResponse({});
                        if (!placement.isEmpty() && !RelayAuth::ValidPlacement(placement))
                            return InvalidRequest(QStringLiteral("Invalid host placement"));
                        // Native Bloodborne selects a candidate before it creates its room.
                        // Only an existing owner can reserve a sign or queue placement in Search.
-                       if (admission.access == Access::NoRoom)
+                       if (access == Access::NoRoom)
                            placement.clear();
                    }
                    const QList<QByteArray> signs =
-                       broker->Search(*body, QDateTime::currentMSecsSinceEpoch(), placement, caller, admission.room);''')
+                       broker->Search(*body, QDateTime::currentMSecsSinceEpoch(), placement, caller);''')
     edit(routes, "const auto result = broker->Consume(*body, QDateTime::currentMSecsSinceEpoch());", '''const auto result = broker->Consume(*body, QDateTime::currentMSecsSinceEpoch(),caller);
                    if (!result.authorized) return QHttpServerResponse(QHttpServerResponse::StatusCode::Forbidden);''')
-    edit(routes, "                   const auto result =\n                       broker->Claim", '''                   RelayAuth::SummonAdmission admission;
-                   if (caller.user) {
-                       if (shared.relaySummonAdmission) admission = shared.relaySummonAdmission(caller.user);
-                       if (admission.access == RelayAuth::SummonAccess::Busy) {
-                           qInfo() << "Bloodborne summon: claim matching busy for account" << caller.user;
-                           return QHttpServerResponse(QHttpServerResponse::StatusCode::ServiceUnavailable);
-                       }
-                       if (admission.access != RelayAuth::SummonAccess::Owner) {
-                           qInfo() << "Bloodborne summon: claim requires current room owner, account" << caller.user;
-                           return QHttpServerResponse(QHttpServerResponse::StatusCode::Forbidden);
-                       }
-                   }
+    edit(routes, "                   const auto result =\n                       broker->Claim", '''                   if (caller.user && (!shared.relayHost || !shared.relayHost(caller.user)))
+                       return QHttpServerResponse(QHttpServerResponse::StatusCode::Forbidden);
                    if (caller.user && !request.value(HostPlacementHeader).isEmpty() &&
                        !RelayAuth::ValidPlacement(request.value(HostPlacementHeader)))
                        return InvalidRequest(QStringLiteral("Invalid host placement"));
                    const auto result =
                        broker->Claim''')
-    edit(routes, "\n                                     request.value(HostPlacementHeader));", "\n                                     request.value(HostPlacementHeader),caller,admission.room);")
-
-    edit(routes, '''                       qWarning() << "Bloodborne summon: conflicting claim for session"
-                                  << result.targetSessionId;''',
-         '''                       qWarning().nospace() << "relay placement dropped reason=claim-conflict targetSessionId="
-                                            << result.targetSessionId << " caller=" << caller.user;''')
+    edit(routes, "\n                                     request.value(HostPlacementHeader));", "\n                                     request.value(HostPlacementHeader),caller);")
 
 
 if __name__ == "__main__":
