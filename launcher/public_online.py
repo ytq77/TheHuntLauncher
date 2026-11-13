@@ -470,6 +470,10 @@ def hybrid_info(public_raw, private_raw, bridge_url):
     options = {e.tag: e.text for e in private if e.tag.startswith(('Summon', 'Playlog', 'PlayLog'))}
     for entry in public:
         if entry.tag in options: entry.text = options[entry.tag]
+    # Public metadata may omit these policies entirely; omission restores vanilla timings.
+    present = {entry.tag for entry in public}
+    for tag, value in options.items():
+        if tag not in present: ET.SubElement(public, tag).text = value
     return base64.b64encode(''.join(ET.tostring(e, encoding='unicode') for e in public).encode('utf-8'))
 
 
