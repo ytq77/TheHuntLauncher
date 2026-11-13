@@ -1,9 +1,4 @@
-* text=auto
-*.py text eol=lf
-*.sh text eol=lf
-*.yml text eol=lf
-*.ps1 text eol=crlf
-*.cmd text eol=crlf
+* -text
 *.png binary
 *.ico binary
-assets/fonts/*.txt text eol=lf whitespace=-blank-at-eol
+assets/fonts/*.txt whitespace=-blank-at-eol
