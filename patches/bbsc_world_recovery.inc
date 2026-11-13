@@ -95,6 +95,25 @@ bool BbscRecoverySetMode(u32 mode) {
     return ok;
 }
 
+void BbscRecoverySealQuit(u64 sequence) {
+#ifdef _WIN32
+    // Keep the mapping open once resolved so title reload can clear the seal
+    // without any filesystem operation. It belongs to this run's live worker.
+    static auto* view = []() -> u64* {
+        const char* token = std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN");
+        if (!token || std::strlen(token) != 32) return nullptr;
+        const auto name = fmt::format("Local\\TheHuntRecovery-{}", token);
+        constexpr unsigned long write_access = 0x0002; // FILE_MAP_WRITE
+        const auto mapping = OpenFileMappingA(write_access, 0, name.c_str());
+        if (!mapping) return nullptr;
+        const auto address = MapViewOfFile(mapping, write_access, 0, 0, sizeof(u64));
+        CloseHandle(mapping);
+        return static_cast<u64*>(address);
+    }();
+    if (view) std::atomic_ref<u64>(*view).store(sequence, std::memory_order_release);
+#endif
+}
+
 bool BbscRecordWorldRecovery(u32 mode) {
     if (!BbscWorldRecoveryEnabled() || bbsc_own_world.empty() ||
         !bbsc_own_world_slot || bbsc_own_world_slot->user != "save") return false;
@@ -218,16 +237,18 @@ void BbscWorldRecoveryQuit(bool confirmed) {
     if (confirmed && guest && bbsc_dream_own.held)
         RestoreBbscOwnDreamState("confirmed quit: retain personal Dream changes");
     WriteBbscOwnWorldFile();
-    if (confirmed && guest && BbscRecordWorldRecovery(BbscRecoveryQuit))
+    if (confirmed && guest && BbscRecordWorldRecovery(BbscRecoveryQuit)) {
+        BbscRecoverySealQuit(bbsc_recovery_sequence);
         LOG_INFO(Debug, "BBSC own world: confirmed guest quit recorded; launcher finalizes after process exit");
-    else if (bbsc_recovery_mode != BbscRecoveryQuit)
+    } else if (bbsc_recovery_mode != BbscRecoveryQuit)
         BbscRecordWorldRecovery(BbscRecoveryBlocked);
     bbsc_recovery_title_exit = true;
 }
 
 void BbscWorldRecoveryLoadedAfterTitle() {
-    if (BbscWorldRecoveryEnabled() && bbsc_recovery_title_exit && !bbsc_own_world.empty()) {
-        BbscRecoverySetMode(BbscRecoveryBlocked);
-        LOG_WARNING(Debug, "BBSC own world: title was reloaded without closing; old state not replayed");
+    if (BbscWorldRecoveryEnabled() && bbsc_recovery_title_exit) {
+        BbscRecoverySealQuit(0);
+        if (!bbsc_own_world.empty() && !BbscRecoverySetMode(BbscRecoveryBlocked))
+            LOG_WARNING(Debug, "BBSC own world: title reloaded; quit seal cleared, request update failed");
     }
 }

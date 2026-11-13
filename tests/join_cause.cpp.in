@@ -1,0 +1,72 @@
+#include <windows.h>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cerrno>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <iostream>
+#include <mutex>
+#include <span>
+#include <string>
+#include <thread>
+#include <vector>
+using u64=uint64_t;using u32=uint32_t;using u8=uint8_t;using s32=int32_t;
+#define PS4_SYSV_ABI __attribute__((sysv_abi))
+struct GuestRegisterSnapshot {u64 rdi{},rsi{},rsp{},canary=0x123456789abcdefULL;};
+std::atomic<unsigned> reads{},logs{}; bool fail_copy=false,short_copy=false,marker=true;int hook_count=0,fail_hook=-1;
+BOOL TestRead(HANDLE h,LPCVOID a,LPVOID out,SIZE_T n,SIZE_T* copied){++reads;errno=EIO;SetLastError(876);if(fail_copy){*copied=0;return FALSE;}auto ok=::ReadProcessMemory(h,a,out,n,copied);if(short_copy&&*copied)*copied-=1;return ok;}
+#define ReadProcessMemory TestRead
+template<class... T>void Log(const char*,T...){++logs;errno=EBADF;SetLastError(999);}
+#define LOG_INFO(cat,...) Log(__VA_ARGS__)
+#define LOG_WARNING(cat,...) Log(__VA_ARGS__)
+namespace BbscJ4Diag {
+std::atomic<bool> enabled{false};std::atomic<unsigned> activeWindows{0};std::atomic<void(*)(u64)> joinCauseClose{nullptr};
+std::mutex mutex;u64 clock=1000;u64 Now(){return clock;}
+struct Window{u64 id,begin,end;s32 context,connection;};std::vector<Window>windows;
+void InstallSlots(){}bool EnableFile(const std::filesystem::path&){return marker;}
+}
+#include "bbsc_join_cause_adapter.inc"
+u64 image_base{};namespace MemoryPatcher {u64 g_eboot_image_size=0x05600000;}
+bool InstallGuestCodeHook(void*,std::span<const u8> bytes,u64 tag,void PS4_SYSV_ABI (*)(u64,const GuestRegisterSnapshot*) noexcept){assert(bytes.size()==8&&tag==u64(hook_count));return hook_count++!=fail_hook;}
+#include "bbsc_join_cause.inc"
+template<class T,size_t N>void put(std::array<u8,N>& a,size_t off,T x){assert(off+sizeof x<=N);memcpy(a.data()+off,&x,sizeof x);}
+void window(u64 id=1){BbscJ4Diag::windows={{id,1000,9000,7,8}};BbscJ4Diag::clock=1100;BbscJ4Diag::activeWindows=1;BbscJ4Diag::enabled=true;}
+int main(int argc,char**argv){
+#if defined(BBSC_J4_DIAG_DISABLED)
+assert(!BbscMod::J4JoinCauseEnabled(false)&&!BbscMod::J4JoinCauseEnabled(true));
+u64 id{},begin{},end{},now{};assert(!BbscMod::J4JoinCauseWindow(7,8,id,begin,end,now));InstallBbscJoinCauseHooks();assert(!hook_count&&!reads);std::cout<<"compile-time disabled PASS\n";return 0;
+#endif
+std::string mode=argc>1?argv[1]:"normal";
+std::vector<u8> image(MemoryPatcher::g_eboot_image_size);image_base=reinterpret_cast<u64>(image.data());
+for(auto&p:BbscJoinCausePins)memcpy(image.data()+p.rva,p.bytes.data(),p.bytes.size());
+for(auto&p:BbscJoinCausePolicyPins)memcpy(image.data()+p.rva,p.bytes.data(),p.length);
+std::array<u8,0xC58>root{};std::array<u8,0x194>timer{};u64 rootptr=(u64)root.data();memcpy(image.data()+0x553B120,&rootptr,8);put(root,0x9E8,u32(2));put(root,0xC50,(u64)timer.data());put(timer,0x190,30.0f);
+std::array<u8,0x128>obj{};put(obj,0xA8,s32(7));put(obj,0x10,s32(8));put(obj,0xB4,u32(11));put(obj,0x0C,u32(3));put(obj,0x68,u64(0x80010001));
+u64 caller=image_base+0xcda123;GuestRegisterSnapshot reg{(u64)obj.data(),123,(u64)&caller};auto original=reg;
+if(mode=="disabled"){marker=false;InstallBbscJoinCauseHooks();assert(!hook_count&&!reads&&!bbsc_join_cause_ready);std::cout<<"disabled PASS\n";return 0;}
+if(mode=="pin"){image[BbscJoinCausePins[3].rva]^=1;InstallBbscJoinCauseHooks();assert(!hook_count&&!bbsc_join_cause_ready);std::cout<<"pin PASS\n";return 0;}
+if(mode=="unreadable"){fail_copy=true;InstallBbscJoinCauseHooks();assert(!hook_count&&!bbsc_join_cause_ready);std::cout<<"unreadable PASS\n";return 0;}
+if(mode=="partial"){fail_hook=2;InstallBbscJoinCauseHooks();assert(hook_count==3&&!bbsc_join_cause_ready);window();reads=0;BbscJoinCauseHook(0,&reg);assert(!reads);std::cout<<"partial forwarding gate PASS\n";return 0;}
+InstallBbscJoinCauseHooks();assert(hook_count==5&&bbsc_join_cause_ready);assert(!BbscJ4Diag::enabled); // install before J4 Start
+reads=0;BbscJoinCauseHook(0,&reg);assert(!reads);window();
+SetLastError(12345);errno=EDOM;BbscJoinCauseHook(0,&reg);assert(GetLastError()==12345&&errno==EDOM);assert(!memcmp(&reg,&original,sizeof reg));assert(bbsc_join_cause_windows[0].count==1);assert(ReadBbscJoinCausePolicy().create_ms==30000);
+BbscJoinCauseHook(0,&reg);assert(bbsc_join_cause_windows[0].count==1);put(obj,0xB4,u32(13));BbscJoinCauseHook(0,&reg);put(obj,0xB4,u32(11));BbscJoinCauseHook(0,&reg);assert(bbsc_join_cause_windows[0].count==3);
+auto activeStart=std::chrono::steady_clock::now();for(int i=0;i<100000;i++)BbscJoinCauseHook(0,&reg);
+auto activeNs=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-activeStart).count();std::cout<<"active duplicate callback ns="<<double(activeNs)/100000<<"\n";
+const auto count=bbsc_join_cause_windows[0].count;fail_copy=true;BbscJoinCauseHook(0,&reg);fail_copy=false;short_copy=true;BbscJoinCauseHook(0,&reg);short_copy=false;reg.rdi=1;BbscJoinCauseHook(0,&reg);reg=original;assert(bbsc_join_cause_windows[0].count==count);
+put(obj,0xA8,s32(77));BbscJoinCauseHook(0,&reg);put(obj,0xA8,s32(7));assert(bbsc_join_cause_windows[0].count==count);
+BbscJ4Diag::clock=9000;reads=0;BbscJoinCauseHook(0,&reg);assert(!reads);BbscJ4Diag::clock=1100;
+BbscJ4Diag::windows.push_back({2,1000,9000,9,10});BbscJoinCauseHook(4,&reg);assert(!bbsc_join_cause_windows[0].join_seen);BbscJ4Diag::windows.pop_back();
+BbscJoinCauseHook(4,&reg);assert(bbsc_join_cause_windows[0].join_seen==1);
+std::array<u8,0x28>event{};put(event,0x20,u64(99));reg.rsi=(u64)event.data();BbscJoinCauseHook(3,&reg);auto n=bbsc_join_cause_windows[0].count;put(event,0x20,u64(8));put(event,0x04,u32(7));put(event,0x10,u32(42));BbscJoinCauseHook(3,&reg);assert(bbsc_join_cause_windows[0].count==n+1);reg=original;
+for(unsigned i=0;i<100;i++){reg.rsi=i;BbscJoinCauseHook(1,&reg);}assert(bbsc_join_cause_windows[0].count==32&&bbsc_join_cause_windows[0].suppressed>0);
+CloseBbscJoinCauseWindow(1);auto oldlogs=logs.load();CloseBbscJoinCauseWindow(1);CloseBbscJoinCauseWindow(0);assert(logs==oldlogs&&bbsc_join_cause_used==1);
+window(2);std::vector<std::thread>threads;for(int i=0;i<8;i++)threads.emplace_back([&,i]{auto r=original;for(int j=0;j<100;j++){r.rsi=i*100+j;BbscJoinCauseHook(1,&r);}});for(auto&t:threads)t.join();assert(bbsc_join_cause_windows[1].count<=32);CloseBbscJoinCauseWindow(2);
+for(u64 i=3;i<=8;i++){window(i);BbscJoinCauseHook(0,&original);CloseBbscJoinCauseWindow(i);}window(9);reads=0;BbscJoinCauseHook(0,&original);assert(!reads&&bbsc_join_cause_used==8);
+put(timer,0x190,std::numeric_limits<float>::infinity());assert(ReadBbscJoinCausePolicy().valid==1);
+BbscJ4Diag::activeWindows=0;reads=0;auto start=std::chrono::steady_clock::now();for(int i=0;i<1000000;i++)BbscJoinCauseHook(0,&original);auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();assert(!reads);std::cout<<"actual helper/adapter PASS; disabled/no-window callback ns="<<double(ns)/1000000<<"; fixture stubs hook allocator/log sink only; trampoline reviewed separately\n";
+}

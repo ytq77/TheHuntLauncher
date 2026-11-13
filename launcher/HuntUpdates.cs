@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+﻿// SPDX-License-Identifier: GPL-2.0-or-later
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -25,6 +25,7 @@ public sealed class HuntRelease
 
 public static class HuntUpdates
 {
+    private const string ReleasePage = "https://github.com/ytq77/TheHuntLauncher/releases";
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
     private static readonly Regex VersionPattern = new Regex(@"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?$");
 
@@ -85,7 +86,7 @@ public static class HuntUpdates
             var assets = release["assets"] as object[];
             if (assets == null) continue;
             string name = AssetName(repository, version);
-            string path = "https://github.com/ytq77/TheHuntLauncher/releases/";
+            string path = ReleasePage + "/";
             string download = path + "download/" + Uri.EscapeDataString(tag) + "/" + name;
             foreach (var value in assets) {
                 var asset = value as Dictionary<string, object>;
@@ -127,6 +128,9 @@ public static class HuntUpdates
         using (var response = request.GetResponse())
         using (var stream = response.GetResponseStream())
         using (var memory = new MemoryStream()) {
+            if (request.RequestUri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase) &&
+                (response.ResponseUri.Scheme != "https" || !response.ResponseUri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("GitHub 版本接口重定向到了其他来源，已拒绝自动更新校验。");
             var buffer = new byte[8192]; int count;
             while ((count = stream.Read(buffer, 0, buffer.Length)) > 0) {
                 if (memory.Length + count > 2097152) throw new InvalidDataException("版本响应过大，已停止读取。");
@@ -181,47 +185,86 @@ public static class HuntUpdates
         owner.ContentRendered += rendered;
     }
 
+    public static bool IsEmbeddedServer(string root) {
+        var directory = new DirectoryInfo(Path.GetFullPath(root));
+        return directory.Name.Equals("server", StringComparison.OrdinalIgnoreCase) && directory.Parent != null &&
+            (File.Exists(Path.Combine(directory.Parent.FullName, "TheHuntLauncher.exe")) ||
+             File.Exists(Path.Combine(directory.Parent.FullName, ".update-transaction.json")));
+    }
+
     public static void EnsureNotUpdating(string root) {
+        if (IsEmbeddedServer(root)) EnsureNotUpdating(Directory.GetParent(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)).FullName);
+        CheckUpdateState(root);
+        if (File.Exists(Path.Combine(root, "TheHuntLauncher.exe"))) CheckUpdateState(Path.Combine(root, "server"));
+    }
+
+    private static void CheckUpdateState(string root) {
         string path = Path.Combine(root, ".update.lock");
-        if (!File.Exists(path)) return;
-        try { using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None)) { } }
+        try { if (File.Exists(path)) using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None)) { } }
         catch (IOException) { throw new IOException("此目录正在更新，请等待更新窗口完成后再启动。"); }
+        if (File.Exists(Path.Combine(root, ".update-transaction.json")))
+            throw new IOException("上次更新事务未完成，已阻止启动。请保留并核对恢复记录：" + Path.Combine(root, ".update-transaction.json") +
+                "；原程序备份位于：" + Path.Combine(root, "update-backups") + "。请按备份内 RECOVERY.txt 恢复，勿直接删除事务记录。");
     }
 
     private static string PrepareUpdate(HuntRelease release, string root, string repository, string proxy, string prefix, IProgress<int> progress, CancellationToken cancellation) {
+        EnsureNotUpdating(root);
+        if (repository == "TheHuntServer" && IsEmbeddedServer(root)) throw new IOException("内置服务端请通过父客户端统一更新。");
         if (!release.VerifiedOrigin || release.Sha256.Length != 64 || release.Size <= 0 || release.Size > 2147483648L)
             throw new InvalidDataException("自动更新需要从 GitHub 核对 SHA256。请用直连或本机 HTTP 代理重新检查。");
         string helper = Path.Combine(root, "Apply-Update.ps1");
         if (!File.Exists(helper)) throw new IOException("缺少自动更新助手，请先安装完整发行包。");
         string session = Path.Combine(Path.GetTempPath(), "TheHuntUpdates", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(session);
-        string archive = Path.Combine(session, "update.zip");
-        var request = Request(ValidatePrefix(prefix) + release.Download, proxy);
-        request.Accept = "application/octet-stream";
-        using (var abort = cancellation.Register(request.Abort))
-        using (var response = request.GetResponse())
-        using (var stream = response.GetResponseStream())
-        using (var file = File.Create(archive))
-        using (var hash = SHA256.Create()) {
-            var buffer = new byte[65536]; int count; long size = 0;
-            while ((count = stream.Read(buffer, 0, buffer.Length)) > 0) {
-                cancellation.ThrowIfCancellationRequested();
-                size += count;
-                if (size > release.Size) throw new InvalidDataException("下载内容超过预期大小，已停止更新。");
-                hash.TransformBlock(buffer, 0, count, null, 0); file.Write(buffer, 0, count);
-                progress.Report((int)(100 * size / release.Size));
+        try {
+            string archive = Path.Combine(session, "update.zip");
+            var request = Request(ValidatePrefix(prefix) + release.Download, proxy);
+            request.Accept = "application/octet-stream";
+            using (var abort = cancellation.Register(request.Abort))
+            using (var response = request.GetResponse())
+            using (var stream = response.GetResponseStream())
+            using (var file = File.Create(archive))
+            using (var hash = SHA256.Create()) {
+                var buffer = new byte[65536]; int count; long size = 0;
+                while ((count = stream.Read(buffer, 0, buffer.Length)) > 0) {
+                    cancellation.ThrowIfCancellationRequested();
+                    size += count;
+                    if (size > release.Size) throw new InvalidDataException("下载内容超过预期大小，已停止更新。");
+                    hash.TransformBlock(buffer, 0, count, null, 0); file.Write(buffer, 0, count);
+                    progress.Report((int)(100 * size / release.Size));
+                }
+                hash.TransformFinalBlock(new byte[0], 0, 0);
+                if (size != release.Size || BitConverter.ToString(hash.Hash).Replace("-", "").ToLowerInvariant() != release.Sha256)
+                    throw new InvalidDataException("更新包 SHA256 校验失败，未安装。请更换下载线路后重试。");
             }
-            hash.TransformFinalBlock(new byte[0], 0, 0);
-            if (size != release.Size || BitConverter.ToString(hash.Hash).Replace("-", "").ToLowerInvariant() != release.Sha256)
-                throw new InvalidDataException("更新包 SHA256 校验失败，未安装。请更换下载线路后重试。");
+            cancellation.ThrowIfCancellationRequested();
+            File.Copy(helper, Path.Combine(session, "Apply-Update.ps1"));
+            File.WriteAllText(Path.Combine(session, "plan.json"), new JavaScriptSerializer().Serialize(new {
+                root = Path.GetFullPath(root), repository = repository, version = release.Version,
+                parent_pid = Process.GetCurrentProcess().Id, archive = archive, sha256 = release.Sha256
+            }), new UTF8Encoding(false));
+            return session;
+        } catch (Exception error) {
+            try {
+                File.WriteAllText(session + ".failure.json", new JavaScriptSerializer().Serialize(new {
+                    stage = "prepare", error_type = error.GetType().FullName, root = Path.GetFullPath(root), repository = repository,
+                    version = release.Version, expected_size = release.Size, expected_sha256 = release.Sha256,
+                    utc = DateTime.UtcNow.ToString("o") }), new UTF8Encoding(false));
+            } catch { /* The UI still reports failure if the diagnostic cannot be written. */ }
+            try { CleanupSession(session); }
+            catch (Exception cleanup) { throw new IOException("更新准备失败；临时文件清理失败，请保留诊断并手动检查：" + session, new AggregateException(error, cleanup)); }
+            throw;
         }
-        cancellation.ThrowIfCancellationRequested();
-        File.Copy(helper, Path.Combine(session, "Apply-Update.ps1"));
-        File.WriteAllText(Path.Combine(session, "plan.json"), new JavaScriptSerializer().Serialize(new {
-            root = Path.GetFullPath(root), repository = repository, version = release.Version,
-            parent_pid = Process.GetCurrentProcess().Id, archive = archive, sha256 = release.Sha256
-        }), new UTF8Encoding(false));
-        return session;
+    }
+
+    private static void CleanupSession(string session) {
+        if (session == null || !Directory.Exists(session)) return;
+        string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "TheHuntUpdates")) + Path.DirectorySeparatorChar;
+        string full = Path.GetFullPath(session);
+        Guid id;
+        if (!full.StartsWith(parent, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(Path.GetFileName(full), "N", out id))
+            throw new IOException("更新临时目录路径无效。");
+        Directory.Delete(full, true);
     }
 
     private static Brush Color(string value) { return new SolidColorBrush((System.Windows.Media.Color)ColorConverter.ConvertFromString(value)); }
@@ -233,6 +276,10 @@ public static class HuntUpdates
 
     public static void Show(Window owner, string root, string repository, string version, Func<bool> canInstall) {
         AssetName(repository, version);
+        if (repository == "TheHuntServer" && IsEmbeddedServer(root)) {
+            MessageBox.Show(owner, "此服务端属于完整客户端，请关闭服务后在父客户端中统一检查和安装更新。", "The Hunt 更新");
+            return;
+        }
         var window = new Window { Title = "检查更新 · " + repository, Owner = owner, Width = 650, Height = 690,
             MinWidth = 580, MinHeight = 600, WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = Color("#171C20"), Foreground = Color("#DFE3E4"), FontFamily = owner.FontFamily, FontSize = 13 };
@@ -272,9 +319,13 @@ public static class HuntUpdates
         var install = new Button { Content = "自动更新", Padding = check.Padding, Margin = check.Margin, IsEnabled = false };
         buttons.Children.Add(check); buttons.Children.Add(install); buttons.Children.Add(download); buttons.Children.Add(page);
         HuntRelease release = null; string downloadPrefix = "";
-        page.Click += delegate { Process.Start(new ProcessStartInfo("https://github.com/ytq77/" + repository + "/releases") { UseShellExecute = true }); };
+        page.Click += delegate {
+            try { Process.Start(new ProcessStartInfo(ReleasePage) { UseShellExecute = true }); }
+            catch { status.Text = "无法打开发布页，请检查默认浏览器设置。"; }
+        };
         download.Click += delegate {
-            if (release != null) Process.Start(new ProcessStartInfo(downloadPrefix + release.Download) { UseShellExecute = true });
+            try { if (release != null) Process.Start(new ProcessStartInfo(downloadPrefix + release.Download) { UseShellExecute = true }); }
+            catch { status.Text = "无法打开下载链接，请检查默认浏览器设置。"; }
         };
         bool installing = false; CancellationTokenSource cancelDownload = null;
         window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs args) {
@@ -282,21 +333,30 @@ public static class HuntUpdates
         };
         install.Click += async delegate {
             if (release == null) return;
-            if (!canInstall()) { status.Text = "请先退出游戏、停止两种联机服务，并等待当前操作结束，再安装更新。"; return; }
-            installing = true; install.IsEnabled = check.IsEnabled = download.IsEnabled = false;
-            cancelDownload = new CancellationTokenSource();
+            string session = null; bool handedOff = false;
             try {
+                EnsureNotUpdating(root);
+                if (!canInstall()) { status.Text = "请先退出游戏、停止联机服务，并等待当前操作结束，再安装更新。"; return; }
+                installing = true; install.IsEnabled = check.IsEnabled = download.IsEnabled = false;
+                cancelDownload = new CancellationTokenSource();
                 string proxyValue = proxy.Text.Trim();
                 var progress = new Progress<int>(value => { if (window.IsVisible) status.Text = "正在下载并校验更新包…… " + value + "%"; });
-                string session = await Task.Run(() => PrepareUpdate(release, root, repository, proxyValue, downloadPrefix, progress, cancelDownload.Token));
+                session = await Task.Run(() => PrepareUpdate(release, root, repository, proxyValue, downloadPrefix, progress, cancelDownload.Token));
                 if (!window.IsVisible || cancelDownload.IsCancellationRequested) return;
                 if (!canInstall()) throw new IOException("游戏或服务已启动，更新尚未安装；请退出后重试。");
                 string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
-                Process.Start(new ProcessStartInfo(powershell, "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + Path.Combine(session, "Apply-Update.ps1") + "\" -Plan \"" + Path.Combine(session, "plan.json") + "\"") {
-                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = session, WindowStyle = ProcessWindowStyle.Hidden });
+                using (var helper = Process.Start(new ProcessStartInfo(powershell, "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + Path.Combine(session, "Apply-Update.ps1") + "\" -Plan \"" + Path.Combine(session, "plan.json") + "\"") {
+                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = session, WindowStyle = ProcessWindowStyle.Hidden })) {
+                    if (helper == null) throw new IOException("更新助手未启动。");
+                    handedOff = true;
+                }
                 installing = false; window.Close(); owner.Close();
             } catch (Exception error) { if (window.IsVisible) status.Text = error is IOException || error is InvalidDataException ? error.Message : "下载或启动更新助手失败，程序尚未替换。请检查网络、磁盘空间和权限。"; }
-            finally { installing = false; cancelDownload.Dispose(); cancelDownload = null; if (window.IsVisible) { check.IsEnabled = true; install.IsEnabled = true; download.IsEnabled = true; } }
+            finally {
+                installing = false; if (cancelDownload != null) cancelDownload.Dispose(); cancelDownload = null;
+                if (!handedOff) try { CleanupSession(session); } catch { if (window.IsVisible) status.Text += " 临时文件未清理：" + session; }
+                if (window.IsVisible) { check.IsEnabled = true; install.IsEnabled = true; download.IsEnabled = true; }
+            }
         };
         check.Click += async delegate {
             check.IsEnabled = false; download.IsEnabled = install.IsEnabled = false; release = null;

@@ -1,0 +1,66 @@
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <string_view>
+#include <vector>
+using u8=std::uint8_t;using u16=std::uint16_t;using u32=std::uint32_t;using s32=std::int32_t;
+constexpr u8 PeersType=0x7F,EnvelopeType=0x40,FollowType=0x20,LifeType=0x23,ScaleType=0x24,
+    PvpType=0x25,ProgressType=0x26,HostBossType=0x27,PlacementType=0x30;
+constexpr size_t EnvelopeSize=13;
+u32 own_id=42,selected_host=77;
+s32 session_state=6;
+int peers=0;
+std::atomic<bool> logged_old_sender{false};
+void Log(const char*){}
+#pragma pack(push,1)
+struct FollowPacket{u8 magic[4];u8 type,kind;u32 packed_map;float x,y,z,heading;u32 sequence;s32 lamp_point;};
+#pragma pack(pop)
+struct Received{u8 kind,on;u32 sender;};
+std::vector<Received> received;
+namespace Core::Bloodborne {
+s32 GetBbscRelaySessionState(){return session_state;}
+u32 GetBbscRelayHost(){return selected_host;}
+void NoteBbscRelayHost(u32,u32,float,float,float){}
+void OnBbscHostFollowPacket(u32,float,float,float,float,u32,s32){}
+void OnBbscLifePacket(u32,u8,u32){}
+void OnBbscScalePacket(const u16*){}
+void OnBbscPvpPacket(u8 kind,u8 on,u32 sender){received.push_back({kind,on,sender});}
+void OnBbscProgressPacket(const u32*,size_t){}
+void OnBbscHostBossPacket(s32){}
+void OnBbscWorldFlagsPacket(const void*,u32){}
+}
+namespace BbscMod {void OnHostPlacement(const std::string&,u32){}}
+namespace Libraries::Np::NpSignaling {constexpr u8 kSignalingBbscWorldFlagsType=0x22;}
+u32 SessionKey(){return session_state==3?own_id:selected_host;}
+// ACTUAL_RELAY_DISPATCH
+std::vector<u8> packet(u32 sender,u32 session,u8 kind=0){
+    std::vector<u8> v(EnvelopeSize+11);
+    std::memcpy(v.data(),"SHAD",4);v[4]=EnvelopeType;
+    std::memcpy(v.data()+5,&sender,4);std::memcpy(v.data()+9,&session,4);
+    std::memcpy(v.data()+EnvelopeSize,"SHAD",4);v[EnvelopeSize+4]=PvpType;
+    v[EnvelopeSize+5]=kind;v[EnvelopeSize+6]=1;return v;
+}
+int main(int argc,char** argv){
+    assert(argc==2);const std::string_view mode=argv[1];
+    u32 sender=77,session=77;u8 kind=0;
+    if(mode=="wrong-sender")sender=session=88;
+    else if(mode=="not-hosting")session=88;
+    else if(mode=="unselected")selected_host=0;
+    else if(mode=="self")sender=session=own_id;
+    else if(mode=="host-state-to-host")session_state=3;
+    else if(mode=="legacy-request"){session_state=3;sender=88;session=own_id;kind=1;}
+    else assert(mode=="selected" || mode=="old-frame" || mode=="truncated");
+    auto v=packet(sender,session,kind);
+    if(mode=="old-frame")v[4]=0;
+    if(mode=="truncated")v.resize(12);
+    Dispatch(v);
+    if(mode=="selected" || mode=="legacy-request"){
+        assert(received.size()==1 && received[0].sender==sender && received[0].kind==kind && received[0].on==1);
+    }else assert(received.empty());
+    std::printf("PASS: actual relay Dispatch sender provenance: %s\n",argv[1]);
+}

@@ -1,4 +1,4 @@
-"""Apply the pinned, gameplay-validated session/save patches after localization."""
+"""Apply the pinned session/save patches and checked recovery safety changes."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -10,7 +10,7 @@ CORE_FRAGMENTS=('bbsc_kit_fast_prepare.inc','bbsc_menu_quit.inc',
 SOURCES={
  'emulator/src/core/bloodborne_re_zh_cn.cpp':(
     '6a9b391546cbbe3148d05fcaf5ab0665bae8fff45c848c59e234987782a3d2a7',
-    'f0e2e2241d34697ab06da10562c8d7c083aa9d1b9aa602e20473ef09429bf108',CORE_FRAGMENTS),
+    '630135c4a8140c3a32a82ad5f481cf3ea8381f5819f919c572b341830cdaae29',CORE_FRAGMENTS),
  'emulator/mod/bbsc_mod_zh_cn.cpp':(
     '91d17adcf3042ecf58d4f7b37f74738db5a23b1a8cc473f15a4f0816899542b9',
     '80a2123331106916a283f9bc805565545b7df20c9fd164397cd75ed02fc5d1ce',('bbsc_slot_guard.inc',)),
@@ -55,7 +55,7 @@ def main():
             if expanded.count(needle)!=1:raise ValueError('Unexpected fragment placement: '+name)
             expanded=expanded.replace(needle,content,1)
             (path.parent/name).write_text(content,encoding='utf-8',newline='\n')
-        if sha(expanded)!=expected:raise ValueError('Expanded implementation differs from gameplay-tested source: '+relative)
-    print('Applied gameplay-validated kit initialization, confirmed menu quit, world recovery, native save proof, and guarded slot access.')
+        if sha(expanded)!=expected:raise ValueError('Expanded implementation differs from checked candidate source: '+relative)
+    print('Applied checked kit initialization, confirmed menu quit, world recovery, native save proof, and guarded slot access; new safety paths require gameplay acceptance.')
 
 if __name__=='__main__':main()

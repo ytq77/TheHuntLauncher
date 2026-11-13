@@ -1,0 +1,108 @@
+// Actual helper/context bodies; synthetic memory and descriptor layout, not native execution.
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
+using u8=uint8_t;using u32=uint32_t;using s32=int32_t;using u64=uint64_t;using s64=int64_t;
+#define PS4_SYSV_ABI
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARNING(...) ((void)0)
+#include "bbsc_visibility_wire.h"
+#include "bbsc_relay_auth_guard.h"
+// No executable game bytes: all descriptor inputs here are synthetic.
+std::vector<u8> synthetic_image(0x1945000);
+u64 GetTickCount64(){return 100000;}
+template<class T>void Put(void* p,size_t at,T x){std::memcpy(static_cast<u8*>(p)+at,&x,sizeof(x));}
+template<class T>T Get(const void* p,size_t at){T x;std::memcpy(&x,static_cast<const u8*>(p)+at,sizeof(x));return x;}
+alignas(16) std::array<u8,0x1800> global{};
+alignas(16) std::array<u8,0x100> rules{},slots{},actor_storage{};
+alignas(16) std::array<u8,0x80> flag_manager{};
+alignas(16) std::array<u8,0x40> sentinel{};
+alignas(16) std::array<u8,0xa0> desc{},second_desc{};
+u64 image_base{},active_global{},actor{};s64 now=100000;
+s32 session=6,type=1,hp=0;u32 current_map=0x19000000;u64 role=4,ticket=20;
+bool authenticated=true,resolve=true,own_ready=true,write_ok=true,summon_reload_state_hook_installed=true,bbsc_spectate_active=true;
+u64 denied_pointer{};size_t denied_size{};int writes{},auth_reads{},change_context_read{},stage_calls{},covers{};bool stage_select_ok=true,stage_fail=false;
+std::atomic<u64> bbsc_character_reload_generation{7};
+TheHuntVisibility::Context context;
+struct SummonPlacementDescriptor {u32 packed_region{};float x{},y{},z{},heading{};};
+struct BbscFollowMessage {u32 packed_map{};float x{},y{},z{},heading{};u32 sequence{};s32 lamp_point{-1};s64 received_ms{};};
+std::mutex bbsc_follow_mutex;BbscFollowMessage bbsc_follow_latest;
+constexpr s64 BbscFollowStaleMs=15000;
+struct BbscFollowLoadProtection {u64 ticket{},reload{};};
+enum class BbscLoadProtectionKind{Travel,Respawn,Join};
+namespace MemoryProt {constexpr int CpuRead=1,CpuWrite=2;}
+bool HasMemoryAccess(u64 p,size_t n,int){
+ if(!p||!n||p+n<p)return false;
+ if(denied_pointer && p<denied_pointer+denied_size && p+n>denied_pointer)return false;
+ const auto contains=[&](const auto& memory){const u64 at=reinterpret_cast<u64>(memory.data());return p>=at&&p+n<=at+memory.size();};
+ return contains(global)||contains(rules)||contains(actor_storage)||contains(desc)||contains(second_desc)||contains(synthetic_image);
+}
+bool ReadablePointer(u64 p,size_t n){return HasMemoryAccess(p,n,MemoryProt::CpuRead);}
+template<class T>T ReadValue(u64 p,size_t n){if(!ReadablePointer(p+n,sizeof(T)))throw std::runtime_error("invalid read");return Get<T>(reinterpret_cast<void*>(p),n);}
+template<class T>bool WriteValue(u64 p,size_t n,const T& x){if(!write_ok||!HasMemoryAccess(p+n,sizeof(T),MemoryProt::CpuWrite))return false;++writes;Put(reinterpret_cast<void*>(p),n,x);return true;}
+u64 GetGlobalState(){return active_global;}u64 GetLocalPlayerCharacter(){return actor;}s32 GetCharacterHp(u64 p){return p==actor?hp:-1;}
+s32 GetSessionState(){return session;}s32 GetLocalPlayerType(){return type;}u32 GetCurrentPackedMap(){return current_map;}
+s64 SteadyNowMs(){return now;}u64 BbscLoadProtectionTicket(){return ticket;}u64 BbscLoadProtectionRoleEpoch(){return role;}
+bool IsUsablePackedMap(u32 map){return map && map!=0xffffffff;}bool ResolveLampPoint(s32){return resolve;}bool BbscOwnWorldReadyForGuest(){return own_ready;}
+namespace BbscMod {
+std::mutex send_mutex;bool private_auth=true;u64 auth_context_ms=1;
+struct FakeClient {bool Visibility(){return authenticated;}TheHuntVisibility::Context VisibilityContext(){++auth_reads;if(change_context_read==auth_reads)++context.room;return context;}} auth_client;
+// ACTUAL_CONTEXT_FUNCTIONS
+}
+// ACTUAL_HELPER
+void Install(u64 at,const void* bytes,size_t size){assert(HasMemoryAccess(at,size,MemoryProt::CpuWrite));std::memcpy(reinterpret_cast<void*>(at),bytes,size);}
+void SyntheticDescriptor(std::array<u8,0xa0>& out,u32){
+ for(size_t i=0;i<out.size();++i)out[i]=static_cast<u8>(i*37+19);
+ const auto point=Get<s32>(global.data(),0x1528);
+ const u32 map=(u32(point/100000)<<24)|(u32((point/10000)%10)<<16);
+ Put(out.data(),8,map);Put(out.data(),0x80,point);Put(out.data(),0x54,s32{4});Put(out.data(),0x58,s32{2});out[0x94]=1;
+}
+void Pins(){
+// ACTUAL_PINS
+}
+void Reset(s32 ownpoint=2102961,s32 hostpoint=2502950,u32 map=0x19000000){
+ global.fill(0);rules.fill(0);desc.fill(0);second_desc.fill(0);active_global=reinterpret_cast<u64>(global.data());actor=reinterpret_cast<u64>(actor_storage.data());now=100000;session=6;type=1;hp=0;current_map=map;role=4;ticket=20;
+ authenticated=resolve=own_ready=write_ok=summon_reload_state_hook_installed=bbsc_spectate_active=true;denied_pointer=denied_size=0;writes=auth_reads=change_context_read=stage_calls=covers=0;stage_select_ok=true;stage_fail=false;bbsc_character_reload_generation=7;
+ BbscMod::private_auth=true;BbscMod::auth_context_ms=GetTickCount64();
+ context={100,2,1,{{1,1,101,{},true},{2,2,102,{},true}}};context.peers[0].npid[0]='H';context.peers[1].npid[0]='G';
+ bbsc_follow_latest={map,1,2,3,4,30,hostpoint,now-500};bbsc_wipe_follow_context=context;bbsc_wipe_target={};
+ Put(global.data(),0xc,map);Put(global.data(),0x14c4,map);Put(global.data(),0x1490,s32{1});global[0x1520]=1;global[0x1522]=1;Put(global.data(),0x1528,ownpoint);
+ const std::array<float,4> pos{1,2,3,1},rot{0,4,0,0};std::memcpy(global.data()+0x1500,pos.data(),16);std::memcpy(global.data()+0x1510,rot.data(),16);
+}
+void Arm(){const auto before=global;ArmBbscWipeRespawnTarget(active_global,SummonPlacementDescriptor{current_map},ticket);assert(before==global);}
+void Apply(u64 p=0){const auto before=global;ApplyBbscWipeRespawnAtDescriptor(p?p:reinterpret_cast<u64>(desc.data()),active_global);assert(before==global);}
+std::array<u8,0xa0> Expected(){std::array<u8,0xa0> out;SyntheticDescriptor(out,current_map);Put(out.data(),8,current_map);Put(out.data(),0x80,bbsc_follow_latest.lamp_point);return out;}
+int cases{};void Check(const char* name,bool condition){if(!condition){std::cerr<<"FAIL "<<name<<"\n";throw std::runtime_error(name);}++cases;std::cout<<"PASS "<<name<<"\n";}
+void ArmReject(const char* name,const std::function<void()>& mutate){Reset();mutate();const auto before=global;Arm();Check(name,!bbsc_wipe_target.ticket&&global==before&&writes==0);}
+void ApplyReject(const char* name,const std::function<void()>& mutate){Reset();Arm();assert(bbsc_wipe_target.ticket);SyntheticDescriptor(desc,current_map);mutate();const auto before=desc;Apply();Check(name,desc==before&&writes==0&&!bbsc_wipe_target.ticket);}
+void Positive(const char* name,s32 ownpoint,s32 hostpoint,u32 map){Reset(ownpoint,hostpoint,map);const auto expected=Expected();Arm();SyntheticDescriptor(desc,map);Apply();Check(name,desc==expected && writes==1 && desc[0x94]==1 && bbsc_wipe_target.applied && Get<s32>(global.data(),0x1528)==ownpoint);Check("synthetic-point-field",Get<s32>(desc.data(),0x80)==hostpoint);const auto after=desc;Apply();Check("duplicate-idempotent",desc==after&&writes==1&&bbsc_wipe_target.applied);}
+int main(){try{
+ image_base=reinterpret_cast<u64>(synthetic_image.data());Pins();
+ Positive("synthetic-death-host-lamp-two-fields-only",2102961,2502950,0x19000000);Positive("synthetic-different-block-two-fields-only",2402950,2512950,0x19010000);Positive("synthetic-same-map-other-point-two-fields-only",2502951,2502950,0x19000000);
+
+ Reset();Arm();global[8]=1;const auto loading_expected=Expected();SyntheticDescriptor(desc,current_map);Apply();Check("apply-during-native-loading",writes==1 && desc==loading_expected && session==6 && global[8]==1);
+ ArmReject("private-disabled",[]{BbscMod::private_auth=false;});ArmReject("auth-expired",[]{BbscMod::auth_context_ms=GetTickCount64()-1501;});ArmReject("actor-null",[]{actor=0;});ArmReject("global-unreadable",[]{denied_pointer=active_global;denied_size=global.size();});
+ ArmReject("no-auth",[]{authenticated=false;});ArmReject("room-zero",[]{context.room=0;bbsc_wipe_follow_context=context;});ArmReject("host-not-guest",[]{context.own=context.owner;bbsc_wipe_follow_context=context;});ArmReject("old-follow-context",[]{++context.room;});ArmReject("old-follow-member",[]{++context.peers[0].joined;});ArmReject("no-hook",[]{summon_reload_state_hook_installed=false;});ArmReject("ticket-zero",[]{ticket=0;});ArmReject("not-guest-session",[]{session=3;});ArmReject("wrong-local-type",[]{type=0;});ArmReject("own-world",[]{global[0x1592]=1;});ArmReject("native-loading",[]{global[8]=1;});ArmReject("living-local",[]{hp=1;});ArmReject("unknown-hp",[]{hp=-1;});ArmReject("no-spectate",[]{bbsc_spectate_active=false;});ArmReject("not-forced",[]{global[0x1520]=0;});ArmReject("not-dead",[]{global[0x1522]=0;});ArmReject("host-map-mismatch",[]{bbsc_follow_latest.packed_map=0x18000000;});ArmReject("host-point-map-mismatch",[]{bbsc_follow_latest.lamp_point=2402950;});ArmReject("stale-follow",[]{bbsc_follow_latest.received_ms=now-15001;});ArmReject("future-follow",[]{bbsc_follow_latest.received_ms=now+1;});ArmReject("unresolvable-lamp",[]{resolve=false;});ArmReject("unsafe-baseline",[]{own_ready=false;});ArmReject("bad-slot",[]{Put(global.data(),0x1490,s32{10});});ArmReject("no-role",[]{role=0;});ArmReject("negative-own-point",[]{Put(global.data(),0x1528,s32{-1});});
+ ApplyReject("private-disabled-at-apply",[]{BbscMod::private_auth=false;});ApplyReject("auth-expired-at-apply",[]{BbscMod::auth_context_ms=GetTickCount64()-1501;});ApplyReject("global-address-changed",[]{active_global+=8;});ApplyReject("global-unreadable-at-apply",[]{denied_pointer=active_global;denied_size=global.size();});ApplyReject("unsafe-baseline-at-apply",[]{own_ready=false;});ApplyReject("native-death-cleared",[]{global[0x1522]=0;});ApplyReject("native-forced-cleared",[]{global[0x1520]=0;});ApplyReject("native-ownworld-restored",[]{global[0x1592]=1;});ApplyReject("follow-stale-at-apply",[]{bbsc_follow_latest.received_ms=now-15001;});ApplyReject("follow-future-at-apply",[]{bbsc_follow_latest.received_ms=now+1;});ApplyReject("follow-context-at-apply",[]{++bbsc_wipe_follow_context.room;});
+ ApplyReject("context-room-change",[]{++context.room;});ApplyReject("context-owner-change",[]{++context.owner;});ApplyReject("context-member-change",[]{++context.peers[0].member;});ApplyReject("context-joined-change",[]{++context.peers[1].joined;});ApplyReject("auth-disconnected",[]{authenticated=false;});ApplyReject("ticket-change",[]{++ticket;});ApplyReject("role-change",[]{++role;});ApplyReject("reload-change",[]{++bbsc_character_reload_generation;});ApplyReject("actor-change",[]{actor+=8;});ApplyReject("role-session-change",[]{session=4;});ApplyReject("hp-restored",[]{hp=1;});ApplyReject("slot-changed",[]{Put(global.data(),0x1490,s32{2});});ApplyReject("native-own-lamp-changed",[]{Put(global.data(),0x1528,s32{2102962});});ApplyReject("selected-map-changed",[]{Put(global.data(),0xc,u32{0x18000000});});ApplyReject("transport-map-changed",[]{Put(global.data(),0x14c4,u32{0x18000000});});ApplyReject("loaded-map-changed",[]{current_map=0x18000000;});ApplyReject("host-lamp-changed",[]{++bbsc_follow_latest.lamp_point;});ApplyReject("host-map-changed",[]{bbsc_follow_latest.packed_map=0x18000000;});ApplyReject("expired-scope",[]{now+=15001;bbsc_follow_latest.received_ms=now;});ApplyReject("time-reversal",[]{now-=1;});ApplyReject("wrong-native-type",[]{Put(desc.data(),0x54,s32{2});});ApplyReject("wrong-native-subtype",[]{Put(desc.data(),0x58,s32{1});});ApplyReject("wrong-native-death-bit",[]{desc[0x94]=0;});ApplyReject("wrong-native-point",[]{Put(desc.data(),0x80,s32{2102962});});ApplyReject("wrong-native-map",[]{Put(desc.data(),8,u32{0x14000000});});ApplyReject("write-fails",[]{write_ok=false;});ApplyReject("descriptor-unreadable",[]{denied_pointer=reinterpret_cast<u64>(desc.data());denied_size=desc.size();});
+ for(auto offset:{0x1944c20,0x1944de9,0x1944e3c}){Reset();Arm();SyntheticDescriptor(desc,current_map);const auto old=desc;const u8 bad=0;Install(image_base+offset,&bad,1);Apply();Check("pin-change-rejected",desc==old&&writes==0&&!bbsc_wipe_target.ticket);Pins();Reset();Install(image_base+offset,&bad,1);Arm();Check("pin-invalid-at-arm",!bbsc_wipe_target.ticket);Pins();}
+ Reset();Arm();SyntheticDescriptor(desc,current_map);Apply();second_desc=desc;Apply(reinterpret_cast<u64>(second_desc.data()));Check("duplicate-different-pointer-rejected",writes==1&&!bbsc_wipe_target.ticket);
+ Reset();Arm();SyntheticDescriptor(desc,current_map);Apply();SyntheticDescriptor(desc,current_map);const auto reused=desc;Apply();Check("same-address-reconstruction-rejected",desc==reused&&writes==1&&!bbsc_wipe_target.ticket);
+ Reset();Arm();SyntheticDescriptor(desc,current_map);const auto old=desc;change_context_read=auth_reads+2;Apply();Check("last-moment-context-change-rejected",desc==old&&writes==0&&!bbsc_wipe_target.ticket);
+ for(s32 p:{2902950,12502950,10002950,0,-1}){Reset(p);Arm();Check("special-high-own-point-rejected",!bbsc_wipe_target.ticket);}
+ for(s32 p:{2902950,12502950,10002950,0,-1}){Reset(2102961,p,p>0?u32(p/100000)<<24:0x19000000);Arm();Check("special-high-host-point-rejected",!bbsc_wipe_target.ticket);}
+ Reset();SyntheticDescriptor(desc,current_map);const auto unarmed=desc;Apply();Check("unarmed-does-not-write",desc==unarmed&&writes==0);
+ Reset();Arm();Check("clear-precondition-armed",bbsc_wipe_target.ticket!=0);ClearBbscWipeRespawnTarget();SyntheticDescriptor(desc,current_map);const auto cleared=desc;Apply();Check("explicit-clear-prevents-write",desc==cleared&&!bbsc_wipe_target.ticket&&writes==0);ClearBbscWipeRespawnTarget();Check("clear-idempotent",!bbsc_wipe_target.ticket);
+ std::cout<<"TOTAL SYNTHETIC PASS "<<cases<<"\n";return 0;
+}catch(const std::exception&e){std::cerr<<e.what()<<"\n";return 23;}}

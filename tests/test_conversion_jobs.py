@@ -359,12 +359,49 @@ class ConversionJobs(unittest.TestCase):
         self.assertTrue(list(self.source.parent.glob('.savedata-conversion-*')))
         self.assertEqual(jobs.load_job()['state'], 'exported')
 
+    def test_interrupted_switch_has_durable_record_and_restores_verified_old_tree(self):
+        self.exported_job()
+        rename = Path.rename
+        def interrupt(path, target):
+            result = rename(path, target)
+            if path == self.source:
+                raise KeyboardInterrupt('worker ended after first directory switch')
+            return result
+        with patch.object(Path, 'rename', interrupt), self.assertRaises(KeyboardInterrupt):
+            jobs.install_converted_job(jobs.load_job(), True)
+        self.assertFalse(self.source.exists())
+        self.assertTrue((self.root/jobs.PENDING_INSTALL).is_file())
+        with self.assertRaisesRegex(ValueError, '已恢复上次中断'):
+            jobs.recover_pending_install()
+        self.assertFalse((self.root/jobs.PENDING_INSTALL).exists())
+        self.assert_sources_untouched()
+
+    def test_installed_but_unrecorded_switch_stays_blocked_with_backup_location(self):
+        self.exported_job()
+        save_job = jobs.save_job
+        def interrupt(job):
+            if job['state'] == 'applied':
+                raise KeyboardInterrupt('worker ended before job commit')
+            return save_job(job)
+        with patch.object(jobs, 'save_job', interrupt), self.assertRaises(KeyboardInterrupt):
+            jobs.install_converted_job(jobs.load_job(), True)
+        before = jobs.hashes(self.source)
+        with self.assertRaisesRegex(ValueError, '旧档备份'):
+            jobs.recover_pending_install()
+        self.assertEqual(jobs.hashes(self.source), before)
+        self.assertTrue((self.root/jobs.PENDING_INSTALL).exists())
+
     def test_apply_failed_post_switch_verification_rolls_back(self):
         self.exported_job()
         hashes = jobs.hashes
+        failed = False
         def failed_verification(path):
+            nonlocal failed
             value = hashes(path)
-            return {} if path == self.source else value
+            if path == self.source and not failed:
+                failed = True
+                return {}
+            return value
         with patch.object(jobs, 'hashes', side_effect=failed_verification):
             with self.assertRaisesRegex(ValueError, '已恢复'):
                 jobs.install_converted_job(jobs.load_job(), True)

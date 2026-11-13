@@ -13,9 +13,10 @@ import uuid
 from urllib.request import ProxyHandler, build_opener
 
 
-def command(args, root):
+def command(args, root, input=None):
     try:
-        result = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=40)
+        result = subprocess.run(args, cwd=root, input=input, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=40)
     except (OSError, subprocess.SubprocessError):
         raise ValueError("服务器命令未完成，请检查 Docker 权限和服务状态。") from None
     if result.returncode:
@@ -76,12 +77,22 @@ def sample(root, config, action, *values):
     host, port = general["Host"], general["UnsecuredPort"]
     if not re.fullmatch(r"[A-Za-z0-9_.:-]+", host) or not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ValueError("shadNet 监听配置无效。")
-    output = command(["docker", "compose", "exec", "-T", "shadnet", "shadnet-sample",
-                      host, port, action, *values], root)
-    marker = "[create] Account created successfully." if action == "register" else "[login] OK userId="
-    if marker not in output:
-        reason = re.search(r"\[(?:create|login)\] FAILED: (\w+)", output)
-        raise ValueError("账号操作未得到成功确认：" + (reason.group(1) if reason else "请检查服务日志，勿重复新建。"))
+    fields = ("name", "password", "email", "key") if action == "register" else ("name", "password")
+    # Requires the stdin account helper. Older images fail closed rather than
+    # falling back to putting credentials in the process command line.
+    try:
+        output = command(["docker", "compose", "exec", "-T", "shadnet", "shadnet-admin",
+                          host, port, action], root,
+                         input=json.dumps(dict(zip(fields, values)), ensure_ascii=True) + "\n")
+    except ValueError:
+        raise ValueError("账号命令未完成，请检查服务权限及镜像是否包含 shadnet-admin stdin 助手；操作可能已生效，请先核对账号列表。") from None
+    try:
+        response = json.loads(next((row for row in reversed(output.splitlines())
+                                    if row.startswith('{"ok":')), '{}'))
+    except (ValueError, TypeError):
+        response = {}
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        raise ValueError("账号操作未得到成功确认，请检查服务及 stdin 账号助手版本，勿重复新建。")
 
 
 def backup_accounts(root):

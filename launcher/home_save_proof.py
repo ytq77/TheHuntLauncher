@@ -5,20 +5,20 @@ digests for both actual disk generations can retire a recovery transaction.
 Missing evidence retains the existing refusal to replay old world progress.
 """
 import json
+from save_proof import eligible_run, native_records
 
 
-def verify(request, value, current):
+def verify(request, value, current, *, running_token=None):
     import world_recovery as wr
-    if request['mode'] != wr.APPLIED:
+    if request['mode'] not in (wr.APPLIED, wr.RELOADED):
         return None
     folder = request['folder']/'home-save-proof'/request['id']
     log, bank_path = folder/'native.jsonl', folder/'restored-bank.bin'
     if not log.is_file() or not bank_path.is_file():
         return None
     run = json.loads(wr.stable(request['folder']/'runs'/f'{request["token"]}.json'))
-    if (run['token'] != request['token'] or run['root'] != request['context']['root'] or
-            run['identities'].get(str(request['slot'])) != value['identity'] or
-            run.get('exit_code', 0) != 0):
+    if not eligible_run(run, request['token'], request['context']['root'], request['slot'],
+                        value['identity'], running_token):
         return None
     bank = wr.stable(bank_path)
     if len(bank) != 150000:
@@ -35,28 +35,14 @@ def verify(request, value, current):
     if not persistent:
         return None
     raw_log = wr.stable(log)
-    if len(raw_log) > 65536 or not raw_log.endswith(b'\n'):
+    first_stage = 'title-reload' if request['mode'] == wr.RELOADED else 'restored'
+    records = native_records(raw_log, run, first_stage)
+    if not records or records[0]['sha256'] != wr.sha(bank):
         return None
-    records = [json.loads(line) for line in raw_log.splitlines()]
-    if not 2 <= len(records) <= 64:
+    if any(type(row.get('slot')) is not int or row['slot'] != request['slot'] or
+           type(row.get('recovery_sequence')) is not int or row['recovery_sequence'] != request['seq']
+           for row in records):
         return None
-    restored = records[0]
-    if (restored.get('stage') != 'restored' or restored.get('sha256') != wr.sha(bank) or
-            restored.get('epoch_ms', 0)*1000000 < run['started_ns']):
-        return None
-    pid = restored.get('pid')
-    if not isinstance(pid, int) or pid <= 0:
-        return None
-    previous = restored.get('monotonic_ms', -1)
-    for sequence, row in enumerate(records, 1):
-        if (row.get('sequence') != sequence or row.get('pid') != pid or
-                row.get('slot') != request['slot'] or
-                row.get('recovery_sequence') != request['seq'] or
-                row.get('monotonic_ms', -1) < previous or
-                row.get('epoch_ms', 0) < restored['epoch_ms'] or
-                (sequence > 1 and row.get('stage') != 'save-entry')):
-            return None
-        previous = row['monotonic_ms']
     files = {}
     for name, raw in current.items():
         path = request['saves']/name
@@ -76,6 +62,6 @@ def verify(request, value, current):
     request['native_save_receipt'] = raw_log
     request['native_restored_bank'] = bank
     return {'schema': 2, 'origin': 'same-run-home-restore',
-            'run_token': request['token'], 'recovery_sequence': request['seq'], 'pid': pid,
+            'run_token': request['token'], 'recovery_sequence': request['seq'], 'pid': records[0]['pid'],
             'restored_bank_sha256': wr.sha(bank),
             'native_receipt_sha256': wr.sha(raw_log), 'files': files}

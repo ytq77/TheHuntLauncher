@@ -28,6 +28,7 @@ std::array<u8,0x500> repo{},goods_resource{},goods_holder{},effect_resource{},ef
 std::array<u8,0x1600> global{};
 std::array<u8,0x500> player{};
 std::atomic<bool> bbsc_duel_bell_ready{false},bbsc_zero_cost_bell_ready{false};
+std::atomic<u64> bbsc_character_reload_generation{0};
 std::vector<u64> bbsc_duel_bell_effect_rows,bbsc_blank_effect_rows,bbsc_invadable_effect_rows;
 std::mutex bbsc_kit_rows_mutex;
 s64 now=100000;int scans=0,backups=0,announcements=0,removals=0,adds=0;
@@ -86,7 +87,13 @@ u64 BbscCarriedInventory(){return 1;}
 u64 BbscStorageInventory(){return 2;}
 bool BbscInventoryHas(u64 inv,u32 code){return inventory[inv].contains(code);}
 bool BackupBbscSaves(){++backups;return backup_ok;}
-bool BbscInventoryRemove(u64 inv,u32 code){assert(backups && backup_ok);++removals;return inventory[inv].erase(code)!=0;}
+bool BbscInventoryRemove(u64 inv,u32 code){
+    assert(backups && backup_ok);
+    // Retirement must wait for the WHOLE replacement kit, including storage ownership.
+    for(const auto& item:BbscKit)
+        assert(inventory[1].contains(0x40000000u|item.id) || inventory[2].contains(0x40000000u|item.id));
+    ++removals;return inventory[inv].erase(code)!=0;
+}
 bool BbscEventFlag(u32){assert(false);return false;}
 void BbscAnnounce(const char16_t*,const char*){++announcements;}
 s32 PS4_SYSV_ABI Fits(u64,const u32*,s32 n){assert(backups && backup_ok);return n;}
@@ -110,6 +117,7 @@ int main(int argc,char** argv){
         put<u32>(goods.row(id)+0,ref);put<u8>(goods.row(id)+68,0x1F);put<u8>(goods.row(id)+56,1);
     }
     repository=memory(repo.data(),repo.size());
+    put<s32>(goods.row(225)+4,62); // Native Sinister Bell SFX variant.
     for(auto* value:{&goods_resource,&goods_holder,&effect_resource,&effect_holder})memory(value->data(),value->size());
     memory(global.data(),global.size());memory(player.data(),player.size());
     put<s32>(repository+0x148,1);put<s32>(repository+0x4A8,1);
@@ -168,6 +176,7 @@ int main(int argc,char** argv){
             assert(read<u16>(row+44)==item.icon);
         }
         assert(read<u32>(goods.row(4313))==7511 && read<u8>(goods.row(4313)+68)==0x1F);
+        assert(read<s32>(goods.row(4313)+4)==62 && read<s32>(goods.row(225)+4)==62);
         const auto patched_goods=goods.bytes,patched_effects=active.bytes;
         const auto scans_before=scans;PrepareBbscDuelBell();assert(scans==scans_before && goods.bytes==patched_goods && active.bytes==patched_effects);
         TickBbscDuelBellGive();
@@ -177,7 +186,13 @@ int main(int argc,char** argv){
             assert(backups==1 && adds==5 && removals==4 && announcements==1 && inventory[1].size()==5);
             for(const auto& item:BbscKit)assert(inventory[1].contains(0x40000000u|item.id));
         }
-        now+=6000;TickBbscDuelBellGive();assert(backups<=1); // no repeated grant for this character
+        now+=6000;
+        if(mode=="backup-failure"){
+            backup_ok=true;TickBbscDuelBellGive();
+            assert(backups==2 && adds==5 && removals==4 && announcements==1); // Failure is retryable.
+        }else{
+            TickBbscDuelBellGive();assert(backups<=1); // No repeated grant after a completed migration.
+        }
     }
     std::printf("PASS: actual kit initialization and inventory callback: %s\n",mode.c_str());
 }

@@ -8,11 +8,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def generate(source, destination):
     text = Path(source).read_text(encoding='utf-8')
-    declarations = block(text, 'constexpr std::array<s64, 22> BbscDreamGuestEvents', ';')
-    callback = block(text, 'void PS4_SYSV_ABI BbscDreamTypeCheckHook(')
+    declarations = [block(text, 'constexpr std::array<s64, 22> BbscDreamGuestEvents', ';')]
+    for marker in ('constexpr u64 TalkClientCheckedOffset =',
+                   'constexpr u64 CharacterTypeCheckOffset =',
+                   'u8 bbsc_dream_type_skip =',
+                   'std::array<u64, 64> bbsc_dream_type_conditions',
+                   'size_t bbsc_dream_type_next =',
+                   'std::array<s64, 32> bbsc_dream_type_logged'):
+        if text.count(marker) != 1:
+            raise ValueError('Unexpected gift declaration: '+marker)
+        start = text.index(marker)
+        declarations.append(text[start:text.index(';', start)+1])
+    callbacks = [block(text, marker) for marker in (
+        'bool BbscGuestInHostWorld() {',
+        's64 BbscEventIdOf(u64 instance) {',
+        'void PS4_SYSV_ABI BbscDreamTypeCheckHook(')]
     install = block(text, 'void InstallBbscDreamHooks() {')
     template = (ROOT/'tests/npc_gift_runtime.cpp.in').read_text(encoding='utf-8')
-    for marker, value in [('// GIFT_DECLARATIONS',declarations),('// GIFT_CALLBACK',callback),
+    for marker, value in [('// GIFT_DECLARATIONS','\n'.join(declarations)),
+                          ('// GIFT_CALLBACK','\n'.join(callbacks)),
                           ('// GIFT_INSTALL',install)]:
         if template.count(marker) != 1:
             raise ValueError('Unexpected gift fixture marker: '+marker)

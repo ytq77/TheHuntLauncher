@@ -1,4 +1,5 @@
 """Isolated BBSC session runner. Credentials arrive only through the worker environment."""
+from collections import deque
 from datetime import datetime
 from contextlib import ExitStack
 import hashlib
@@ -8,30 +9,169 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 import time
 import world_recovery
 import trophy_sync
+import relay_auth
 from trophy_notices import TrophyNotices
 from public_online import Account, Bridge
 from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
 from save_transfer import (copy_verified, import_lock, import_auxiliary_snapshot,
-                           require_stopped, snapshot, content_inventory, source_path)
+                           require_stopped, snapshot, content_inventory, source_path, validate_savedata)
 
 ROOT = Path(__file__).resolve().parent
 EBOOT_SHA256 = "d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9"
+# Public NP reconnect notices. The game gives up after the 4th failed wandering_ghost/get
+# (about 6 minutes of 502s); BBport hides drops shorter than 20 s (kSignedOutGrace).
+PUBLIC_GRACE_S = 20
+PUBLIC_DEGRADED_S = 120
+PUBLIC_ALREADY_IN_S = 180
 
 
 def state(phase, message):
     path = ROOT / "launcher-state.json"
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps({"phase": phase, "message": message}, ensure_ascii=False), encoding="utf-8")
-    temp.replace(path)
+    payload = {"phase": phase, "message": message}
+
+    def persist_status():
+        try:
+            world_recovery.json_file(path, payload)
+        except (OSError, ValueError):
+            # This is only the UI status file. Replacing its directory entry
+            # works in redirected install directories without following a link at the leaf.
+            temp = path.with_name(f'{path.name}.{uuid.uuid4().hex}.tmp')
+            try:
+                with temp.open('x', encoding='utf-8') as stream:
+                    json.dump(payload, stream, ensure_ascii=False)
+                temp.replace(path)
+            finally:
+                temp.unlink(missing_ok=True)
+
+    best_effort('launcher status', persist_status)
     # Console encoding varies by Windows locale; status JSON always remains UTF-8.
-    encoding = sys.stdout.encoding or "utf-8"
-    print(message.encode(encoding, errors="backslashreplace").decode(encoding), flush=True)
+    def display():
+        encoding = sys.stdout.encoding or "utf-8"
+        print(message.encode(encoding, errors="backslashreplace").decode(encoding), flush=True)
+    best_effort('launcher console', display)
+
+
+def report_failure(stage, error):
+    try:
+        report_line(f'{stage}: {type(error).__name__}: {error}')
+    except Exception:
+        pass  # The diagnostic stream is also optional.
+
+
+def report_line(message):
+    try:
+        encoding = sys.stderr.encoding or 'utf-8'
+        print(message.encode(encoding, errors='backslashreplace').decode(encoding),
+              file=sys.stderr, flush=True)
+    except Exception:
+        pass  # The diagnostic stream is also optional.
+
+
+def format_public_event(event):
+    """One log line: '<local ISO time> <kind> key=value ...'. Events never carry credentials."""
+    values = dict(event)
+    at = values.pop('at', None) or datetime.now().astimezone().isoformat(timespec='seconds')
+    parts = [str(at), str(values.pop('kind', 'event'))]
+    for key, value in values.items():
+        if isinstance(value, str) and value and not any(c.isspace() or c in '"=' for c in value):
+            parts.append(f'{key}={value}')
+        else:
+            parts.append(f'{key}={json.dumps(value, ensure_ascii=False, separators=(",", ":"))}')
+    return ' '.join(parts)
+
+
+class PublicOnlineEvents:
+    """Append-only public NP diagnostics (data/user/public-online-events.log).
+
+    Lines wait in memory until ``anchor`` exists: creating data/ here would make
+    prepare() treat a first launch as already initialized. Never raises.
+    """
+    LIMIT = 256 * 1024
+
+    def __init__(self, path, anchor=None, limit=LIMIT):
+        self.path = Path(path); self.anchor = None if anchor is None else Path(anchor)
+        self.limit = limit; self._lock = threading.Lock(); self._pending = deque(maxlen=200)
+
+    def write(self, event):
+        try:
+            line = format_public_event(event)
+            report_line('public online: ' + line)
+            with self._lock:
+                self._pending.append(line)
+                self._flush()
+        except Exception:
+            pass  # Diagnostics only; the game session must not notice.
+
+    def flush(self):
+        try:
+            with self._lock: self._flush()
+        except Exception:
+            pass
+
+    def _flush(self):
+        try:
+            if not self._pending or (self.anchor is not None and not self.anchor.is_dir()):
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if self.path.stat().st_size >= self.limit:
+                    os.replace(self.path, self.path.with_name(self.path.name + '.1'))
+            except FileNotFoundError:
+                pass
+            with self.path.open('a', encoding='utf-8', newline='\n') as stream:
+                stream.write(''.join(line + '\n' for line in self._pending))
+            self._pending.clear()
+        except Exception:
+            pass  # Keep the newest lines (bounded) for the next attempt.
+
+
+def public_notice(account):
+    """Launcher text for the public NP state; empty keeps the launcher's normal status."""
+    state = account.get('state')
+    if state == 'failed':
+        return (account.get('message') or '公共账号连接失败。') + '请在启动器中重新验证公共账号后重启游戏。'
+    if state != 'reconnecting':
+        return ''
+    down = account.get('since_disconnect_s') or 0
+    if down < PUBLIC_GRACE_S:
+        return ''
+    if down < PUBLIC_DEGRADED_S:
+        return f'公共账号连接中断，正在自动重连（已尝试 {account.get("attempts") or 0} 次）。私服召唤不受影响。'
+    notice = '公共内容暂时不可用，正在后台重连。若持续约 6 分钟，游戏可能提示“无法连接至服务器”并回到标题。'
+    if (account.get('already_in_for_s') or 0) >= PUBLIC_ALREADY_IN_S:
+        notice += '公共账号可能在别处登录，或旧连接尚未释放。'
+    return notice
+
+
+def public_state(bridge, ui_session):
+    account = bridge.account.snapshot()
+    stats = bridge.stats()
+    return {
+        'ui_session': ui_session,
+        'account_connected': account['state'] == 'connected',
+        'game_authenticated': bridge.login_ok, 'failures': stats['failures'],
+        'account_state': account['state'], 'reconnects': account['reconnects'],
+        'reconnect_attempts': account['attempts'], 'last_disconnect': account['last_disconnect'],
+        'consecutive_failures': stats['consecutive_failures'],
+        'offline_rejections': stats['offline_rejections'],
+        'upstream_failures': stats['upstream_failures'],
+        'reskind_errors': stats['reskind_errors'], 'last_reskind_error': stats['last_reskind_error'],
+        'notice': public_notice(account),
+    }
+
+
+def best_effort(stage, action):
+    try:
+        action()
+    except Exception as error:
+        report_failure(stage, error)
 
 
 def validate_network(network):
@@ -66,6 +206,8 @@ def prepare(profile):
 
 
 def _prepare(profile, old_auxiliary=None):
+    if (ROOT/'.save-conversion-pending.json').exists():
+        raise ValueError('存在未完成的原版存档替换，请先在转换页核对恢复记录。')
     game = Path(profile["game"])
     source = Path(profile["graphics_source"]).resolve()
     install = Path(profile["install"]).resolve()
@@ -100,6 +242,7 @@ def _prepare(profile, old_auxiliary=None):
     trophy_sync.backup(trophies, stage / 'trophy-import-backup')
     save_state = None
     if save_root.is_dir():
+        validate_savedata(save_root, allow_empty=True)
         save_state = copy_verified(save_root, stage / 'user/savedata')
     # FSR4 is optional for machines using FSR3; copy available resources once.
     origin = install / "fsr4_shaders"
@@ -128,6 +271,8 @@ def build_environment(profile, name, password, settings_env, snapshot):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("BB_", "BBSC_", "SHADPS4_", "THEHUNT_PUBLIC_"))}
     env.update(settings_env)
+    for key in relay_auth.KEYS:
+        env.pop(key, None)
     env["PATH"] = str(ROOT / "runtime/bin") + os.pathsep + env.get("PATH", "")
     env.update(
         BB_GAME_DIR=profile["game"], BB_DATA_DIR=str(data),
@@ -154,6 +299,8 @@ def build_environment(profile, name, password, settings_env, snapshot):
 
 
 def main():
+    if (ROOT / ".save-conversion-pending.json").exists():
+        raise ValueError("存在未完成的原版存档替换，请先在转换页核对恢复记录和备份。")
     if (ROOT / ".save-conversion.lock").exists():
         raise ValueError("转换测试尚未结束，请先在存档页处理测试状态。")
     if (ROOT / ".save-import.lock").exists():
@@ -174,24 +321,45 @@ def main():
     public_name = os.environ.pop('THEHUNT_PUBLIC_ACCOUNT', '')
     public_password = os.environ.pop('THEHUNT_PUBLIC_PASSWORD', '')
     with ExitStack() as services:
-        bridge = None
+        bridge = None; events = None
         if profile.get('public_online', True):
             state('preparing', '正在连接 SuperMedo 公共账号…')
-            account = services.enter_context(Account(public_name, public_password))
+            events = PublicOnlineEvents(ROOT / 'data/user/public-online-events.log', anchor=ROOT / 'data')
+            # The account keeps the password in memory only, to reconnect after drops.
+            account = services.enter_context(Account(public_name, public_password, keep_alive=True,
+                                                     on_event=events.write))
             public_password = None
             bridge = services.enter_context(Bridge(account, profile['network']['community'].rstrip('/')))
-        return run_session(profile, name, password, bridge)
+        return run_session(profile, name, password, bridge, events)
 
 
-def run_session(profile, name, password, bridge):
+def run_session(profile, name, password, bridge, public_events=None):
     prepare(profile)
-    if bridge and not bridge.account.connected:
+    if public_events is not None:
+        public_events.flush()  # data/ exists now; write the startup connection record.
+    if bridge and not bridge.account.wait_connected(30):
         raise ValueError('初始化期间公共账号连接已断开，请重新启动。')
-    trophy_notices = TrophyNotices(ROOT, os.environ.get('THEHUNT_UI_SESSION'))
     recovery_env = world_recovery.begin(ROOT)
+    token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
+    try:
+        seal = world_recovery.quit_seal(token)
+    except OSError:
+        # The first mapping attempt may fail transiently. Never launch without it.
+        seal = world_recovery.quit_seal(token)
+    try:
+        return run_game(profile, name, password, bridge, recovery_env, seal)
+    finally:
+        best_effort('quit mapping close', seal.close)
+
+
+def run_game(profile, name, password, bridge, recovery_env, seal):
+    trophy_notices = TrophyNotices(ROOT, os.environ.get('THEHUNT_UI_SESSION'))
     state("preparing", "正在同步这台电脑的画质与操作设置…")
     settings_env, snapshot = sync_settings(ROOT, profile)
     env, network = build_environment(profile, name, password, settings_env, snapshot)
+    # Keep the private NP companion short-lived and pass its token only to this child.
+    # It has already received Terminate/EOF before Popen can start the game's NP login.
+    env.update(relay_auth.environment(network, name, password))
     env.update(recovery_env)
     (ROOT / "settings-snapshot.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     user = ROOT / "data/user"
@@ -203,55 +371,113 @@ def run_session(profile, name, password, bridge):
     }, indent=2), encoding="utf-8")
     log = user / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
     started = datetime.now().isoformat()
-    last_public_state = None
-    state("running", "游戏已启动，正在加载。道具准备情况会显示在这里。")
-    with log.open("w", encoding="utf-8") as output:
+    token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
+    output = log.open("w", encoding="utf-8")
+    try:
         output.write("BBSC settings snapshot: " + json.dumps(snapshot) + "\n")
         output.flush()
         result = subprocess.Popen([sys.executable, str(ROOT / "engine/run.py")], env=env,
                                   cwd=ROOT / "engine", stdin=subprocess.DEVNULL,
                                   stdout=output, stderr=subprocess.STDOUT,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
-        while result.poll() is None:
-            trophy_notices.poll()
-            if bridge:
-                public_state = {
-                    'ui_session': os.environ.get('THEHUNT_UI_SESSION'),
-                    'account_connected': bridge.account.connected,
-                    'game_authenticated': bridge.login_ok, 'failures': bridge.failures}
-                if public_state != last_public_state:
-                    try:
-                        world_recovery.json_file(user / 'public-online-state.json', public_state)
-                        last_public_state = public_state
-                    except OSError:
-                        pass  # A UI status write cannot terminate the live game/account owner.
-            try:
-                world_recovery.poll(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
-            except (ValueError, OSError) as error:
-                world_recovery.json_file(user / 'world-recovery/latest-observation.json',
-                                         {'state': 'waiting', 'message': str(error)})
-            time.sleep(0.1)
-    (user / "last-exit.json").write_text(json.dumps({
+        for key in relay_auth.KEYS:
+            env.pop(key, None)
+        state("running", "游戏已启动，正在加载。道具准备情况会显示在这里。")
+        exit_code = monitor_game(result, trophy_notices, bridge, user, token)
+    finally:
+        best_effort('game log close', output.close)
+    return finish_game(user, token, seal, exit_code, started, log.name)
+
+
+def monitor_game(result, trophy_notices, bridge, user, token):
+    retry_at = {}
+    last_public_state = None
+
+    def observe(stage, action):
+        now = time.monotonic()
+        if now < retry_at.get(stage, 0):
+            return
+        try:
+            action()
+        except Exception as error:
+            retry_at[stage] = now + 1
+            report_failure(stage, error)
+            if stage == 'world recovery observation':
+                best_effort('world recovery status', lambda: world_recovery.json_file(
+                    user / 'world-recovery/latest-observation.json',
+                    {'state': 'waiting', 'message': str(error)}))
+
+    def publish_public():
+        nonlocal last_public_state
+        current = public_state(bridge, os.environ.get('THEHUNT_UI_SESSION'))
+        if current != last_public_state:
+            world_recovery.json_file(user / 'public-online-state.json', current)
+            last_public_state = current
+
+    while True:
+        exit_code = result.poll()
+        if exit_code is not None:
+            return exit_code
+        observe('trophy observation', trophy_notices.poll)
+        if bridge is not None:
+            observe('public online observation', publish_public)
+        observe('world recovery observation', lambda: world_recovery.poll(ROOT, token))
+        time.sleep(0.1)
+
+
+def finish_game(user, token, seal, exit_code, started, log_name):
+    quit_sequence = 0
+    recovery_error = None
+    exit_record_failure = None
+    try:
+        world_recovery.process_exited(ROOT, token, exit_code)
+    except world_recovery.ExitRecordWriteError as error:
+        exit_record_failure = error
+        report_failure('game exit evidence', error)
+    except Exception as error:
+        recovery_error = error
+        report_failure('game exit evidence', error)
+    try:
+        quit_sequence = world_recovery.read_quit_seal(seal)
+    except Exception as error:
+        recovery_error = recovery_error or error
+        report_failure('game quit seal', error)
+    live_evidence = {}
+    if exit_record_failure is not None:
+        if type(exit_code) is int and exit_code == 0 and type(quit_sequence) is int and quit_sequence > 0:
+            live_evidence['exit_record_failure'] = exit_record_failure
+        else:
+            recovery_error = recovery_error or exit_record_failure
+    outcomes = []
+    try:
+        outcomes = world_recovery.finalize(ROOT, token, quit_sequence=quit_sequence,
+                                           observed_exit=exit_code, **live_evidence)
+    except Exception as error:
+        recovery_error = error
+        report_failure('world recovery finalization', error)
+    best_effort('game exit status', lambda: world_recovery.json_file(user / "last-exit.json", {
         "started": started, "ended": datetime.now().isoformat(),
-        "exit_code": result.returncode, "log": log.name,
-    }, indent=2), encoding="utf-8")
-    world_recovery.process_exited(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'], result.returncode)
-    state("preparing", "游戏已退出，正在核对自己的世界与两代存档…")
-    outcomes = world_recovery.finalize(ROOT, recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN'])
+        "exit_code": exit_code, "log": log_name,
+    }))
     waiting_backup = any('waiting-backup' in item for item in outcomes)
-    world_recovery.json_file(user / 'world-recovery/latest-result.json',
-                             {'state': 'waiting-backup' if waiting_backup else 'complete',
-                              'outcomes': outcomes, 'game_exit_code': result.returncode})
-    state("exited" if result.returncode == 0 else "error",
+    best_effort('world recovery result', lambda: world_recovery.json_file(
+        user / 'world-recovery/latest-result.json',
+        {'state': 'review-required' if recovery_error else 'waiting-backup' if waiting_backup else 'complete',
+         'outcomes': outcomes, 'game_exit_code': exit_code}))
+    if recovery_error:
+        state("error", f"游戏已退出（返回码 {exit_code}）。世界恢复需复核：{recovery_error} 请打开「世界恢复复核」。")
+        return exit_code or 1
+    state("exited" if exit_code == 0 else "error",
           ("主存档已恢复。下次加载并正常保存后，将确认游戏备份。" if waiting_backup else
-           "本次狩猎已结束，世界记录核对完成。") if result.returncode == 0 else
-          f"游戏退出，返回码 {result.returncode}。请打开日志查看本次记录。")
-    return result.returncode
+           "本次狩猎已结束，世界记录核对完成。") if exit_code == 0 else
+          f"游戏退出，返回码 {exit_code}。请打开日志查看本次记录。")
+    return exit_code
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as error:
+        report_failure('launcher startup', error)
         state("error", str(error))
         sys.exit(1)

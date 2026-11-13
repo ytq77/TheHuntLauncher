@@ -1,4 +1,5 @@
 import io
+import configparser
 from contextlib import closing
 import json
 import os
@@ -6,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -137,6 +139,27 @@ class ServerAdminTests(unittest.TestCase):
             server_remote.main()
         self.assertFalse(json.loads(output.getvalue())["ok"])
         self.assertNotIn("private", output.getvalue())
+
+    def test_remote_native_helper_uses_ascii_stdin_for_all_credentials(self):
+        cfg = configparser.ConfigParser()
+        cfg.read_dict({'General': {'Host': '127.0.0.1', 'UnsecuredPort': '31413'}})
+        values = ('test01', '雪 Δ 😀 private-password', 'test@example.test', 'private-key')
+        with patch.object(server_remote.subprocess, 'run', return_value=SimpleNamespace(
+                returncode=0, stdout='status\n{"ok":true,"error":"NoError"}\n', stderr='')) as run:
+            server_remote.sample(Path('.'), cfg, 'register', *values)
+        args, kwargs = run.call_args
+        self.assertEqual(args[0][-4:], ['shadnet-admin', '127.0.0.1', '31413', 'register'])
+        self.assertNotIn('private', ' '.join(args[0]))
+        self.assertTrue(kwargs['input'].isascii())
+        self.assertEqual(json.loads(kwargs['input']), dict(zip(('name', 'password', 'email', 'key'), values)))
+
+    def test_native_helper_errors_never_echo_command_or_secret(self):
+        for error in (subprocess.TimeoutExpired(['helper', 'private-password'], 40),
+                      subprocess.CalledProcessError(1, ['private-password'], stderr='private-key')):
+            with patch.object(server_remote.subprocess, 'run', side_effect=error):
+                with self.assertRaises(ValueError) as caught:
+                    server_remote.command(['helper'], Path('.'), input='private-password')
+            self.assertNotIn('private', str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import ExitStack
 import io
 import json
 import os
@@ -6,18 +7,219 @@ import shutil
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "launcher"))
 import client
+from synthetic_world_fixture import fixture_pair
+RAW, GOOD = fixture_pair()
 from settings_bridge import sync_settings
 
 NETWORK = {"shadnet": "example.test:31413", "webapi": "http://example.test:31415",
            "community": "http://example.test:20443", "relay": "example.test:20444"}
 
 
+def account_snapshot(**values):
+    snapshot = {'state': 'connected', 'reconnects': 0, 'attempts': 0, 'since_disconnect_s': None,
+                'last_disconnect': None, 'remote': '198.18.6.61:31313', 'already_in_for_s': None, 'message': ''}
+    snapshot.update(values)
+    return snapshot
+
+
+def bridge_stats(**values):
+    stats = {'failures': 0, 'offline_rejections': 0, 'upstream_failures': 0, 'consecutive_failures': 0,
+             'reskind_errors': 0, 'last_failure': None, 'last_reskind_error': None}
+    stats.update(values)
+    return stats
+
+
+class PublicOnlineStatusTests(unittest.TestCase):
+    def test_public_state_notice_thresholds(self):
+        notice = client.public_notice
+        self.assertEqual(notice(account_snapshot()), '')
+        for down in (10, 19.9):
+            self.assertEqual(notice(account_snapshot(state='reconnecting', since_disconnect_s=down, attempts=2)), '')
+        for down in (20, 60, 119.9):
+            self.assertEqual(notice(account_snapshot(state='reconnecting', since_disconnect_s=down, attempts=3)),
+                             '公共账号连接中断，正在自动重连（已尝试 3 次）。私服召唤不受影响。')
+        late = notice(account_snapshot(state='reconnecting', since_disconnect_s=200, attempts=7))
+        self.assertEqual(late, notice(account_snapshot(state='reconnecting', since_disconnect_s=120)))
+        self.assertIn('公共内容暂时不可用，正在后台重连', late)
+        self.assertIn('无法连接至服务器', late); self.assertNotIn('别处登录', late)
+        self.assertEqual(notice(account_snapshot(state='reconnecting', since_disconnect_s=200, already_in_for_s=179)), late)
+        lingering = notice(account_snapshot(state='reconnecting', since_disconnect_s=200, already_in_for_s=181))
+        self.assertEqual(lingering, late + '公共账号可能在别处登录，或旧连接尚未释放。')
+        self.assertEqual(notice(account_snapshot(state='failed', message='公共账号密码不正确。')),
+                         '公共账号密码不正确。请在启动器中重新验证公共账号后重启游戏。')
+        self.assertEqual(notice(account_snapshot(state='closed')), '')
+        drop = {'at': '2026-11-08T17:08:20+08:00', 'reason': 'eof', 'connected_for_s': 95.2}
+        bridge = SimpleNamespace(login_ok=True, account=SimpleNamespace(snapshot=lambda: account_snapshot(
+            state='reconnecting', since_disconnect_s=60, attempts=1, reconnects=2, last_disconnect=drop)),
+            stats=lambda: bridge_stats(failures=9, offline_rejections=5, upstream_failures=4,
+                                       consecutive_failures=1, reskind_errors=2,
+                                       last_reskind_error={'at': 'x', 'endpoint': '/a/b', 'MessageId': 'M'}))
+        state = client.public_state(bridge, 'ui-fixture')
+        self.assertEqual(state, {
+            'ui_session': 'ui-fixture', 'account_connected': False, 'game_authenticated': True, 'failures': 9,
+            'account_state': 'reconnecting', 'reconnects': 2, 'reconnect_attempts': 1, 'last_disconnect': drop,
+            'consecutive_failures': 1, 'offline_rejections': 5, 'upstream_failures': 4, 'reskind_errors': 2,
+            'last_reskind_error': {'at': 'x', 'endpoint': '/a/b', 'MessageId': 'M'},
+            'notice': '公共账号连接中断，正在自动重连（已尝试 1 次）。私服召唤不受影响。'})
+        self.assertEqual(json.loads(json.dumps(state)), state)
+
+    def test_public_events_log_rotates_and_never_fails(self):
+        with tempfile.TemporaryDirectory() as area, patch.object(client, 'report_line') as report:
+            root = Path(area)
+            log = client.PublicOnlineEvents(root/'data/user/public-online-events.log', anchor=root/'data', limit=400)
+            log.write({'at': '2026-11-08T17:08:20+08:00', 'kind': 'connected',
+                       'remote': '198.18.6.61:31313', 'keep_alive': True})
+            # data/ marks a finished first initialization; the log must never create it.
+            self.assertFalse((root/'data').exists())
+            (root/'data').mkdir(); log.flush()
+            self.assertEqual(log.path.read_text(encoding='utf-8'),
+                             '2026-11-08T17:08:20+08:00 connected remote=198.18.6.61:31313 keep_alive=true\n')
+            for attempt in range(40):
+                log.write({'kind': 'retry_failed', 'attempt': attempt, 'reason': 'rejected:6', 'message': '含 空格'})
+            rotated = log.path.with_name(log.path.name + '.1')
+            self.assertTrue(rotated.is_file())
+            self.assertFalse(log.path.with_name(log.path.name + '.2').exists())
+            self.assertLessEqual(log.path.stat().st_size, 400 + 120)
+            lines = (rotated.read_text(encoding='utf-8') + log.path.read_text(encoding='utf-8')).splitlines()
+            self.assertTrue(lines[-1].endswith(' retry_failed attempt=39 reason=rejected:6 message="含 空格"'), lines[-1])
+            self.assertEqual(report.call_count, 41)
+            self.assertTrue(report.call_args.args[0].startswith('public online: '))
+            # Unwritable target and malformed events never raise into the game session.
+            (root/'blocked').mkdir()
+            blocked = client.PublicOnlineEvents(root/'blocked', anchor=root)
+            blocked.write({'kind': 'drop', 'reason': 'eof'}); blocked.flush()
+            blocked.write(None)
+            self.assertTrue((root/'blocked').is_dir())
+            under_file = client.PublicOnlineEvents(log.path/'nested.log')
+            under_file.write({'kind': 'drop'}); under_file.flush()
+
+
 class SessionTests(unittest.TestCase):
+    def test_main_keeps_public_account_alive_with_event_log(self):
+        mod = self.root/'mod'
+        mod.mkdir()
+        for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
+                             ("NOTICE.txt", "github.com/Classmg22/BBSC"), ("SUPPORTERS.txt", "BBSC SUPPORTERS")):
+            (mod/file).write_text(marker, encoding='utf-8')
+        (self.root/'profile.json').write_text(json.dumps(dict(self.profile, public_online=True)), encoding='utf-8')
+        environment = {'BBSC_ACCOUNT': 'fixture', 'BBSC_PASSWORD': 'private-value',
+                       'THEHUNT_PUBLIC_ACCOUNT': 'Public_fixture', 'THEHUNT_PUBLIC_PASSWORD': 'public-secret'}
+        with (patch.dict(os.environ, environment),
+              patch.object(client, 'Account', return_value=MagicMock()) as make_account,
+              patch.object(client, 'Bridge', return_value=MagicMock()),
+              patch.object(client, 'run_session', return_value=0) as run,
+              patch.object(client, 'state')):
+            self.assertEqual(client.main(), 0)
+            self.assertNotIn('THEHUNT_PUBLIC_PASSWORD', os.environ)
+        self.assertEqual(make_account.call_args.args, ('Public_fixture', 'public-secret'))
+        self.assertTrue(make_account.call_args.kwargs['keep_alive'])
+        events = make_account.call_args.kwargs['on_event'].__self__
+        self.assertIsInstance(events, client.PublicOnlineEvents)
+        self.assertEqual((events.path, events.anchor), (self.root/'data/user/public-online-events.log', self.root/'data'))
+        self.assertIs(run.call_args.args[4], events)
+        self.assertFalse((self.root/'data').exists())
+
+    def test_session_waits_for_public_reconnect_before_launch(self):
+        account = SimpleNamespace(wait_connected=Mock(return_value=False))
+        events = Mock()
+        with (patch.object(client, 'prepare') as prepare,
+              patch.object(client.world_recovery, 'begin') as begin):
+            with self.assertRaisesRegex(ValueError, '初始化期间公共账号连接已断开'):
+                client.run_session(self.profile, 'fixture', 'fixture', SimpleNamespace(account=account), events)
+        prepare.assert_called_once_with(self.profile)
+        events.flush.assert_called_once_with()
+        account.wait_connected.assert_called_once_with(30)
+        begin.assert_not_called()
+    def test_observation_failures_keep_owned_child_until_real_exit(self):
+        recovery = client.world_recovery
+        engine = self.root/'engine'
+        engine.mkdir()
+        (engine/'run.py').write_text(
+            "from pathlib import Path\nimport time\ntime.sleep(.35)\n"
+            "Path('child-finished').write_text('finished')\nraise SystemExit(17)\n", encoding='utf-8')
+        notices = Mock()
+        notices.poll.side_effect = RuntimeError('unexpected trophy parser failure')
+        account = SimpleNamespace(connected=True, wait_connected=Mock(return_value=True),
+                                  snapshot=account_snapshot)
+        bridge = SimpleNamespace(account=account, origin='http://fixture',
+                                 login_ok=False, failures=0, stats=bridge_stats)
+        mapping = Mock()
+        json_file = recovery.json_file
+
+        def fail_status(path, value):
+            if path.name in {'launcher-state.json', 'public-online-state.json',
+                             'latest-observation.json', 'last-exit.json', 'latest-result.json'}:
+                raise PermissionError('fixture status write denied')
+            json_file(path, value)
+
+        finalize = recovery.finalize
+
+        def finish(*args, **kwargs):
+            if args[1] is not None:
+                self.assertTrue((engine/'child-finished').is_file())
+                run = recovery.layout(self.root)[0]/'runs'/f'{args[1]}.json'
+                self.assertEqual(json.loads(run.read_text())['exit_code'], 17)
+            return finalize(*args, **kwargs)
+
+        with ExitStack() as mocks:
+            mocks.enter_context(patch.object(client, 'prepare'))
+            mocks.enter_context(patch.object(recovery, 'require_stopped'))
+            mocks.enter_context(patch.object(client, 'TrophyNotices', return_value=notices))
+            mocks.enter_context(patch.object(client, 'sync_settings', return_value=({}, {})))
+            mocks.enter_context(patch.object(client, 'build_environment',
+                                             return_value=(os.environ.copy(), NETWORK)))
+            mocks.enter_context(patch.object(client.relay_auth, 'environment', return_value={}))
+            mocks.enter_context(patch.object(recovery, 'json_file', side_effect=fail_status))
+            open_seal = mocks.enter_context(patch.object(recovery, 'quit_seal',
+                                                        side_effect=[OSError('mapping busy'), mapping]))
+            mocks.enter_context(patch.object(recovery, 'read_quit_seal', return_value=0))
+            observe = mocks.enter_context(patch.object(recovery, 'poll',
+                                                       side_effect=TypeError('malformed observation')))
+            completed = mocks.enter_context(patch.object(recovery, 'finalize', side_effect=finish))
+            mocks.enter_context(patch.object(client, 'report_failure', side_effect=lambda *_: None))
+            self.assertEqual(client.run_session(self.profile, 'fixture', 'fixture', bridge), 17)
+        self.assertEqual(open_seal.call_count, 2)
+        account.wait_connected.assert_called_once_with(30)
+        self.assertEqual(len([call for call in completed.call_args_list if call.args[1] is not None]), 1)
+        self.assertGreaterEqual(notices.poll.call_count, 1)
+        self.assertGreaterEqual(observe.call_count, 1)
+        mapping.close.assert_called_once_with()
+
+    def test_exit_record_failure_cannot_authorize_replay_or_skip_finalization(self):
+        recovery = client.world_recovery
+        user = self.root/'data/user'
+        with (patch.object(recovery, 'process_exited', side_effect=PermissionError('runs is read-only')),
+              patch.object(recovery, 'read_quit_seal', return_value=0) as seal,
+              patch.object(recovery, 'finalize', side_effect=ValueError('fixture blocked')) as finish):
+            self.assertEqual(client.finish_game(user, 'fixture', object(), 0, 'start', 'fixture.log'), 1)
+        seal.assert_called_once()
+        finish.assert_called_once_with(self.root, 'fixture', quit_sequence=0, observed_exit=0)
+        self.assertEqual(json.loads((user/'last-exit.json').read_text())['exit_code'], 0)
+        outcome = json.loads((user/'world-recovery/latest-result.json').read_text())
+        self.assertEqual((outcome['state'], outcome['game_exit_code']), ('review-required', 0))
+
+    def test_startup_failure_text_survives_status_path_guard(self):
+        import runpy
+        entry = self.root/'client.py'
+        shutil.copyfile(client.__file__, entry)
+        (self.root/'.save-conversion-pending.json').write_text('{}', encoding='utf-8')
+        stderr = io.StringIO()
+        with (patch.object(client.world_recovery, 'plain_path', side_effect=ValueError('fixture path guard')),
+              patch('sys.stderr', stderr), patch('sys.stdout', io.StringIO())):
+            with self.assertRaises(SystemExit) as exit:
+                runpy.run_path(str(entry), run_name='__main__')
+        self.assertEqual(exit.exception.code, 1)
+        status = json.loads((self.root/'launcher-state.json').read_text(encoding='utf-8'))
+        self.assertEqual(status['phase'], 'error')
+        self.assertIn('存在未完成的原版存档替换', status['message'])
+        self.assertIn(status['message'], stderr.getvalue())
+
     def test_first_initialization_imports_real_trophy_log_without_touching_source(self):
         source = self.install/'user/trophies.log'
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -40,7 +242,8 @@ class SessionTests(unittest.TestCase):
         origin = self.install/'user/savedata'
         file = origin/'1/CUSA00207/SPRJ0005/userdata0000'
         file.parent.mkdir(parents=True)
-        file.write_bytes(b'original')
+        file.write_bytes(RAW)
+        (file.parent/'userdata0010').write_bytes(b'profile'+bytes(84))
         copy = shutil.copytree
         def corrupt(source, target, *args, **kwargs):
             result = copy(source, target, *args, **kwargs)
@@ -52,13 +255,14 @@ class SessionTests(unittest.TestCase):
                 client.prepare(self.profile)
         self.assertFalse((self.root/'data').exists())
         self.assertTrue(list(self.root.glob('data.setup-*')))
-        self.assertEqual(file.read_bytes(), b'original')
+        self.assertEqual(file.read_bytes(), RAW)
 
     def test_first_import_source_mutation_is_refused(self):
         origin = self.install/'user/savedata'
         file = origin/'1/CUSA00207/SPRJ0005/userdata0000'
         file.parent.mkdir(parents=True)
-        file.write_bytes(b'original')
+        file.write_bytes(RAW)
+        (file.parent/'userdata0010').write_bytes(b'profile'+bytes(84))
         copy = shutil.copytree
         def mutate(source, target, *args, **kwargs):
             result = copy(source, target, *args, **kwargs)
@@ -109,16 +313,17 @@ class SessionTests(unittest.TestCase):
         patch.dict(os.environ, {"APPDATA": str(self.appdata)}).start()
 
     def test_prepare_copies_once_and_preserves_independent_progress(self):
-        save = self.install / "user/savedata/1/test/save.bin"
+        save = self.install / "user/savedata/1/CUSA00207/SPRJ0005/userdata0000"
         save.parent.mkdir(parents=True)
-        save.write_bytes(b"original-save")
+        save.write_bytes(RAW)
+        (save.parent/'userdata0010').write_bytes(b'profile'+bytes(84))
         client.prepare(self.profile)
-        target = self.root / "data/user/savedata/1/test/save.bin"
-        self.assertEqual(target.read_bytes(), b"original-save")
+        target = self.root / "data/user/savedata/1/CUSA00207/SPRJ0005/userdata0000"
+        self.assertEqual(target.read_bytes(), RAW)
         target.write_bytes(b"independent-progress")
         client.prepare(self.profile)
         self.assertEqual(target.read_bytes(), b"independent-progress")
-        self.assertEqual(save.read_bytes(), b"original-save")
+        self.assertEqual(save.read_bytes(), RAW)
         self.assertFalse((self.root / "fsr4_shaders").exists())
 
     def test_per_pc_settings_refresh_without_account_leak_or_high_pc_override(self):

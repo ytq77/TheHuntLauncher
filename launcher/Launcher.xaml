@@ -23,7 +23,9 @@
           <TextBlock Text="iytq" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
           <TextBlock Text="BBport 1.9.7" Foreground="#A8B1B4"/>
           <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.21" FontSize="11" Foreground="#68767D"/>
+          <TextBlock Text="0.1.0-preview.22" FontSize="11" Foreground="#68767D"/>
+          <Button x:Name="OpenGuide" Content="使用文档 ↗" ToolTip="在默认浏览器打开使用文档"
+                  HorizontalAlignment="Left" Padding="10,6" Margin="0,14,0,0" FontSize="12"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
@@ -297,7 +299,9 @@
                       BorderBrush="#A24B55" FontWeight="SemiBold" Margin="0,0,10,10"/>
               <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
               <Button x:Name="OpenSaveBackups" Content="打开备份目录" Margin="0,0,0,10"/>
+              <Button x:Name="CopyWorldRecoveryEvidence" Content="复制复核证据" Margin="0,0,0,10"/>
             </WrapPanel>
+            <TextBlock x:Name="WorldRecoverySummary" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23"/>
           </StackPanel>
         </ScrollViewer>
       </Grid>
@@ -308,6 +312,7 @@
             <TextBlock x:Name="StatusText" Text="欢迎回来。请先完成游戏与联机设置。" TextWrapping="Wrap" Foreground="#B1BEC4"/>
             <WrapPanel>
               <Button x:Name="OpenLogs" Content="打开日志目录 ↗" Background="Transparent" BorderThickness="0" Padding="0,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
+              <Button x:Name="ReviewWorldRecovery" Content="世界恢复复核" Background="Transparent" BorderThickness="0" Padding="12,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
             </WrapPanel>
           </StackPanel>
           <Button x:Name="CheckUpdates" Grid.Column="1" Content="检查更新" Height="38" Padding="16,0" FontSize="13"

@@ -86,18 +86,7 @@ bool SaveBridgeGoods(u64 carried, u64 storage, bool converted) {
 }
 
 std::optional<BbscSaveSlot> SaveBridgeSlot() {
-    const std::filesystem::path folder(std::getenv("BBSC_SAVE_DIR"));
-    auto latest = bbsc_run_started;
-    std::optional<BbscSaveSlot> selected;
-    for (int slot = 0; slot < 10; ++slot) {
-        std::error_code error;
-        const auto written = std::filesystem::last_write_time(folder / fmt::format("userdata{:04}", slot), error);
-        if (!error && written > latest) {
-            latest = written;
-            selected = BbscSaveSlot{"save", slot};
-        }
-    }
-    return selected; // never inspect unrelated emulator save folders
+    return BbscActiveSaveSlot(); // Same successful native load proof as normal sessions.
 }
 
 void SaveBridgeConvert(u64 carried, u64 storage, const BbscSaveSlot& slot) {
@@ -187,6 +176,7 @@ void InstallSaveBridgeOnly() {
         return;
     }
     image_base = MemoryPatcher::g_eboot_address;
+    InstallBbscActiveSaveHooks();
     const auto site = std::ranges::find_if(Sites, [](const TraceSite& s) { return s.offset == BbscGameTickOffset; });
     if (!image_base || site == Sites.end() || !InstallGuestCodeHook(
             reinterpret_cast<void*>(image_base + site->offset),

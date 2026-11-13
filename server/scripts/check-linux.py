@@ -19,7 +19,8 @@ def get(port, path):
 
 for _ in range(60):
     try:
-        assert json.loads(get(31415, "/status"))["ok"] is True
+        status = json.loads(get(31415, "/status"))
+        assert status["ok"] is True and status.get("relay_auth") == 2
         xml = base64.b64decode(get(20443, "/bb-eu/ss.info")).decode()
         break
     except OSError:
@@ -46,6 +47,14 @@ for prefix in (bytes.fromhex("ffffffff"), bytes.fromhex("ff83ffffffff")):
                           (address, 31414))
         reply, _ = connection.recvfrom(1024)
         assert reply == prefix + expected, reply.hex()
-with socket.create_connection((address, 20444), timeout=3):
-    pass
-print("PASS: Linux status, login, 2-second summon intervals, isolated summon routes, STUN 4/6 framing and relay listener")
+with socket.create_connection((address, 20444), timeout=3) as connection:
+    def exact(count):
+        data = b""
+        while len(data) < count:
+            chunk = connection.recv(count - len(data))
+            assert chunk, "native relay challenge EOF"
+            data += chunk
+        return data
+    size, = struct.unpack("<I", exact(4))
+    assert size == 36 and exact(size).startswith(b"THC2"), "legacy relay is not authenticated v2"
+print("PASS: Linux status, login, 2-second summon intervals, isolated summon routes, STUN 4/6 framing and authenticated relay v2 challenge")

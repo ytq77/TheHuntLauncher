@@ -1,0 +1,68 @@
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <sstream>
+#include <string>
+#include <string_view>
+using u64=std::uint64_t;
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARNING(...) ((void)0)
+enum class TraceKind{LuaSessionEvent,ActionFlags,GoodsParamLookup};
+struct TraceSite{TraceKind kind=TraceKind::LuaSessionEvent;};
+// Synthetic invocation only; the main model tests the real trampoline layout.
+struct GuestRegisterSnapshot{u64 rsi=0,rsp=0,rax=0,skip_original=0;};
+std::array<TraceSite,1> Sites;
+std::array<std::atomic<u64>,1> site_hits{};
+u64 image_base=1;
+int joins=0,covers=0,leaves=0,logs=0,session=6;
+bool capture_open=true;
+bool baseline_ready=true,baseline_current=true;
+int publications=0;
+bool BbscOwnWorldReadyForGuest(){return baseline_ready;}
+bool BbscOwnWorldCaptureStillCurrent(){return baseline_current;}
+void WriteBbscOwnWorldFile(){++publications;}
+enum class BbscLoadProtectionKind { Join };
+void ArmBbscLoadProtection(BbscLoadProtectionKind) {
+    assert(session != 3 && baseline_ready && baseline_current && publications > 0);
+}
+void ArmBbscFirstSpawn(){}
+// SAVE_GUARD_STAGE
+std::string event;
+std::string ReadGuestAscii(u64,size_t){return event;}
+template<class T>T ReadValue(u64,size_t){return 0;}
+int GetSessionState(){return session;}
+bool CaptureBbscOwnWorldBeforeJoin(){++joins;return true;}
+void StartBbscLoadCover(std::string_view){assert(joins==covers+1);++covers;}
+void BbscLeaveItemUsed(std::string_view){++leaves;}
+// CALLBACKS
+void TraceLua(u64 tag,const GuestRegisterSnapshot* registers){
+    const auto& site=Sites[tag];
+// ACTUAL_DISPATCH_AND_SAMPLING
+    if(!capture_open)return;
+    std::ostringstream out;WriteLuaSessionEvent(out,*registers);++logs;
+}
+int main(){
+    GuestRegisterSnapshot r;
+    for(int i=1;i<=304;++i){
+        event=i%3==0?"JoinSession_White":i%3==1?"OnLeaveMagic":"OnLeaveMenu_Yes";
+        if(i==301)capture_open=false; // Behavior must also run without a log stream.
+        TraceLua(0,&r);
+        if(i==67)assert(joins==22 && leaves==45 && logs==64);
+    }
+    assert(joins==101 && covers==101 && leaves==203 && logs==65);
+    event="JoinSession_White";session=3;TraceLua(0,&r);assert(joins==101);
+    event="OrdinaryGameplayEvent";TraceLua(0,&r);assert(joins==101 && leaves==203);
+    if(SaveJoinGuard){
+        session=6;event="JoinSession_White";baseline_ready=false;
+        GuestRegisterSnapshot blocked;TraceLua(0,&blocked);assert(blocked.skip_original==1);
+        event="OnLeaveMagic";GuestRegisterSnapshot leave;TraceLua(0,&leave);
+        assert(leave.skip_original==0 && leaves==204); // Failure cancels only this join invocation.
+        event="JoinSession_White";baseline_ready=true;baseline_current=false;
+        GuestRegisterSnapshot stale;TraceLua(0,&stale);assert(stale.skip_original==1);
+        baseline_current=true;GuestRegisterSnapshot accepted;TraceLua(0,&accepted);
+        assert(accepted.skip_original==0);
+    }
+    std::puts("PASS: actual Lua behavior before sampling (65-67, 300 and closed capture); no duplicate dispatch");
+}

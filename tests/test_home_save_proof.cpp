@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -29,7 +30,10 @@ using Callback=void(*)(u64,const GuestRegisterSnapshot*);
 Callback installed=nullptr;
 bool own=true;
 std::filesystem::path folder;
-constexpr u32 BbscRecoveryApplied=3;
+constexpr u32 BbscRecoveryApplied=3, BbscRecoveryBlocked=5;
+struct ActiveSave {int slot; u64 generation;};
+std::optional<ActiveSave> active_save;
+std::optional<ActiveSave> BbscNativeActiveSaveToken(){return active_save;}
 struct Row {u32 key,index;std::array<u8,125> before{},after{};};
 std::vector<Row> bbsc_recovery_rows;
 u64 bbsc_recovery_sequence=100;
@@ -85,5 +89,15 @@ int main(int argc,char**argv){
  ptr=reinterpret_cast<u64>(manager.data());std::memcpy(image.data()+0x100,&ptr,8);
  for(int i=0;i<100;++i){bank[625]=u8(i);installed(0,nullptr);}
  assert(bbsc_home_proof_sequence==64);
+ const u64 next_ack=101;
+ BbscRecoveryWriteFile(folder/"acks/1.ack",std::span<const u8>{reinterpret_cast<const u8*>(&next_ack),8});
+ bank[625]=7;++bbsc_recovery_sequence;bbsc_recovery_mode=BbscRecoveryBlocked;
+ active_save=ActiveSave{1,42};
+ assert(BbscRecordHomeSaveProof(42) && bbsc_home_proof_sequence==1);
+ const auto title_log=bbsc_home_proof_folder/"native.jsonl";
+ {std::ifstream in(title_log);std::string row;std::getline(in,row);assert(row.find("title-reload")!=std::string::npos);}
+ active_save=ActiveSave{2,42};installed(0,nullptr);assert(bbsc_home_proof_sequence==1);
+ active_save=ActiveSave{1,43};installed(0,nullptr);assert(bbsc_home_proof_sequence==1);
+ active_save=ActiveSave{1,42};installed(0,nullptr);assert(bbsc_home_proof_sequence==2&&bank==unchanged);
  return 0;
 }

@@ -16,7 +16,9 @@ class EmbeddedServer(unittest.TestCase):
         files={'Server.exe':b'server-program','server.json':b'{"address":"127.0.0.1"}',
                'bbsc/shadnet.exe':b'shadnet-program','runtime/bin/python.exe':b'python-runtime',
                'runtime/bin/shadnet-admin.exe':b'account-tool','bbsc-game/bbsc_gameserver.py':b'# fixed server',
-               'Apply-Update.ps1':b'# installer'}
+               'Apply-Update.ps1':b'# installer', 'README.md': b'[Deploy](docs/deployment.md)',
+               'docs/deployment.md': b'Example deployment', 'docs/windows.md': b'Example Windows guide',
+               'recipe/sources.json': b'{}'}
         files.update(extra or {})
         info={'label':version,'features':['seamless-only'],'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in files.items()}}
         files['BUILD-INFO.json']=json.dumps(info).encode()
@@ -36,9 +38,19 @@ class EmbeddedServer(unittest.TestCase):
 
     def test_state_and_unsafe_names_are_rejected_before_any_extraction(self):
         for name in ('bbsc/db/shadnet.db','bbsc/shadnet.cfg','bbsc/online-data.json',
-                     'bbsc/.server.lock','normal/shadnet.exe','../escape','/escape','runtime/../../escape'):
+                     'bbsc/online-data.json.tmp', 'bbsc/online-data.tmp', 'BBSC/ONLINE-DATA.JSON.123.TMP',
+                     '.save-conversion-pending.json', '.save-conversion-pending.json.abc.tmp',
+                     'bbsc/.server.lock','normal/shadnet.exe', 'NORMAL/shadnet.exe',
+                     '../escape','/escape','runtime/../../escape', 'runtime//a', 'runtime/CON.txt'):
             with self.subTest(name=name),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);archive=self.package(root,{name:b'private-or-unsafe'});dest=root/'embedded'
+                with self.assertRaises(ValueError):install_package(archive,dest,'0.1.0-preview.15',check_public)
+                self.assertFalse(dest.exists())
+
+    def test_case_collisions_and_file_directory_conflicts_are_rejected_before_extraction(self):
+        for extra in ({'server.EXE': b'collision'}, {'docs': b'conflict'}):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); archive=self.package(root, extra); dest=root/'embedded'
                 with self.assertRaises(ValueError):install_package(archive,dest,'0.1.0-preview.15',check_public)
                 self.assertFalse(dest.exists())
 

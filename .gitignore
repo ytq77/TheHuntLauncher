@@ -30,5 +30,7 @@ update-settings.json
 /conversion-jobs/
 /conversion-current.json
 /.save-conversion.lock
+/.save-conversion-pending.json
+/.update-transaction.json
 /save-conversion-backups/
 /.savedata-conversion-*/

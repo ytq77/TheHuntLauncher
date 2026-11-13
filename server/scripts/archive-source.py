@@ -39,7 +39,9 @@ with zipfile.ZipFile(OUT / f"{prefix}.zip", "w", zipfile.ZIP_DEFLATED, compressl
         bundle.write(path, f"{prefix}/windows/downloads/{name}")
 with zipfile.ZipFile(OUT / f"TheHuntServer-Linux-recipe-v{VERSION}.zip", "w", zipfile.ZIP_DEFLATED) as bundle:
     for name in sorted(tracked):
-        if name.startswith(("recipe/", "docs/")) or name in ("README.md", "VERSION", "LICENSE", "NOTICE.md"):
+        if name.startswith(("recipe/", "docs/")) or name in (
+                "README.md", "VERSION", "LICENSE", "NOTICE.md",
+                "scripts/check-linux.py", "tests/relay_v2_integration.py"):
             bundle.write(ROOT / name, f"TheHuntServer/{name}")
 binary = ROOT / "windows/dist" / f"TheHuntServer-Windows-v{VERSION}.zip"
 shutil.copy2(binary, OUT / binary.name)

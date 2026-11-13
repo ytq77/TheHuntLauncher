@@ -1,6 +1,5 @@
 """Exercise the packed native services on loopback using disposable state."""
 import base64
-import faulthandler
 import configparser
 import hashlib
 import json
@@ -29,7 +28,6 @@ env["PYTHONUTF8"] = "1"
 env["PYTHONNOUSERSITE"] = "1"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 results, running = {}, []
-faulthandler.dump_traceback_later(20, repeat=True)
 
 
 def http(port, path, body=None):
@@ -144,24 +142,18 @@ try:
     results["seamless_STUN_4_and_6_byte_framing"] = True
     print("UDP STUN: OK", flush=True)
 
-    advert = dict(MessageId="SummonDataCreateRequest", SessionId="native-session", UserId=2465,
-                  CharaId=9223372036854775808, AreaId=385875968, AreaRegionId=230100, ChannelId=0,
-                  MatchingLevel=46, SummonData="opaque-native-data", SummonDataVersion=3,
-                  SummonMethod=0, SummonType=0, SummonWord=None, PosX=143, PosY=-116, PosZ=-87)
-    search = dict(advert, MessageId="SummonDataGetListRequest", SessionId="host-session", UserId=2466,
-                  SummonTypeList=[{"SummonType": 0}], DistanceThreshold=100, GetMaxCount=20)
-    claim = dict(MessageId="SummonDataSummonRequest", SessionId="native-session", UserId=2466,
-                 TargetUserId=2465, TargetCharaId=9223372036854775808, HostData="native-host")
-    assert len(json.loads(http(31415, "/summon_messenger/get", search))["SummonDataList"]) == 0
-    for port in (31415,):
-        assert json.loads(http(port, "/summon_messenger/create", advert))["ResKind"] == 0
-        assert len(json.loads(http(port, "/summon_messenger/get", search))["SummonDataList"]) == 1
-        assert json.loads(http(port, "/summon_messenger/request", claim))["ResKind"] == 0
-        delivery = json.loads(http(port, "/summon_messenger/create", advert))
-        assert delivery["HostData"] == "native-host"
-        assert delivery["TargetCharaId"] == 9223372036854775808
-    results["summon_advertise_search_claim_delivery"] = True
-    print("Summon flows: OK", flush=True)
+    # Exercise the actual native NP rooms and v2 relay in this disposable pack.
+    # A raw legacy broadcast must no longer be considered successful behavior.
+    integration = ROOT.parent / "tests/relay_v2_integration.py"
+    checked = subprocess.run([str(PYTHON), "-B", str(integration),
+        "--server-ip", "127.0.0.1", "--tcp-port", "31413", "--web-port", "31415",
+        "--relay-port", "20444", "--state-dir", str(TEST / "bbsc")],
+        env=env, capture_output=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)
+    evidence = checked.stdout.decode("utf-8", errors="replace")
+    (TEST.parent / (TEST.name + ".relay-wire.log")).write_text(evidence, encoding="utf-8")
+    assert checked.returncode == 0, "Authenticated relay/NP room checks failed; see isolated relay-wire log"
+    results["authenticated_relay_actual_NP_rooms_and_summon_ownership"] = True
+    print("Authenticated relay and actual NP rooms: OK", flush=True)
 
     for _ in range(60):
         try:
@@ -178,27 +170,6 @@ try:
     for tag in ("SummonDataGetListInterval2", "SummonDataCreateInterval2"):
         assert f"<{tag}>2</{tag}>" in xml, tag
     results["BBSC_summon_search_and_create_intervals_are_2_seconds"] = True
-    with socket.create_connection(("127.0.0.1", 20444), timeout=2) as left, \
-         socket.create_connection(("127.0.0.1", 20444), timeout=2) as right:
-        # TCP connect can finish before the server has registered both relay clients.
-        for connection in (left, right):
-            for _ in range(5):
-                if frame(connection) == b"\x7f\x01":
-                    break
-            else:
-                raise AssertionError("Relay did not announce the other client")
-        for source, target, payload in ((left, right, b"native-left-to-right"),
-                                        (right, left, b"native-right-to-left")):
-            source.sendall(struct.pack("<I", len(payload)) + payload)
-            for _ in range(5):
-                received = frame(target)
-                if not received.startswith(b"\x7f"):
-                    assert received == payload
-                    break
-            else:
-                raise AssertionError("No relayed frame")
-    results["BBSC_relay_bidirectional"] = True
-    print("BBSC HTTP and relay: OK", flush=True)
     stop(bbsc)
     bbsc = launch("bbsc")
     assert b"[login] OK userId=" in sample("bbsc", "login", "seamless01", password)

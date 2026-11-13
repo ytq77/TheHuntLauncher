@@ -39,6 +39,7 @@ public sealed class DesktopWindow
     string iconGame, version="0.1.0-preview.17";
     DateTime startedAt;
     string noticeSession;
+    string recoveryDigest;
     int noticeSequence;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
@@ -63,7 +64,11 @@ public sealed class DesktopWindow
     void Error(string message) { Say(message); MessageBox.Show(Window,message,"The Hunt",MessageBoxButton.OK,MessageBoxImage.Warning); }
     bool Confirm(string message,string title) { return MessageBox.Show(Window,message,title,MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)==MessageBoxResult.Yes; }
     string PathAt(string name) { return Path.Combine(root,name); }
-    Dictionary<string,object> ReadJson(string path) { return json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path,Encoding.UTF8)); }
+    Dictionary<string,object> ReadJson(string path) {
+        using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
+        using(var reader=new StreamReader(stream,Encoding.UTF8))
+            return json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());
+    }
     void WriteJson(string path,object value) {
         string temp=path+".tmp"; File.WriteAllText(temp,json.Serialize(value),new UTF8Encoding(false));
         if(File.Exists(path)) File.Replace(temp,path,null); else File.Move(temp,path);
@@ -105,6 +110,9 @@ public sealed class DesktopWindow
             Get<TextBlock>("PublicStatus").Text="公共账号已移除；如需公共内容，请重新填写账号。";
         });
         AsyncClick("Launch",Launch);
+        AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
+        AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
+        Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://github.com/ytq77/TheHuntLauncher#快速开始") {UseShellExecute=true}); });
         Click("OpenLogs",delegate { OpenFolder(Directory.Exists(PathAt(@"data\user")) ? PathAt(@"data\user"):root); });
         Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有导入备份。首次替换现有无缝存档时会自动创建。"; });
         AsyncClick("RefreshSaves",delegate { return Transfer(false); });
@@ -131,10 +139,10 @@ public sealed class DesktopWindow
         Page("Home"); SetBusy();
     }
     public void Start() {
+        try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
+        catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         Window.Loaded+=async delegate {
             timer.Start(); await RefreshTrophies();
-            try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
-            catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
@@ -223,8 +231,9 @@ public sealed class DesktopWindow
         }
     }
     void SetBusy() {
-        foreach(string n in new [] {"UseLocalServer","Launch","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
+        foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
+        Get<Button>("CopyWorldRecoveryEvidence").IsEnabled=!Busy && !String.IsNullOrEmpty(recoveryDigest);
         foreach(var p in conversions) Get<Button>(p.Key).IsEnabled=!Busy && (p.Value=="create" || p.Value.StartsWith("start-") || Str(conversionJob,"next")==p.Value);
         foreach(string n in new [] {"ConversionSameRole","ConversionClearSlots","ConversionConfirmed"}) Get<CheckBox>(n).IsEnabled=!Busy;
         Get<Button>("ConversionOpenOrdinaryBackup").IsEnabled=!Busy && Directory.Exists(ConversionBackup());
@@ -243,11 +252,60 @@ public sealed class DesktopWindow
         var info=Python(script,arguments); info.RedirectStandardInput=request!=null;
         using(var p=Process.Start(info)) {
             var output=p.StandardOutput.ReadToEndAsync(); var errors=p.StandardError.ReadToEndAsync();
-            if(request!=null) { await p.StandardInput.WriteAsync(json.Serialize(request)); p.StandardInput.Close(); }
+            if(request!=null) {
+                var text=new StringBuilder();
+                foreach(char c in json.Serialize(request)) text.Append(c>127 ? "\\u"+((int)c).ToString("x4"):c.ToString());
+                await p.StandardInput.WriteAsync(text.ToString()); p.StandardInput.Close();
+            }
             await Task.Run(()=>p.WaitForExit()); string data=await output; await errors;
             var result=json.Deserialize<Dictionary<string,object>>(data);
             if(p.ExitCode!=0 || !Flag(result,"ok")) throw new InvalidOperationException(Str(result,"error").Length>0 ? Str(result,"error"):"操作未完成，请保留日志。");
             return result;
+        }
+    }
+    async Task ReviewWorldRecovery() {
+        RequireIdle(); Page("Save"); recoveryDigest=null; operation=true; SetBusy();
+        var summary=Get<TextBlock>("WorldRecoverySummary"); summary.Text="正在只读核对世界恢复记录…";
+        try {
+            var review=await Request("world_recovery.py",null,"review");
+            var lines=new List<string>();
+            foreach(Dictionary<string,object> row in (System.Collections.IEnumerable)review["items"]) {
+                string slot=Str(row,"slot"), mode=Str(row,"mode");
+                string label=slot.Length>0 ? "槽位 "+slot : "世界恢复";
+                if(mode.Length>0) label+=" · "+mode;
+                var origin=row.ContainsKey("origin") ? row["origin"] as Dictionary<string,object>:null;
+                string source=String.Join(" · ",new [] {"origin","source","reason"}.Select(key=>Str(origin,key)).Where(v=>v.Length>0));
+                var generations=row.ContainsKey("generations") ? row["generations"] as Dictionary<string,object>:null;
+                string details=generations==null ? "" : "\n"+String.Join(" · ",generations.Select(pair=>
+                    (pair.Key.StartsWith("userdata",StringComparison.Ordinal) ? "主档：":"备档：")+
+                    RecoveryGeneration(Str(pair.Value as Dictionary<string,object>,"state"))));
+                lines.Add(label+"： "+Str(row,"reason")+(source.Length==0 ? "":"\n标记来源："+source)+details);
+            }
+            summary.Text=lines.Count==0 ? "当前没有待复核的世界记录。":String.Join("\n\n",lines);
+            recoveryDigest=Str(review,"digest");
+        } catch {
+            summary.Text="无法完成本次复核，详情见提示。";
+            throw;
+        } finally { operation=false; SetBusy(); }
+    }
+    async Task CopyWorldRecoveryEvidence() {
+        RequireIdle();
+        if(String.IsNullOrEmpty(recoveryDigest) ||
+           !Confirm("创建一份校验过的本地证据副本？副本含私人存档，请仅在本机核对。\n\n证据不足时请保留原记录。","复制恢复证据")) return;
+        operation=true; SetBusy();
+        try {
+            var result=await Request("world_recovery.py",Map("digest",recoveryDigest),"copy-evidence");
+            Get<TextBlock>("WorldRecoverySummary").Text+="\n\n已保留证据副本："+Str(result,"path");
+            OpenFolder(Str(result,"path"));
+        } finally { recoveryDigest=null; operation=false; SetBusy(); }
+    }
+    static string RecoveryGeneration(string state) {
+        switch(state) {
+            case "verified": return "已核验";
+            case "missing": return "缺失";
+            case "different-character": return "角色不符";
+            case "invalid": case "unreadable": return "无法读取";
+            default: return "未核验";
         }
     }
     async Task Launch() {
@@ -292,7 +350,23 @@ public sealed class DesktopWindow
         if(failure!=null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
     static async Task Pump(StreamReader reader,StreamWriter log) {
-        string line; while((line=await reader.ReadLineAsync())!=null) { lock(log) { log.WriteLine(line); log.Flush(); } }
+        string line; bool logFailed=false;
+        while((line=await reader.ReadLineAsync())!=null) {
+            if(logFailed) continue; // Keep draining; a full pipe can block the game supervisor.
+            try { lock(log) { log.WriteLine(line); log.Flush(); } }
+            catch(IOException) { logFailed=true; }
+            catch(ObjectDisposedException) { logFailed=true; }
+        }
+    }
+    static string PublicStatusText(Dictionary<string,object> state) {
+        // The worker computes reconnect/failed notices; empty keeps the normal status text.
+        string notice=Str(state,"notice"); if(notice.Length>0) return notice;
+        // A drop shorter than the 20 s grace still reports "reconnecting" with no notice.
+        string account=Str(state,"account_state");
+        bool connected=account.Length>0 ? account=="connected" || account=="reconnecting" : Flag(state,"account_connected");
+        object count; int failures=0;
+        if(state.TryGetValue("consecutive_failures",out count) || state.TryGetValue("failures",out count)) failures=Convert.ToInt32(count);
+        return !connected ? "公共账号连接已断开。": failures>0 ? "公共内容请求失败，请检查网络或重新启动。":Flag(state,"game_authenticated") ? "公共在线已连接 · 私服无缝保持独立。":"公共账号已连接，等待游戏登录。";
     }
     void Poll() {
         if(worker==null) return;
@@ -301,7 +375,7 @@ public sealed class DesktopWindow
             string path=PathAt(@"data\user\public-online-state.json");
             if(!worker.HasExited && File.Exists(path)) {
                 var state=ReadJson(path);
-                if(Str(state,"ui_session")==noticeSession) Get<TextBlock>("PublicStatus").Text=!Flag(state,"account_connected") ? "公共账号连接已断开。": Convert.ToInt32(state["failures"])>0 ? "公共内容请求失败，请检查网络或重新启动。":Flag(state,"game_authenticated") ? "公共在线已连接 · 私服无缝保持独立。":"公共账号已连接，等待游戏登录。";
+                if(Str(state,"ui_session")==noticeSession) Get<TextBlock>("PublicStatus").Text=PublicStatusText(state);
             }
         } catch(IOException) {} catch(ArgumentException) {}
         try { if(File.Exists(PathAt("launcher-state.json"))) Say(Str(ReadJson(PathAt("launcher-state.json")),"message")); } catch(IOException) {} catch(ArgumentException) {}

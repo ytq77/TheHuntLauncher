@@ -9,8 +9,15 @@ import os
 from pathlib import Path
 import secrets
 import urllib.request
+import importlib.util
 
 ROOT = Path(__file__).resolve().parent
+_security_spec = importlib.util.spec_from_file_location("server_security", ROOT / "security.py")
+security = importlib.util.module_from_spec(_security_spec)
+_security_spec.loader.exec_module(security)
+_relay_spec = importlib.util.spec_from_file_location("server_relay_auth", ROOT / "relay_auth.py")
+relay_auth = importlib.util.module_from_spec(_relay_spec)
+_relay_spec.loader.exec_module(relay_auth)
 
 
 def write_once(path, data):
@@ -45,7 +52,7 @@ def fetch(url, path, digest, offline):
 
 
 def patch_gameserver(data):
-    """Only add the explicit summon WebAPI URL; keep other upstream behavior."""
+    """Add the isolated summon WebAPI URL and shared security patch to pinned BBSC."""
     text = data.decode("utf-8")
     replacements = [
         (
@@ -66,7 +73,7 @@ def patch_gameserver(data):
         if text.count(before) != 1:
             raise ValueError("Pinned BBSC source no longer matches the WebAPI patch.")
         text = text.replace(before, after, 1)
-    return text.encode("utf-8")
+    return relay_auth.patch_gameserver(security.patch_gameserver(text.encode("utf-8")))
 
 
 def patch_local_login(data):

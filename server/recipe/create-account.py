@@ -3,6 +3,7 @@
 import argparse
 import configparser
 import getpass
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -11,20 +12,23 @@ ROOT = Path(__file__).resolve().parent
 
 
 def invoke(host, port, action, *values):
-    # The upstream sample accepts credentials as argv. They are not printed or
-    # written to shell history, but local administrators can inspect process args.
-    command = ["docker", "compose", "exec", "-T", "shadnet", "shadnet-sample",
-               host, port, action, *values]
+    fields = {"register": ("name", "password", "email", "key"), "login": ("name", "password")}
+    if action not in fields or len(values) != len(fields[action]):
+        raise ValueError("Unsupported account request")
+    command = ["docker", "compose", "exec", "-T", "shadnet", "shadnet-admin", host, port, action]
     try:
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=35)
-    except subprocess.TimeoutExpired:
-        raise ValueError(f"{action} timed out; check Compose health before retrying.") from None
-    text = result.stdout + result.stderr
-    marker = "[create] Account created successfully." if action == "register" else "[login] OK userId="
-    if result.returncode != 0 or marker not in text:
-        error = re.search(r"\[(?:create|login)\] FAILED: (\w+)", text)
-        reason = error.group(1) if error else "no verified success response; inspect service health"
-        raise ValueError(f"{action}: {reason}")  # Do not dump credentials or raw output.
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=35,
+                                input=json.dumps(dict(zip(fields[action], values)), ensure_ascii=True) + "\n")
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError(f"{action} did not finish; check service health and the stdin helper version before retrying.") from None
+    try:
+        response = json.loads(next((row for row in reversed(result.stdout.splitlines())
+                                    if row.startswith('{"ok":')), '{}'))
+    except (ValueError, TypeError):
+        response = {}
+    if result.returncode != 0 or not isinstance(response, dict) or response.get("ok") is not True:
+        raise ValueError(f"{action}: no verified success response; inspect service health and shadnet-admin version")
 
 
 def main():

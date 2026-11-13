@@ -3,9 +3,8 @@
 This module never writes game saves or replays world flags. Native save entry
 alone is insufficient: both actual generations must match later native banks.
 """
-import hashlib
 import json
-from pathlib import Path
+import re
 
 
 def prepare(root, token):
@@ -16,11 +15,11 @@ def prepare(root, token):
         data = wr.stable(path)
         if len(data) < wr.HEADER.size:
             continue
-        _, _, seq, old_token, slot, _, _, _ = wr.HEADER.unpack_from(data)
-        job = folder/'jobs'/f'{old_token.decode("ascii")}-{slot}-{seq}'/'job.json'
+        seq, old_token, slot, _, _, _ = wr.request_header(data)
+        job = folder/'jobs'/f'{old_token}-{slot}-{seq}'/'job.json'
         if not job.exists() or json.loads(wr.stable(job)).get('state') != 'primary-ready':
             continue
-        request = wr.read_request(root, path)
+        request = wr.read_request(root, path, enroll=False)
         value = wr.prepare(request)
         name = f'userdata{slot:04}'
         raw = wr.stable(saves/name)
@@ -45,7 +44,43 @@ def prepare(root, token):
     return {'THEHUNT_SAVE_PROOF_DIR':str(target)}
 
 
-def verify(request, value, current):
+def eligible_run(run, token, root, slot, identity, running_token):
+    if not isinstance(run, dict):
+        return False
+    exit_code = run.get('exit_code')
+    return (run.get('token') == token and run.get('root') == root and
+            isinstance(run.get('identities'), dict) and run['identities'].get(str(slot)) == identity and
+            type(run.get('started_ns')) is int and run['started_ns'] > 0 and
+            ((type(exit_code) is int and exit_code == 0) or
+             ('exit_code' not in run and token == running_token)))
+
+
+def native_records(raw, run, stage):
+    # Require a complete bounded append before treating it as a native receipt.
+    if len(raw) > 65536 or not raw.endswith(b'\n'):
+        return None
+    lines = raw.splitlines()
+    if not 2 <= len(lines) <= 64:
+        return None
+    try:
+        records = [json.loads(line) for line in lines]
+    except (ValueError, RecursionError):
+        return None
+    previous = -1
+    for sequence, row in enumerate(records, 1):
+        if (not isinstance(row, dict) or
+                any(type(row.get(key)) is not int for key in ('sequence', 'pid', 'monotonic_ms', 'epoch_ms')) or
+                row['sequence'] != sequence or row['pid'] <= 0 or row['pid'] != records[0]['pid'] or
+                row['monotonic_ms'] < max(0, previous) or row['epoch_ms']*1000000 < run['started_ns'] or
+                row['epoch_ms'] < records[0]['epoch_ms'] or
+                row.get('stage') != (stage if sequence == 1 else 'save-entry') or
+                not isinstance(row.get('sha256'), str) or not re.fullmatch('[0-9a-f]{64}', row['sha256'])):
+            return None
+        previous = row['monotonic_ms']
+    return records
+
+
+def verify(request, value, current, *, running_token=None):
     import world_recovery as wr
     for folder in sorted((request['folder']/'save-proof').glob('*')):
         context_path, log = folder/'context.json', folder/'native.jsonl'
@@ -59,9 +94,8 @@ def verify(request, value, current):
                 context.get('slot') != request['slot']):
             continue
         run = json.loads(wr.stable(request['folder']/'runs'/f'{folder.name}.json'))
-        if (run['token'] != folder.name or run['root'] != request['context']['root'] or
-                run['identities'].get(str(request['slot'])) != value['identity'] or
-                run.get('exit_code', 0) != 0):
+        if not eligible_run(run, folder.name, request['context']['root'], request['slot'],
+                            value['identity'], running_token):
             continue
         bank = wr.stable(folder/'expected-bank.bin')
         if len(bank) != 150000 or wr.sha(bank) != context['bank_sha256']:
@@ -73,31 +107,8 @@ def verify(request, value, current):
                 not wr.file_matches(request, value, f'userdata{request["slot"]:04}', source)):
             raise ValueError('加载核对的原始输入或恢复目标发生变化，保留恢复任务。')
         raw_log = wr.stable(log)
-        # An unfinished append is not a complete native receipt.
-        if len(raw_log) > 65536 or not raw_log.endswith(b'\n'):
-            continue
-        records = [json.loads(line) for line in raw_log.splitlines()]
-        if not 2 <= len(records) <= 64:
-            continue
-        loaded = records[0]
-        if (loaded.get('stage') != 'loaded' or loaded.get('sequence') != 1 or
-                loaded.get('sha256') != context['bank_sha256'] or
-                loaded.get('epoch_ms', 0)*1000000 < run['started_ns']):
-            continue
-        pid = loaded.get('pid')
-        if not isinstance(pid, int) or pid <= 0:
-            continue
-        previous = loaded['monotonic_ms']
-        valid = True
-        for seq, record in enumerate(records, 1):
-            if (record.get('sequence') != seq or record.get('pid') != pid or
-                    record.get('monotonic_ms', 0) < previous or
-                    record.get('epoch_ms', 0) < loaded['epoch_ms'] or
-                    (seq > 1 and record.get('stage') != 'save-entry')):
-                valid = False
-                break
-            previous = record['monotonic_ms']
-        if not valid:
+        records = native_records(raw_log, run, 'loaded')
+        if not records or records[0]['sha256'] != context['bank_sha256']:
             continue
         files = {}
         for name, raw in current.items():
@@ -115,7 +126,7 @@ def verify(request, value, current):
                            'mtime_ns':path.stat().st_mtime_ns}
         if set(files) == set(value['files']):
             request['native_save_receipt'] = raw_log
-            return {'schema':1, 'run_token':folder.name, 'pid':pid,
+            return {'schema':1, 'run_token':folder.name, 'pid':records[0]['pid'],
                     'loaded_bank_sha256':context['bank_sha256'],
                     'native_receipt_sha256':wr.sha(raw_log), 'files':files}
     return None

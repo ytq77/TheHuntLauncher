@@ -28,6 +28,7 @@ RINGING = {201, 206, 226}
 KIT = {4016, 4121, 11201, 4313, 11251}
 ALL_GOODS = ORIGINAL | RINGING | KIT
 OFFLINE_FLOW = 'offline-v1'
+PENDING_INSTALL = '.save-conversion-pending.json'
 NEXT = {'created': 'baseline', 'baselined': 'inspect', 'inspected': 'convert',
         'converted': 'verify', 'awaiting-confirmation': 'export'}
 MESSAGES = {
@@ -43,8 +44,14 @@ MESSAGES = {
 def atomic_json(path, value):
     path = plain_path(path)
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
-    temporary.replace(path)
+    try:
+        with temporary.open('x', encoding='utf-8') as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def hashes(folder):
@@ -103,6 +110,7 @@ def operation_lock():
     with stream:
         stream.write(json.dumps({'pid': os.getpid()}))
     try:
+        recover_pending_install()
         yield
     finally:
         path.unlink(missing_ok=True)
@@ -131,6 +139,41 @@ def save_job(job):
     atomic_json(job_path(job['id']) / 'job.json', job)
 
 
+def recover_pending_install():
+    marker = plain_path(ROOT / PENDING_INSTALL)
+    if not marker.exists():
+        return
+    record = json.loads(marker.read_text('utf-8'))
+    job = load_job(record['job'])
+    destination, stage, backup = (plain_path(record[key]) for key in ('destination', 'stage', 'backup'))
+    parent = destination.parent
+    if (destination != plain_path(job['ordinary']) or stage.parent != parent or
+            not re.fullmatch(r'\.savedata-conversion-[0-9a-f]{32}', stage.name) or
+            backup.parent.parent != parent/'save-conversion-backups' or backup.name != 'savedata' or
+            not re.fullmatch(job['id'] + r'-[0-9a-f]{8}', backup.parent.name)):
+        raise ValueError('替换恢复记录的路径不匹配，未移动存档。')
+    if (job['state'] == 'applied' and job.get('ordinary_backup') == str(backup) and
+            destination.exists() and backup.exists() and
+            hashes(destination) == record['expected'] and hashes(backup) == record['original']):
+        marker.unlink()
+        return
+    if (destination.exists() and stage.exists() and not backup.exists() and
+            hashes(destination) == record['original'] and hashes(stage) == record['expected']):
+        marker.unlink()
+        return  # The first directory switch had not started.
+    # If stage still exists and the destination is absent, interruption was
+    # before installation or trophy changes. Restore only the verified old tree.
+    if (not destination.exists() and stage.exists() and backup.exists() and
+            hashes(stage) == record['expected'] and hashes(backup) == record['original']):
+        require_stopped()
+        backup.rename(destination)
+        if hashes(destination) != record['original']:
+            raise ValueError(f'恢复后校验失败，已保留记录：{marker}')
+        marker.unlink()
+        raise ValueError('已恢复上次中断前的原版存档；请重新发起转换。')
+    raise ValueError(f'发现未完成的原版替换，未继续操作。原版路径：{destination}；旧档备份：{backup}；记录：{marker}')
+
+
 def public_status(job):
     if job is None:
         return {'state': 'none', 'message': '先新建独立测试副本。原版与无缝版均保持原样。', 'next': None}
@@ -141,6 +184,8 @@ def public_status(job):
 
 
 def auxiliary_snapshot():
+    from world_recovery import require_review_clear_for_transfer
+    require_review_clear_for_transfer(ROOT)
     result = {}
     for name in ('guest-items', 'own-world', 'shared-progress'):
         folder = plain_path(ROOT / 'mod' / name)
@@ -507,6 +552,7 @@ def install_converted_job(job, confirmed):
     if job['state'] != 'exported' or confirmed is not True or job.get('player_confirmed') is not True:
         raise ValueError('请先完成重载和导出验证，再明确选择替换原版存档。')
     require_stopped()
+    recover_pending_install()
     assert_sources(job)
     destination = source_path(job['profile']['install'])
     if destination != plain_path(job['ordinary']):
@@ -536,11 +582,19 @@ def install_converted_job(job, confirmed):
     assert_sources(job)
     if hashes(stage) != expected or hashes(source) != expected:
         raise ValueError('待替换副本校验失败，原版保持不变。')
+    original = {name: row[-1] for name, row in job['source_snapshots']['ordinary'][1].items()}
+    marker = plain_path(ROOT / PENDING_INSTALL)
+    atomic_json(marker, {'job': job['id'], 'destination': str(destination), 'stage': str(stage),
+                         'backup': str(backup), 'original': original, 'expected': expected})
     # Stage and backup share the ordinary save volume; no cross-volume move.
-    destination.rename(backup)
+    try:
+        destination.rename(backup)
+    except OSError:
+        if not backup.exists() and destination.exists() and hashes(destination) == original:
+            marker.unlink()
+        raise
     try:
         stage.rename(destination)
-        original = {name: row[-1] for name, row in job['source_snapshots']['ordinary'][1].items()}
         if hashes(destination) != expected or hashes(backup) != original:
             raise OSError('Installed save verification failed')
         if trophies:
@@ -560,12 +614,16 @@ def install_converted_job(job, confirmed):
             raise ValueError(f'替换及恢复未完成。完整旧存档保留在：{backup}；请保留现场，暂勿启动游戏。') from None
         if trophy_error:
             raise ValueError(f'原版存档已恢复，但奖杯记录回滚未完成；原记录保留在：{backup.parent / "trophies"}。请保留现场。') from None
+        if hashes(destination) != original:
+            raise ValueError(f'恢复后校验失败，已保留记录：{marker}') from None
+        marker.unlink()
         raise ValueError('替换未完成，原版存档已恢复；导出包和失败副本保留。') from None
     job.update(state='applied', ordinary_backup=str(backup), installed_sha256=expected,
                message=f'已替换原版存档。旧原版完整备份：{backup}。无缝版和导出包保留；两个分支的进度没有合并。')
     if trophies:
         job['message'] += '\n' + trophy_sync.notice(job['trophy_plan']['summary'])
     save_job(job)
+    marker.unlink()
     return job
 
 

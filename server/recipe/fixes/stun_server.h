@@ -6,6 +6,13 @@
 #include <QUdpSocket>
 #include "client_session.h"
 
+namespace StunSecurity {
+// No I/O: only accept endpoint updates from a live login's observed source IP.
+// This narrows spoofing across devices, but is not authentication behind NAT.
+bool RecordEndpoint(SharedState* shared, const QString& npid,
+                    const QHostAddress& sender, uint16_t senderPort);
+}
+
 class StunServer : public QObject {
     Q_OBJECT
 public:

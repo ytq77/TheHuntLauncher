@@ -1,0 +1,71 @@
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <iostream>
+#include <stdexcept>
+using u8=uint8_t;using u32=uint32_t;using u64=uint64_t;using s32=int32_t;
+#define PS4_SYSV_ABI
+#define LOG_INFO(...)
+#define LOG_WARNING(...)
+void require(bool b,const char*s){if(!b)throw std::runtime_error(s);}
+std::array<u8,0x1600> memory;std::array<u8,0x90> rules;
+u64 global=reinterpret_cast<u64>(memory.data()),image_base=0;
+u64 rules_pointer=reinterpret_cast<u64>(rules.data());
+const u64 SummonSessionRulesPointerOffset=reinterpret_cast<u64>(&rules_pointer);
+std::vector<std::string> events;
+bool readable=true,writable=true,placement=true,selected=true,prepare_ok=true,rules_ok=true;
+u32 selected_map=0x19000000;u64 result=1;
+int arms=0,clears=0;bool target_armed=true;std::string why_expected;
+struct SummonPlacementDescriptor{u32 packed_region{};float x{},y{},z{},heading{};};
+struct BbscFollowLoadProtection{u64 ticket{},reload_before{};};
+enum class BbscLoadProtectionKind{Join,Travel,Respawn};
+BbscLoadProtectionKind protection_kind;std::atomic<u64> bbsc_character_reload_generation{77};
+BbscFollowLoadProtection returned;bool check_returned=false;
+template<class T>T ReadValue(u64 address,size_t offset){T out;std::memcpy(&out,reinterpret_cast<const void*>(address+offset),sizeof(out));return out;}
+template<class T>bool WriteValue(u64 address,size_t offset,T value){std::memcpy(reinterpret_cast<void*>(address+offset),&value,sizeof(value));return true;}
+enum class MemoryProt{CpuWrite};
+bool ReadablePointer(u64 p,size_t){return p==global?readable:p==rules_pointer&&rules_ok;}
+bool HasMemoryAccess(u64,size_t,MemoryProt){return writable;}
+bool IsUsablePackedMap(u32 map){return map==0x19000000;}
+bool WriteTransportedSummonPlacement(u64 p,const SummonPlacementDescriptor& to){events.push_back("placement");if(!placement)return false;WriteValue(p,0x14C4,to.packed_region);return true;}
+void Position(const void*){events.push_back("position");}void Orientation(const void*){events.push_back("orientation");}void Map(const void*){events.push_back("map");}
+void Flag(){events.push_back("flag");WriteValue<u8>(global,0x1520,1);}
+bool Selector(u64 c,s32 id){require(c==0&&id==-1,"wrong selector arguments");events.push_back("selector");WriteValue(global,0x0C,selected_map);return selected;}
+bool Prepare(u32 map,std::string_view why){require(map==selected_map&&why==why_expected,"wrong prepare args");events.push_back("prepare");return prepare_ok;}
+u64 ArmBbscLoadProtection(BbscLoadProtectionKind kind){events.push_back("protection");protection_kind=kind;return 51;}
+void StartBbscLoadCover(std::string_view why){require(why==why_expected,"wrong cover reason");events.push_back("cover");}
+void ClearBbscWipeRespawnTarget(){++clears;target_armed=false;events.push_back("wipe-clear");}
+void ArmBbscWipeRespawnTarget(u64 p,const SummonPlacementDescriptor& to,u64 ticket){
+ require(p==global&&to.packed_region==selected_map&&ticket==51,"wrong wipe target arguments");
+ require(events.back()=="cover"&&protection_kind==BbscLoadProtectionKind::Respawn,"wipe before cover/protection");
+ if(check_returned)require(returned.ticket==51&&returned.reload_before==77,"wipe before output protection capture");
+ require(clears==1&&!target_armed,"old target was not cleared before re-arm");
+ ++arms;target_armed=true;events.push_back("wipe-arm");}
+u64 Transition(){events.push_back("transition");require(arms==(why_expected=="wipe"?1:0),"incorrect wipe arm at transition");return result;}
+const u64 SetForcedSummonPositionOffset=reinterpret_cast<u64>(&Position),SetForcedSummonOrientationOffset=reinterpret_cast<u64>(&Orientation),SetForcedSummonMapOffset=reinterpret_cast<u64>(&Map),SetForcedSummonWarpOffset=reinterpret_cast<u64>(&Flag),SelectSummonedPlacementOffset=reinterpret_cast<u64>(&Selector),StageTransitionOffset=reinterpret_cast<u64>(&Transition);
+// ACTUAL_FUNCTION
+void reset(std::string why="wipe"){
+ memory.fill(0);rules.fill(0);events.clear();readable=writable=placement=selected=prepare_ok=rules_ok=true;selected_map=0x19000000;result=1;arms=clears=0;target_armed=true;why_expected=why;returned={};check_returned=false;WriteValue<u32>(global,0x14C4,0x15000000);
+}
+void not_loaded(){require(arms==0,"armed after failed request");require(clears==(why_expected=="wipe"?1:0),"wrong early-failure clear count");require(target_armed==(why_expected!="wipe"),"failed request retained or changed wrong target");for(auto&e:events)require(e!="transition"&&e!="protection"&&e!="cover","failed request advanced transition");}
+int main(){try{SummonPlacementDescriptor to{0x19000000,1,2,3,4};
+ for(auto why:{"wipe","follow","join"}){reset(why);check_returned=true;require(RequestBbscSessionWarp(global,to,why,nullptr,&returned),"valid request rejected");std::vector<std::string> want{"placement","position","orientation","map","flag","selector","protection","cover"};if(why_expected=="wipe"){want.insert(want.begin(),"wipe-clear");want.push_back("wipe-arm");}want.push_back("transition");require(events==want,"wrong request ordering");require(clears==(why_expected=="wipe"?1:0),"unexpected non-wipe clear");require(target_armed,"valid arm or unrelated target lost");require(protection_kind==(why_expected=="wipe"?BbscLoadProtectionKind::Respawn:why_expected=="follow"?BbscLoadProtectionKind::Travel:BbscLoadProtectionKind::Join),"wrong protection kind");require(returned.ticket==51&&returned.reload_before==77,"incorrect protection output");require(ReadValue<s32>(rules_pointer,0x84)==3,"session rule not preserved");}
+ reset();readable=false;require(!RequestBbscSessionWarp(global,to,"wipe"),"unreadable accepted");not_loaded();
+ reset();auto bad=to;bad.packed_region=0;require(!RequestBbscSessionWarp(global,bad,"wipe"),"bad map accepted");not_loaded();
+ reset();placement=false;require(!RequestBbscSessionWarp(global,to,"wipe"),"write failure accepted");not_loaded();
+ reset();selected=false;require(!RequestBbscSessionWarp(global,to,"wipe"),"selector failure accepted");not_loaded();
+ reset();selected_map=0x15000000;require(!RequestBbscSessionWarp(global,to,"wipe"),"wrong selected map accepted");not_loaded();
+ for(int mode=0;mode<4;++mode){reset("follow");if(mode==0)WriteValue<u8>(global,0x1520,1);if(mode==1)writable=false;if(mode==2)prepare_ok=false;if(mode==3)placement=false;require(!RequestBbscSessionWarp(global,to,"follow",Prepare),"prepare failure accepted");not_loaded();if(mode>=2)require(ReadValue<u8>(global,0x1520)==0&&ReadValue<u32>(global,0x14C4)==0x15000000,"prepare cancel failed to restore prior target");}
+ reset("follow");require(RequestBbscSessionWarp(global,to,"follow",Prepare),"prepared follow rejected");require(events[6]=="prepare"&&events[7]=="protection"&&arms==0,"prepare ordering incorrect");
+ reset("follow");result=0;require(!RequestBbscSessionWarp(global,to,"follow",Prepare),"prepared zero native result accepted");require(arms==0&&ReadValue<u8>(global,0x1520)==0&&ReadValue<u32>(global,0x14C4)==0x15000000,"zero result cancellation changed");
+ reset();result=0;require(RequestBbscSessionWarp(global,to,"wipe"),"existing unprepared wipe zero-return semantics changed");require(arms==1,"wipe zero-result arm absent");require(clears==2&&!target_armed&&events.back()=="wipe-clear","failed native transition retained armed target");
+ for(int mode=0;mode<4;++mode){reset();if(mode==0)WriteValue<u8>(global,0x1520,1);if(mode==1)writable=false;if(mode==2)prepare_ok=false;if(mode==3)placement=false;require(!RequestBbscSessionWarp(global,to,"wipe",Prepare),"prepared wipe failure accepted");not_loaded();}
+ reset();result=0;require(!RequestBbscSessionWarp(global,to,"wipe",Prepare),"prepared wipe zero return accepted");require(clears==2&&!target_armed&&arms==1,"prepared zero wipe retained target");
+ reset("join");result=0;require(RequestBbscSessionWarp(global,to,"join"),"join zero-return behavior changed");require(clears==0&&target_armed&&arms==0,"join cleared unrelated target");
+ reset();rules_ok=false;require(RequestBbscSessionWarp(global,to,"wipe"),"missing optional rules rejected");require(ReadValue<s32>(rules_pointer,0x84)==0,"unreadable optional rules written");
+ std::cout<<"PASS request: actual production ordering, wipe/follow/join kinds, guard failures, stale-target clearing and zero-transition cancellation (existing bool semantics retained)\n";
+}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

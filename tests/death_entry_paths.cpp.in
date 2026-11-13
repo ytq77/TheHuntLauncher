@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Generated function bodies are taken verbatim from the requested prepared source.
+// This is a deterministic, single-process routing test with boundary mocks.
+// Peer life is changed only at named observations, not by simulated wall clocks.
+// Native reload/curtain completion, health restoration, persistence, damage,
+// rendering, networking and bloodstain effects are outside this fixture.
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+using u8 = std::uint8_t; using u32 = std::uint32_t; using u64 = std::uint64_t;
+using s32 = std::int32_t; using s64 = std::int64_t;
+
+@CONSTANTS@
+bool bbsc_request_death_reload, bbsc_spectate_active, bbsc_spectate_releasing;
+bool bbsc_spectate_saw_wipe, bbsc_spectate_wipe_warped, bbsc_spectate_logged_wait;
+s64 bbsc_spectate_since_ms, bbsc_boss_killed_ms, bbsc_boss_cleared_since_ms, bbsc_boss_bar_seen_ms;
+s64 bbsc_spectate_host_back_ms, bbsc_spectate_alone_since_ms;
+u64 bbsc_spectate_chr;
+u32 bbsc_spectate_revivals_at_death;
+std::atomic<u32> bbsc_peer_revivals{0};
+std::string_view bbsc_spectate_name = "fixture";
+BbscDeathMode bbsc_death_mode;
+s64 now;
+s32 session_state;
+u64 character;
+bool living, curtain_ok, respawn_ok, warp_ok;
+bool enabled, late_step, local_invader, curtain_active, partner_dies_at_curtain, loading;
+int remote_invaders, suspends, stashes, death_texts, guest_ui_ticks;
+int penalties, curtains, respawns, reloads, warnings, warps, scenarios = 0;
+std::string respawn_reason, reload_reason, warning;
+std::array<u8, 0x1690> boss_gauge;
+constexpr u64 image_base = 0x100000, boss_character = 0x123456781000;
+s32 boss_hp;
+bool gauge_readable; s32 local_hp=0; s64 bbsc_dead_since_ms=0,bbsc_death_script_ms=0; bool bbsc_death_text_raised=false;
+int skipped_dead_boss_logs;
+struct GuestRegisterSnapshot {};
+std::array<u8, 2> bbsc_late_final_skip{};
+s32 bbsc_echoes_at_death;
+bool bbsc_kept_death_this_load;
+struct Transform { float position[3]{0, 0, 0}; float rotation[3]{0, 0, 0}; };
+struct SummonPlacementDescriptor { u32 packed_region; float x, y, z, heading; };
+template<class T> T ReadValue(u64 base, size_t offset) {
+    if(base==3 && offset==8) return static_cast<T>(loading);
+    if (base == image_base + BossGaugePointerOffset && offset == 0)
+        return static_cast<T>(reinterpret_cast<u64>(boss_gauge.data()));
+    if (base != reinterpret_cast<u64>(boss_gauge.data()) || offset + sizeof(T) > boss_gauge.size())
+        throw std::runtime_error("unexpected gauge read");
+    T value;
+    std::memcpy(&value, boss_gauge.data() + offset, sizeof(T));
+    return value;
+}
+bool ReadablePointer(u64 ptr, size_t size) {
+    return ptr==3 || ptr==character || (gauge_readable && ptr == reinterpret_cast<u64>(boss_gauge.data()) && size <= boss_gauge.size());
+}
+void SetBossSlot(int slot, u64 chr) {
+    std::memcpy(boss_gauge.data() + 0x165C + static_cast<size_t>(slot) * 0x14, &chr, sizeof(chr));
+}
+void RestoreBbscOwnWorldSnapshot() {}
+bool BbscSpectateEnabled() { return enabled; }
+bool BbscLateDeathStep(std::string_view) { return late_step; }
+bool IsInvaderType(s32) { return local_invader; }
+s32 GetLocalCharacterType() { return 1; }
+int RemoteInvaderCount() { return remote_invaders; }
+void SuspendBbscPersistenceOnce(std::string_view) { ++suspends; }
+u32 GetBloodEchoes() { return 100; }
+void StashBbscOwnWorldSnapshot() { ++stashes; }
+s64 SteadyNowMs() { return now; }
+s32 GetSessionState() { return session_state; }
+bool LivingPartnerExists() { return living; }
+u64 GetLocalPlayerCharacter() { return character; }
+u64 FindRemoteHostCharacter() { return 2; }
+u64 FindLivingPartnerCharacter() { return 2; }
+int GetCharacterHp(u64 chr) {
+    if (chr == character) return local_hp;
+    if (chr == boss_character) return boss_hp;
+    return chr == 2 ? (living ? 100 : 0) : -1;
+}
+std::optional<Transform> ReadCharacterTransform(u64) { return Transform{}; }
+u32 GetCurrentPackedMap() { return 0x18010000; }
+u64 GetGlobalState() { return 3; }
+bool RequestBbscSessionWarp(u64, const SummonPlacementDescriptor&, std::string_view) {
+    ++warps;
+    return warp_ok;
+}
+void BbscApplyDeathPenalty(std::string_view why) { ++penalties; respawn_reason = why; }
+bool StartBbscDeathCurtain(std::string_view why) {
+    ++curtains; respawn_reason = why;
+    if (partner_dies_at_curtain) living = false;
+    if (curtain_ok) curtain_active = true;
+    return curtain_ok;
+}
+bool BbscRespawnInPlace(std::string_view why) {
+    ++respawns; respawn_reason = why; if (respawn_ok) local_hp=100; return respawn_ok;
+}
+void RequestBbscDeathReload(std::string_view why) { ++reloads; reload_reason = why; loading=true; }
+template<class... Args> void LogWarning(std::string_view message, Args...) {
+    ++warnings; warning = message;
+}
+#define LOG_WARNING(category, ...) LogWarning(__VA_ARGS__)
+template<class... Args> void LogInfo(std::string_view message, Args...) {
+    if (message.find("boss bar seen but HP=0, skipped") != std::string_view::npos)
+        ++skipped_dead_boss_logs;
+}
+#define LOG_INFO(category, ...) LogInfo(__VA_ARGS__)
+#define PS4_SYSV_ABI
+void Check(bool ok, const char* message) {
+    if (!ok) throw std::runtime_error(message);
+}
+
+// Boundary mocks deliberately stop at native reload, curtain and respawn entry.
+// penalties counts calls to BbscApplyDeathPenalty, not native bloodstain effects.
+// No mock pretends to implement the two games, relay timing, save or display logic.
+void Reset(s32 role, bool peer_alive, bool boss=false) {
+    ++scenarios;
+    bbsc_request_death_reload = bbsc_spectate_releasing = bbsc_spectate_active = false;
+    bbsc_spectate_saw_wipe = bbsc_spectate_wipe_warped = bbsc_spectate_logged_wait = false;
+    bbsc_spectate_since_ms = bbsc_boss_killed_ms = bbsc_boss_cleared_since_ms = bbsc_boss_bar_seen_ms = 0;
+    bbsc_spectate_host_back_ms = bbsc_spectate_alone_since_ms = 0;
+    bbsc_dead_since_ms = bbsc_death_script_ms = 0;
+    bbsc_death_text_raised = bbsc_kept_death_this_load = false;
+    bbsc_echoes_at_death = -1; bbsc_late_final_skip = {};
+    boss_gauge.fill(0xFF); gauge_readable=true; boss_hp=boss?100:0;
+    if(boss) SetBossSlot(0,boss_character);
+    skipped_dead_boss_logs=0;
+    character=1; bbsc_spectate_chr=0; local_hp=0;
+    bbsc_spectate_revivals_at_death=0; bbsc_peer_revivals=0;
+    bbsc_spectate_name="fixture"; bbsc_death_mode=BbscDeathMode::RespawnNow;
+    now=10000; session_state=role; living=peer_alive;
+    enabled=curtain_ok=respawn_ok=warp_ok=true;
+    late_step=local_invader=curtain_active=partner_dies_at_curtain=loading=false;
+    remote_invaders=suspends=stashes=death_texts=guest_ui_ticks=0;
+    penalties=curtains=respawns=reloads=warnings=warps=0;
+    respawn_reason.clear();reload_reason.clear();warning.clear();
+}
+void TickBbscGuestDeathUi(s64,s32,u64,u64,s32){++guest_ui_ticks;}
+bool BbscCurtainActive(){return curtain_active;}
+u64 BbscLuaEventObject(){return 3;}
+bool RaiseBbscDeathText(u64,std::string_view){++death_texts;return true;}
+
+@PRODUCTION@
+
+GuestRegisterSnapshot registers{};
+void First() { bbsc_death_script_ms=now; BbscSpectateDeathHook(session_state==3?0:1,&registers); }
+void Pass(std::string name) { std::cout<<"PASS "<<name<<" (BBSC penalty calls="<<penalties<<", native reload="<<reloads<<", wipe="<<warps<<", curtain="<<curtains<<")\n"; }
+std::string Role(s32 role){return role==3?"host":"guest";}
+void NoAction(){Check(!penalties&&!curtains&&!respawns&&!reloads&&!warps,"unexpected route action");}
+void Stable(){const std::array<int,5> before{penalties,curtains,respawns,reloads,warps};for(int i=0;i<3;++i){TickBbscSpectate();TickBbscDeadWatchdog();}Check(before==std::array<int,5>{penalties,curtains,respawns,reloads,warps},"route repeated without a new death");}
+void BeginAlone(){TickBbscSpectate();Check(bbsc_spectate_alone_since_ms==now,"alone debounce must begin at first observation");NoAction();}
+void HostReturnsAndWipes(){living=true;++bbsc_peer_revivals;++now;TickBbscSpectate();Check(bbsc_spectate_host_back_ms==now,"host return must begin settle wait");NoAction();now+=BbscWipeHostSettleMs-1;TickBbscSpectate();NoAction();++now;TickBbscSpectate();Check(warps==1&&!penalties&&!reloads&&!curtains,"settled host must trigger one wipe and defer penalty");Stable();}
+void RepeatUntilLimit(){bbsc_kept_death_this_load=true;TickBbscDeadWatchdog();const auto began=now;NoAction();now=began+BbscRepeatDeathTextMs;TickBbscDeadWatchdog();Check(death_texts==1,"repeat UI boundary invoked once");now=began+BbscRepeatDeathMs-1;TickBbscDeadWatchdog();NoAction();now=began+BbscRepeatDeathMs;TickBbscDeadWatchdog();}
+int main(){try{
+ // First native script: partner dead before either player's last death-step observation.
+ Reset(3,false);First();Check(bbsc_request_death_reload&&!bbsc_spectate_active,"first host all dead must delegate native reload");TickBbscSpectate();Check(reloads==1&&!penalties&&!curtains&&!warps,"native host route must not apply a second BBSC penalty");Stable();Pass("first-host-partner-already-dead");
+ Reset(6,false);First();Check(bbsc_spectate_active&&bbsc_spectate_saw_wipe&&bbsc_death_mode==BbscDeathMode::Spectate,"first guest all dead must hold death");BeginAlone();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();NoAction();TickBbscDeadWatchdog();NoAction();HostReturnsAndWipes();Pass("host-first-guest-waits-for-host-revival");
+ // Model the separately observable post-reload actor replacement, not native loading itself.
+ character=7;local_hp=100;++now;TickBbscSpectate();Check(penalties==1&&curtains==1&&warps==1&&!bbsc_spectate_active,"post-wipe actor replacement must finish through one penalty/curtain call");Stable();Pass("guest-wipe-actor-replacement-finalizes-once");
+ for(s32 role:{3,6}){
+  Reset(role,true);First();Check(bbsc_death_mode==BbscDeathMode::RespawnNow&&stashes==1,"living partner no boss must keep local death");TickBbscSpectate();Check(penalties==1&&curtains==1&&!reloads&&!warps,"first kept death must charge once at curtain entry");Stable();Pass("first-"+Role(role)+"-partner-remains-alive");
+  Reset(role,true);First();partner_dies_at_curtain=true;TickBbscSpectate();Check(!living&&curtain_active&&penalties==1&&curtains==1,"peer death at curtain admission must not start a new route");Stable();Pass("first-"+Role(role)+"-partner-dies-at-curtain-boundary");
+  Reset(role,true);First();TickBbscSpectate();living=false;now+=BbscRepeatDeathMs+1;TickBbscDeadWatchdog();Check(penalties==1&&curtains==1&&!reloads&&!warps,"peer death after curtain starts must not double charge");Stable();Pass("first-"+Role(role)+"-partner-dies-inside-curtain");
+ }
+ // Guest-first and host-first ordering are observations, not subtractable PC timestamps.
+ Reset(3,true);First();living=false;++now;BeginAlone();now+=BbscSpectateReleaseDebounceMs-1;TickBbscSpectate();NoAction();++now;TickBbscSpectate();Check(reloads==1&&!penalties&&!curtains,"host seeing peer die between script and tick must release after debounce");Stable();Pass("host-first-peer-dies-before-first-tick");
+ Reset(6,true);First();living=false;++now;BeginAlone();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();NoAction();Check(bbsc_spectate_saw_wipe&&bbsc_death_mode==BbscDeathMode::RespawnNow,"late peer death retains existing immediate-respawn mode");living=true;++bbsc_peer_revivals;++now;TickBbscSpectate();Check(penalties==1&&curtains==1&&!warps&&!reloads,"guest-first no-boss mode resumes in-place when host returns");Stable();Pass("guest-first-host-dies-before-tick-then-revives");
+ // Near-simultaneous: test both sides of each last-step peer-life observation.
+ for(s32 role:{3,6})for(bool peer_dead_at_step:{false,true}){
+  Reset(role,!peer_dead_at_step);First();living=false;++now;TickBbscSpectate();
+  if(role==3&&peer_dead_at_step)Check(reloads==1&&!bbsc_spectate_active,"host early-dead observation reloads immediately");
+  else Check(bbsc_spectate_active&&!reloads&&!curtains&&!penalties,"late-dead observation must first enter bounded wait");
+  if(role==6)Check(bbsc_death_mode==(peer_dead_at_step?BbscDeathMode::Spectate:BbscDeathMode::RespawnNow),"guest observation ordering must retain actual production mode");
+  Pass("near-simultaneous-"+Role(role)+(peer_dead_at_step?"-peer-dead-at-step":"-peer-dies-after-step"));
+ }
+ for(s32 role:{3,6}){
+  Reset(role,true,true);First();TickBbscSpectate();Check(bbsc_death_mode==BbscDeathMode::Spectate&&bbsc_spectate_active,"living boss partner must stay spectating");NoAction();living=false;++now;BeginAlone();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();
+  if(role==3){Check(reloads==1&&!penalties&&!curtains,"host boss-wait peer death delegates native penalty/reload");Stable();}
+  else {NoAction();HostReturnsAndWipes();}
+  Pass("first-"+Role(role)+"-partner-dies-during-boss-wait");
+ }
+ Reset(6,false);First();BeginAlone();now+=BbscGuestWaitHostMs-1;TickBbscSpectate();NoAction();++now;TickBbscSpectate();Check(reloads==1&&!penalties&&!warps,"guest timeout must preserve native reload fallback without BBSC double charge");Stable();Pass("guest-no-host-return-timeout");
+ Reset(6,false);First();BeginAlone();living=true;++now;TickBbscSpectate();now+=BbscWipeHostSettleMs-1;living=false;TickBbscSpectate();NoAction();living=true;++now;TickBbscSpectate();Check(warps==1&&!penalties,"host can only be followed while observed alive; existing settle timer is not restarted");Stable();Pass("guest-host-dies-during-settle-boundary");
+ Reset(3,true);First();living=false;++now;BeginAlone();now+=BbscSpectateReleaseDebounceMs;living=true;TickBbscSpectate();Check(penalties==1&&curtains==1&&!reloads,"partner return at host debounce boundary preserves kept-death route");Stable();Pass("host-peer-returns-at-release-boundary");
+ for(s32 role:{3,6}){
+  Reset(role,false,true);First();TickBbscSpectate();
+  if(role==3)Check(reloads==1&&!penalties&&!curtains,"boss does not make first all-dead host spectate");
+  else {NoAction();Check(bbsc_spectate_active&&bbsc_spectate_saw_wipe,"first all-dead boss guest still waits for host");}
+  Pass("first-"+Role(role)+"-boss-partner-already-dead");
+ }
+ // Boundary failures preserve exactly one call to the existing penalty helper.
+ for(s32 role:{3,6}){
+  Reset(role,true);curtain_ok=false;First();TickBbscSpectate();Check(penalties==1&&curtains==1&&respawns==1&&!reloads,"curtain failure should use one in-place attempt and one penalty");Stable();Pass("first-"+Role(role)+"-curtain-failure-in-place-fallback");
+  Reset(role,true);curtain_ok=respawn_ok=false;First();TickBbscSpectate();Check(penalties==1&&curtains==1&&respawns==1&&reloads==1,"all kept-death fallback attempts must share one penalty call");Stable();Pass("first-"+Role(role)+"-all-in-place-failures-native-fallback");
+ }
+ Reset(6,false);First();BeginAlone();warp_ok=false;living=true;++now;TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();Check(warps==1&&penalties==1&&curtains==1&&!reloads,"failed wipe request must fall back to one penalty/curtain");Stable();Pass("guest-wipe-request-failure");
+ // Repeat deaths execute the actual watchdog, including exact thresholds.
+ for(s32 role:{3,6})for(bool peer_alive:{false,true})for(bool boss:{false,true}){
+  Reset(role,peer_alive,boss);RepeatUntilLimit();
+  if(boss&&peer_alive)Check(bbsc_spectate_active&&bbsc_death_mode==BbscDeathMode::Spectate&&!penalties&&!curtains&&!reloads&&!warps,"repeat boss with live partner must spectate without penalty");
+  else Check(penalties==1&&curtains==1&&!reloads&&!warps,"repeat route without live boss partner must remain curtain even all-dead");
+  Stable();Pass("repeat-"+Role(role)+(peer_alive?"-partner-alive":"-all-dead")+(boss?"-boss":"-no-boss"));
+ }
+ for(s32 role:{3,6}){
+  Reset(role,true);bbsc_kept_death_this_load=true;TickBbscDeadWatchdog();living=false;now+=BbscRepeatDeathMs;TickBbscDeadWatchdog();Check(penalties==1&&curtains==1&&!reloads,"peer death before repeat threshold must stay repeat route");Stable();Pass("repeat-"+Role(role)+"-partner-dies-before-threshold");
+  Reset(role,true);partner_dies_at_curtain=true;RepeatUntilLimit();Check(!living&&penalties==1&&curtains==1,"repeat curtain boundary peer death must not repeat penalty");Stable();Pass("repeat-"+Role(role)+"-partner-dies-at-curtain-boundary");
+  Reset(role,true,true);RepeatUntilLimit();Check(bbsc_spectate_active&&bbsc_death_mode==BbscDeathMode::Spectate&&!penalties&&!curtains,"repeat live boss partner must spectate");living=false;++now;BeginAlone();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();
+  if(role==3)Check(reloads==1&&!penalties,"repeat boss host without partner must delegate native reload");else {NoAction();HostReturnsAndWipes();}
+  Pass("repeat-"+Role(role)+"-boss-wait-partner-dies");
+ }
+ Reset(6,true);bbsc_kept_death_this_load=true;bbsc_death_script_ms=now;TickBbscDeadWatchdog();now+=BbscRepeatDeathMs;TickBbscDeadWatchdog();NoAction();Check(death_texts==0,"running native script must not be mistaken for repeat death");now=bbsc_dead_since_ms+BbscDeadWatchdogMs;TickBbscDeadWatchdog();Check(penalties==1&&curtains==1,"stuck real script keeps long watchdog fallback");Stable();Pass("script-running-uses-long-watchdog-not-repeat");
+ Reset(3,true);TickBbscDeadWatchdog();now+=BbscDeadWatchdogMs-1;TickBbscDeadWatchdog();NoAction();++now;TickBbscDeadWatchdog();Check(penalties==1&&curtains==1,"no prior kept-death marker uses full watchdog limit");Stable();Pass("nonrepeat-watchdog-long-limit");
+ // Solo and invasion first-step policy remains native, including persistence release.
+ Reset(0,false);First();TickBbscSpectate();Check(reloads==1&&!penalties&&!stashes&&!suspends,"solo death must retain native reload and native penalty");Stable();Pass("solo-native-preserved");
+ Reset(6,true);local_invader=true;First();TickBbscSpectate();Check(reloads==1&&suspends==1&&!penalties&&!stashes,"dead invader must leave via vanilla route");Stable();Pass("local-invader-native-preserved");
+ Reset(3,false);remote_invaders=1;First();TickBbscSpectate();Check(reloads==1&&suspends==1&&!penalties&&!stashes,"host beaten during invasion must end via vanilla route");Stable();Pass("host-beaten-invasion-native-preserved");
+ Reset(3,true);remote_invaders=1;First();TickBbscSpectate();Check(curtains==1&&penalties==1&&!suspends&&!reloads,"living cooperator still preserves host kept death during invasion");Stable();Pass("host-cooperator-alive-during-invasion");
+ Reset(6,true);enabled=false;First();TickBbscDeadWatchdog();NoAction();Check(!bbsc_spectate_active,"disabled mode must not capture death");Pass("disabled-entry-guard");
+ Reset(6,true);BbscSpectateDeathHook(1,nullptr);NoAction();Check(!bbsc_spectate_active,"null callback must not capture death");Pass("null-entry-guard");
+ Reset(6,true);bbsc_spectate_releasing=true;First();NoAction();Check(!bbsc_spectate_active,"release recursion must not recapture death");Pass("release-recursion-guard");
+ Reset(6,true);late_step=true;First();NoAction();Check(bbsc_late_final_skip[1]==1&&!bbsc_spectate_active,"late native final step must retain skip guard");Pass("late-final-step-guard");
+ std::cout<<"PASS: "<<scenarios<<" deterministic death-entry scenarios; boundary mocks only, no two-game or native penalty simulation\n";return 0;
+}catch(const std::exception& error){std::cerr<<"FAIL scenario "<<scenarios<<": "<<error.what()<<'\n';return 1;}}
+

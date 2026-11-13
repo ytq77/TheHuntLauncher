@@ -29,7 +29,8 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
   game service together with its LICENSE, NOTICE, CREDITS and SUPPORTERS files.
   The service also retains LICENSE.NoDreamForHunter (fhody125, MIT).
   Exact source hashes and recipe limitations are documented in
-  `docs/server/recipe/sources.json` and `docs/server/recipe/SOURCES.md`.
+  `server/recipe/sources.json` and `server/recipe/SOURCES.md` in the client
+  bundle (`recipe/` in the standalone server).
 - FSR4 assets: AMD FidelityFX SDK MIT license; asset builds by FireBurn/Q2RTX,
   pinned by BBport's fetch script. Included assets carry LICENSE-FSR4-v07.txt.
 - FSR 4.1.1 Vulkan provider: fsr4vk v0.4.3 with the AMD driver patch; GPLv3
@@ -40,7 +41,7 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
   the pinned BBport packaging scripts.
 - DLSS bridge: IFreemz and bbport contributors, MIT. NVIDIA's unmodified
   DLSS SR/FG runtimes retain NVIDIA-DLSS-LICENSE.txt. These five files are
-  verified against the fixed official BBport 1.9.4 release; hashes and source
+  verified against the fixed official BBport 1.9.5 release; hashes and source
   URL are retained in source-info/DLSS-runtime-source.json and
   scripts/dlss-runtime.lock.json. No NVIDIA runtime is relicensed as GPL.
 - MSYS2 runtime DLLs and Python: original licenses are copied into
@@ -49,6 +50,8 @@ SPDX-License-Identifier: GPL-2.0-or-later. Derived code retains upstream notices
 The exact upstream commits are in upstream.lock.json. Every release built by this
 repository includes TheHuntLauncher-sources.zip with the patched application sources,
 generated localization, build scripts, and BBport sources including its submodules.
+The source archive records its exact members and SHA-256 values in
+SOURCE-MANIFEST.json, with an explicit list of generated BBSC/save-helper inputs.
 The matching source archive is distributed beside the binaries.
 
 No game executable, game data, Sony SDK material, save data or private account

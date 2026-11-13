@@ -48,3 +48,37 @@ def patched_coop_saves(text):
     if text.count(before) != 1:
         raise ValueError('Unexpected 1.9.5 co-op save isolation; refusing an unverified change.')
     return text.replace(before, after, 1)
+
+
+def patched_relay_credentials(text):
+    """Keep relay credentials out of GPU/driver/overlay helper descendants."""
+    replacements = (
+        ('def main():\n    args = sys.argv[1:]\n',
+         '''def main():
+    # Auxiliary programs inherit os.environ, so remove private proof material
+    # before waiting/probing/preparing. Only the actual game child receives it.
+    relay_credentials = {key: os.environ.pop(key) for key in
+                         ('BBSC_RELAY_AUTH', 'BBSC_RELAY_USER_ID', 'BBSC_RELAY_TOKEN')
+                         if key in os.environ}
+    args = sys.argv[1:]
+'''),
+        ('                return run_with_backup(command, saves_dir, original_game, creationflags=no_console())',
+         '                return run_with_backup(command, saves_dir, original_game, creationflags=no_console(),\n'
+         '                                       env=dict(env, **relay_credentials))'),
+        ('            return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode',
+         '            return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console(),\n'
+         '                                  env=dict(env, **relay_credentials)).returncode'),
+    )
+    for before, after in replacements:
+        if text.count(before) != 1:
+            raise ValueError('Pinned runner relay credential boundary changed')
+        text = text.replace(before, after, 1)
+    return text
+
+
+def patched_exit_backup_credentials(text):
+    before = "def run_with_backup(command, user_dir, game_dir='', creationflags=0):\n"
+    if text.count(before) != 1 or text.count('creationflags=creationflags)') != 1:
+        raise ValueError('Pinned exit backup child environment changed')
+    return text.replace(before, "def run_with_backup(command, user_dir, game_dir='', creationflags=0, env=None):\n", 1).replace(
+        'creationflags=creationflags)', 'creationflags=creationflags, env=env)', 1)

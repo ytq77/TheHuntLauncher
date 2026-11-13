@@ -1,0 +1,84 @@
+// Each chain resets only before the first death. Later lives only cross named
+// external completion/peer-observation boundaries. Production-owned spectate,
+// watchdog, revival-count and notification state are never reset between lives.
+GuestRegisterSnapshot registers{};
+int assertions=0;
+void Assert(bool ok,const char* message){++assertions;Check(ok,message);}
+void NativeFirst(){bbsc_death_script_ms=now;BbscSpectateDeathHook(session_state==3?0:1,&registers);}
+void CompleteCurtainBoundary(){
+    Assert(curtain_active,"completion needs accepted curtain");
+    // Only mocked external outcome: same local actor regains HP; curtain ends.
+    // No load occurs, and no production-owned lifecycle field is reset here.
+    now+=1000;local_hp=100;curtain_active=false;
+    TickBbscDeadWatchdog();
+    Assert(bbsc_dead_since_ms==0,"alive watchdog must end dead interval");
+    Assert(!bbsc_spectate_active,"completed curtain cannot retain active spectate");
+    now+=5000;
+}
+void Setup(s32 role,bool boss=false){Reset(role,true,boss);bbsc_peer_life.clear();bbsc_life_own_id=1;invalidations=0;}
+void SendLife(u8 dead,u32 seq){OnBbscLifePacket(2,dead,seq);}
+void PeerRevivesWhileLocalAlive(u32 seq){
+    Assert(local_hp>0&&!bbsc_spectate_active,"inter-cycle peer revival must occur while local alive");
+    living=false;SendLife(1,seq);++now;living=true;SendLife(0,seq+1);
+}
+void FirstKeptNoBoss(){NativeFirst();TickBbscSpectate();Assert(curtains==1&&penalties==1&&warps==0,"first nonboss death must use one in-place curtain");CompleteCurtainBoundary();}
+void StartRepeatBoss(){
+    boss_hp=100;SetBossSlot(0,boss_character);local_hp=0;
+    const int old_texts=death_texts,old_penalties=penalties,old_curtains=curtains,old_warps=warps;
+    TickBbscDeadWatchdog();const s64 start=now;
+    Assert(bbsc_dead_since_ms==start,"repeat starts new dead interval without manual reset");
+    now=start+BbscRepeatDeathTextMs;TickBbscDeadWatchdog();
+    Assert(death_texts==old_texts+1,"one legacy-notice attempt per repeat death");
+    now=start+BbscRepeatDeathMs-1;TickBbscDeadWatchdog();
+    Assert(!bbsc_spectate_active&&penalties==old_penalties&&curtains==old_curtains,"no early repeat action");
+    now=start+BbscRepeatDeathMs;TickBbscDeadWatchdog();
+    Assert(bbsc_spectate_active&&bbsc_death_mode==BbscDeathMode::Spectate,"repeat boss must enter spectate");
+    Assert(penalties==old_penalties&&curtains==old_curtains&&warps==old_warps,"boss entry must not penalize or warp");
+}
+void HoldWithoutWipe(const char* why){
+    const int w=warps,p=penalties,c=curtains;
+    TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();
+    if(bbsc_spectate_saw_wipe||warps!=w){
+      std::cerr<<"EVIDENCE "<<why<<" snapshot="<<bbsc_spectate_revivals_at_death
+      <<" peer_revivals="<<bbsc_peer_revivals.load()<<" saw_wipe="<<bbsc_spectate_saw_wipe
+      <<" warped="<<bbsc_spectate_wipe_warped<<" warps="<<warps<<"\n";
+    }
+    Assert(!bbsc_spectate_saw_wipe&&warps==w&&penalties==p&&curtains==c&&bbsc_spectate_active,why);
+}
+void TimeoutAndComplete(){const auto start=bbsc_spectate_since_ms;const int c=curtains,p=penalties;now=start+BbscBossSpectateTimeoutMs;TickBbscSpectate();Assert(bbsc_spectate_active&&curtains==c,"exact 90s remains held");++now;TickBbscSpectate();Assert(!bbsc_spectate_active&&curtains==c+1&&penalties==p+1,"timeout releases once");CompleteCurtainBoundary();}
+void BossKilledAndComplete(){boss_hp=0;++now;BbscBossClearHook(0,&registers);TickBbscSpectate();Assert(bbsc_spectate_active,"boss clear requires settle");now+=BbscBossClearedSettleMs;TickBbscSpectate();Assert(!bbsc_spectate_active&&curtain_active,"boss killed releases to curtain");CompleteCurtainBoundary();boss_gauge.fill(0xFF);}
+
+void GuestInterCycleRevival(){Setup(6);FirstKeptNoBoss();PeerRevivesWhileLocalAlive(1);Assert(bbsc_peer_revivals==1,"real life callback records peer revival");StartRepeatBoss();HoldWithoutWipe("old pre-death peer revival must not be interpreted as current wipe");TimeoutAndComplete();}
+void GuestAfterBossKilled(){Setup(6,true);NativeFirst();TickBbscSpectate();Assert(bbsc_spectate_active,"first boss spectates");BossKilledAndComplete();PeerRevivesWhileLocalAlive(1);StartRepeatBoss();HoldWithoutWipe("prior boss cycle revival must not leak to next boss");BossKilledAndComplete();}
+void GuestThreeTimeouts(){Setup(6);FirstKeptNoBoss();for(int cycle=0;cycle<3;++cycle){StartRepeatBoss();HoldWithoutWipe("no-peer-revival repeated boss cycle must remain held");TimeoutAndComplete();}Assert(death_texts==3&&curtains==4&&penalties==4&&warps==0&&reloads==0,"three repeat timeouts each finish once");}
+void HostThreeTimeouts(){Setup(3);FirstKeptNoBoss();for(int cycle=0;cycle<3;++cycle){PeerRevivesWhileLocalAlive(cycle*2+1);StartRepeatBoss();HoldWithoutWipe("host must not use guest wipe inference");TimeoutAndComplete();}Assert(bbsc_peer_revivals==3&&death_texts==3&&warps==0,"host repeated cycle unaffected by guest-only inference");}
+void GuestTrueInCycleRevival(){Setup(6);FirstKeptNoBoss();StartRepeatBoss();HoldWithoutWipe("before real in-cycle revival guest must stay held");living=false;SendLife(1,1);++now;TickBbscSpectate();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();Assert(bbsc_spectate_saw_wipe,"real observed current all-dead must set wipe");living=true;SendLife(0,2);++now;TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();Assert(warps==1&&bbsc_spectate_active&&!curtain_active,"true current wipe still requests exactly one reload");for(int i=0;i<3;++i){++now;TickBbscSpectate();}Assert(warps==1,"same wipe not re-requested");}
+void GuestNativeOnlyPriorWipeFlag(){Setup(6);NativeFirst();living=false;++now;TickBbscSpectate();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();Assert(bbsc_spectate_saw_wipe&&bbsc_peer_revivals==0,"native-only dead observation sets wipe without relay revival counter");living=true;++now;TickBbscSpectate();Assert(curtain_active&&warps==0,"nonboss mode resumes in place after peer returns");CompleteCurtainBoundary();StartRepeatBoss();HoldWithoutWipe("prior native-only wipe flag must not leak across in-place life");}
+void FirstHookRefreshControl(){Setup(6);FirstKeptNoBoss();PeerRevivesWhileLocalAlive(1);boss_hp=100;SetBossSlot(0,boss_character);local_hp=0;NativeFirst();Assert(bbsc_spectate_revivals_at_death==bbsc_peer_revivals,"fresh native first hook snapshots current revivals");HoldWithoutWipe("native first-entry refresh control must not false-wipe");BossKilledAndComplete();}
+void StaleLifeSequenceControl(){Setup(6);SendLife(0,5);FirstKeptNoBoss();SendLife(1,7);SendLife(0,6);Assert(bbsc_peer_revivals==0,"older alive packet must not create revival");SendLife(0,8);Assert(bbsc_peer_revivals==1,"new alive packet creates one revival");SendLife(0,8);Assert(bbsc_peer_revivals==1,"same sequence must not repeat revival");}
+void ReloadThenFirstThenRepeat(){Setup(6,true);NativeFirst();living=false;SendLife(1,1);++now;TickBbscSpectate();now+=BbscSpectateReleaseDebounceMs;TickBbscSpectate();living=true;SendLife(0,2);++now;TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();Assert(warps==1,"real wipe requested");loading=true;TickBbscDeadWatchdog();Assert(!bbsc_kept_death_this_load,"production watchdog re-arms first route on actual loading boundary");++now;character=7;local_hp=100;loading=false;TickBbscSpectate();Assert(curtain_active,"new actor ends old boss wait");CompleteCurtainBoundary();local_hp=0;NativeFirst();Assert(bbsc_spectate_chr==7&&bbsc_spectate_revivals_at_death==1&&!bbsc_spectate_saw_wipe&&!bbsc_spectate_wipe_warped,"next native first entry clears prior wipe and actor identity");TickBbscSpectate();BossKilledAndComplete();StartRepeatBoss();HoldWithoutWipe("first-after-load then repeat uses current actor and revival baseline");}
+void GuestFiveCyclesWithInterLifeRevival(){Setup(6);FirstKeptNoBoss();for(int cycle=0;cycle<5;++cycle){PeerRevivesWhileLocalAlive(cycle*2+1);StartRepeatBoss();HoldWithoutWipe("five-cycle run must renew the per-death peer baseline");TimeoutAndComplete();}Assert(bbsc_peer_revivals==5&&death_texts==5&&curtains==6&&warps==0,"five complete cycles have no extra warp or prompt");}
+
+void GuestRevivalDuringRepeatWait(){
+    Setup(6);FirstKeptNoBoss();boss_hp=100;SetBossSlot(0,boss_character);local_hp=0;
+    TickBbscDeadWatchdog();const s64 start=now;
+    now=start+100;living=false;SendLife(1,1);
+    now=start+200;living=true;SendLife(0,2);
+    now=start+BbscRepeatDeathMs;TickBbscDeadWatchdog();
+    Assert(bbsc_spectate_active,"early current-death revival still enters Boss wait");
+    TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();
+    if(warps!=1)std::cerr<<"EVIDENCE early-current-wipe snapshot="<<bbsc_spectate_revivals_at_death<<" revivals="<<bbsc_peer_revivals.load()<<" saw="<<bbsc_spectate_saw_wipe<<" warps="<<warps<<"\n";
+    Assert(warps==1&&bbsc_spectate_active,"host revival during 3.5s death wait must not be erased at spectate admission");
+}
+void GuestOldThenCurrentRevival(){
+    Setup(6);FirstKeptNoBoss();PeerRevivesWhileLocalAlive(1);boss_hp=100;SetBossSlot(0,boss_character);local_hp=0;
+    TickBbscDeadWatchdog();const s64 start=now;
+    now=start+100;living=false;SendLife(1,3);
+    now=start+200;living=true;SendLife(0,4);
+    now=start+BbscRepeatDeathMs;TickBbscDeadWatchdog();TickBbscSpectate();now+=BbscWipeHostSettleMs;TickBbscSpectate();
+    Assert(warps==1&&bbsc_peer_revivals==2,"old-life revival is ignored but a second current-death revival is retained");
+}
+int main(){int fails=0;struct Case{const char* name;void(*run)();};const Case cases[]={
+{"guest_revival_during_repeat_wait",GuestRevivalDuringRepeatWait},{"guest_old_then_current_revival",GuestOldThenCurrentRevival},{"guest_intercycle_peer_revival",GuestInterCycleRevival},{"guest_after_boss_kill",GuestAfterBossKilled},{"guest_three_timeouts_no_peer",GuestThreeTimeouts},{"host_three_timeouts_peer_revivals",HostThreeTimeouts},{"guest_true_incycle_wipe",GuestTrueInCycleRevival},{"guest_prior_native_wipe_flag",GuestNativeOnlyPriorWipeFlag},{"native_first_hook_refresh_control",FirstHookRefreshControl},{"life_sequence_negative_control",StaleLifeSequenceControl},{"reload_first_repeat_control",ReloadThenFirstThenRepeat},{"guest_five_cycles_peer_revivals",GuestFiveCyclesWithInterLifeRevival}};
+for(const auto& c:cases){try{c.run();std::cout<<"PASS "<<c.name<<"\n";}catch(const std::exception& e){++fails;std::cerr<<"FAIL "<<c.name<<": "<<e.what()<<"\n";}}
+std::cout<<"SUMMARY scenarios="<<std::size(cases)<<" failed="<<fails<<" assertions="<<assertions<<"\n";return fails?1:0;}

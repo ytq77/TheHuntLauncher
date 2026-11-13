@@ -50,12 +50,12 @@
 - `source-manifest.json`、`BUILD-INFO.json`、`licenses`：固定源码版本、构建信息与许可文件。
 
 测试版范围：保留已验证过的 4/6 字节 STUN 兼容修复；BBSC 使用独立 WebAPI 端口。
-BBSC Relay 是单组玩家共享广播，未提供房间隔离；适用于互相信任的一组玩家，不要直接作为公开多人平台使用。
+私服 Relay v2 验证账号并隔离原生房间，需配套认证版客户端；见[协议与兼容说明](relay-auth.md)。继续使用受信玩家的 LAN/VPN。
 当前提供本地管理窗口；未安装 Windows 常驻服务，也不自动配置防火墙。
 备份时先停止服务，再复制 `bbsc` 和 `server.json`；账号备份另保留 `backups/bbsc`。
 
 构建来源与修改：shadNet 固定版本和 BBSC 固定版本见 `source-manifest.json`。
-shadNet 仅加现有 STUN 兼容修复、启用账号工具的构建目标；BBSC 增加显式 `--shadnet-webapi` 参数，并修正本机登录地址与实际监听地址不一致的问题。
+shadNet 包含 STUN 兼容与来源检查、认证 Relay、召唤所有权和账号工具；Python 游戏服务关闭旧广播 Relay，保留独立 WebAPI 参数与本机登录修复。
 原作者与第三方许可保留在 `licenses`，BBSC 原始署名同时保留在 `bbsc-game`。
 完整源码包和 Linux 配方与二进制一起提供，详见 https://github.com/ytq77/TheHuntLauncher/tree/main/server 。
 

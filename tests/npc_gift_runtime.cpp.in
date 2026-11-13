@@ -1,3 +1,8 @@
+// Native script fixture: CUSA03173 1.09 common.emevd.dcx SHA-256
+// 0cb9f4e5c18b394c4c50ae5642fd40e431fd84db617f4d57be8f65c34242f64f.
+// Callback, event lookup, guest predicate and installer come from production.
+// Memory/session inputs and five native EMEVD opcodes are fixtures. This does
+// not execute an NPC's ESD dialogue or the game's inventory.
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -6,95 +11,242 @@
 #include <cstring>
 #include <ranges>
 #include <span>
+#include <vector>
 using u8=uint8_t; using s8=int8_t; using s32=int32_t; using u32=uint32_t; using u64=uint64_t; using s64=int64_t;
 #define PS4_SYSV_ABI
 #define LOG_INFO(...) ((void)0)
-#define LOG_ERROR(...) ((void)0)
+unsigned install_errors=0;
+#define LOG_ERROR(...) (++install_errors)
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); std::exit(1); } } while(false)
 struct GuestRegisterSnapshot {u64 rdi,rdx;};
-std::array<u8,0x40> condition{};
-bool guest=true, accessible=true;
-bool dream=true;
+using Hook=void(*)(u64,const GuestRegisterSnapshot*);
+struct Region {u64 begin;size_t size;};
+std::vector<Region> readable;
+bool accessible=true,dream=true,last_override=false;
+int session=6,character_type=1;
+std::array<u8,0x1600> global{};
 u64 image_base=0x10000000;
-constexpr u64 TalkClientCheckedOffset=0x0204C694,CharacterTypeCheckOffset=0x017A3BE0;
-std::array<int,11> BbscDreamGuestTalks{};
+std::array<int,10> BbscDreamGuestTalks{};
 unsigned talk_hooks=0,type_hooks=0,boss_notes=0;
 bool BbscDreamEnabled(){return dream;}
-void BbscDreamTalkHook(u64,const GuestRegisterSnapshot*){}
-template<class... T>bool InstallGuestCodeHook(void* p,std::span<const u8>,T...){
-    if(reinterpret_cast<u64>(p)==image_base+TalkClientCheckedOffset)++talk_hooks;
-    else {CHECK(reinterpret_cast<u64>(p)==image_base+CharacterTypeCheckOffset);++type_hooks;}
-    return true;
+int GetSessionState(){return session;}
+int GetLocalCharacterType(){return character_type;}
+u64 GetGlobalState(){return reinterpret_cast<u64>(global.data());}
+bool ReadablePointer(u64 p,size_t size){
+    return accessible && std::ranges::any_of(readable,[=](Region r){
+        return p>=r.begin && p-r.begin<=r.size && size<=r.size-(p-r.begin);
+    });
 }
-int character_type=1;
-s64 event_id=9040;
-u8 bbsc_dream_type_skip=0;
-std::array<u64,64> bbsc_dream_type_conditions{};
-size_t bbsc_dream_type_next=0;
-std::array<s64,32> bbsc_dream_type_logged{};
-// GIFT_DECLARATIONS
-bool ReadablePointer(u64,size_t){return accessible;}
-template<class T>T ReadValue(u64 p,u64 off=0){T v{};std::memcpy(&v,reinterpret_cast<void*>(p+off),sizeof(v));return v;}
-template<class T>void WriteValue(u64 p,u64 off,T value){std::memcpy(reinterpret_cast<void*>(p+off),&value,sizeof(value));}
-bool BbscGuestInHostWorld(){return guest && character_type>0 && character_type!=8;}
-s64 BbscEventIdOf(u64){return event_id;}
+enum class MemoryProt {CpuRead};
+bool HasMemoryAccess(u64 p,size_t size,MemoryProt){return ReadablePointer(p,size);}
+template<class T>T ReadValue(u64 p,u64 off=0){T v{};CHECK(ReadablePointer(p+off,sizeof(v)));std::memcpy(&v,reinterpret_cast<void*>(p+off),sizeof(v));return v;}
+template<class T>void WriteValue(u64 p,u64 off,T value){CHECK(ReadablePointer(p+off,sizeof(value)));std::memcpy(reinterpret_cast<void*>(p+off),&value,sizeof(value));}
+template<class T>void expose(T& value){readable.push_back({reinterpret_cast<u64>(&value),sizeof(value)});}
 void NoteBbscBossRewardEvent(s64){++boss_notes;}
+void BbscDreamTalkHook(u64,const GuestRegisterSnapshot*){}
+void BbscDreamTypeCheckHook(u64,const GuestRegisterSnapshot*);
+// GIFT_DECLARATIONS
+constexpr std::array<u8,6> native_type_site{0x55,0x48,0x89,0xE5,0x41,0x57};
+constexpr std::array<u8,5> native_talk_site{0x4A,0x8B,0x7C,0xE9,0x18};
+bool type_signature=true,talk_signature=true;
+bool InstallGuestCodeHook(void* p,std::span<const u8> bytes,u64 tag,Hook callback,const u8* skip=nullptr){
+    if(reinterpret_cast<u64>(p)==image_base+TalkClientCheckedOffset){
+        ++talk_hooks;CHECK(std::ranges::equal(bytes,native_talk_site));
+        CHECK(tag==0 && callback==BbscDreamTalkHook && skip==nullptr);
+        return talk_signature;
+    }
+    CHECK(reinterpret_cast<u64>(p)==image_base+CharacterTypeCheckOffset);
+    ++type_hooks;CHECK(std::ranges::equal(bytes,native_type_site));
+    CHECK(tag==1 && callback==BbscDreamTypeCheckHook && skip==&bbsc_dream_type_skip);
+    return type_signature;
+}
 // GIFT_CALLBACK
 // GIFT_INSTALL
-bool run(s64 event,int type,bool in_host=true,int wanted=0,int entity=10000){
-    event_id=event;character_type=type;guest=in_host;
-    condition.fill(0);bbsc_dream_type_skip=0;bbsc_dream_type_conditions.fill(0);
-    WriteValue<int>(reinterpret_cast<u64>(condition.data()),0x28,entity);
-    WriteValue<s8>(reinterpret_cast<u64>(condition.data()),0x2C,wanted);
-    GuestRegisterSnapshot r{reinterpret_cast<u64>(condition.data()),0x10000};
-    const auto registers_before=r;
-    const auto bytes_before=condition;
-    BbscDreamTypeCheckHook(0,&r);
-    CHECK(r.rdi==registers_before.rdi && r.rdx==registers_before.rdx);
-    for(size_t i=0;i<condition.size();++i)if(i!=0x10)CHECK(condition[i]==bytes_before[i]);
-    CHECK((condition[0x10]&~1)==0);
+
+struct Gift {u32 slot,request,lot;};
+constexpr std::array<Gift,30> gifts{{
+    {2,9042,17000},{5,9045,22000},{6,9046,23000},{7,9047,24000},
+    {8,9048,24010},{9,9049,24020},{10,9050,24030},{11,9051,24040},
+    {12,9052,24050},{14,9054,26000},{15,9055,26010},{16,9056,26020},
+    {17,9057,26030},{18,9058,27000},{19,9059,27010},{20,9060,27020},
+    {21,9061,27030},{22,9062,27040},{23,9063,27050},{24,9064,27060},
+    {26,9066,29000},{27,9067,30000},{29,9069,32000},{31,9071,33000},
+    {32,9072,34000},{33,9073,34010},{34,9074,35000},{35,9075,35010},
+    {36,9076,39000},{37,9077,39010},
+}};
+// Exact native instructions and parameter substitutions (instruction, target
+// argument offset, source argument offset, length). Same bytecode for both hooks.
+struct Instruction {int bank,id;std::array<u8,12> args;};
+constexpr std::array<Instruction,5> native_9040{{
+    {1003,2,{0,1,0,0,0,0,0,0}},
+    {4,3,{15,0,0,0,0x10,0x27,0,0,0,0,0,0}},
+    {1000,2,{0,0,15,0}},
+    {3,0,{0,1,0,0,0,0,0,0}},
+    {2003,4,{0,0,0,0}},
+}};
+constexpr std::array<std::array<size_t,4>,3> native_parameters{{
+    {0,4,0,4},{3,4,0,4},{4,0,4,4},
+}};
+std::array<u8,0x200> event_file{};
+std::array<u8,0x10> event_ref{};
+using Condition=std::array<u8,0x40>;
+using Instance=std::array<u8,0xC0>;
+struct GiftState {Condition condition{};Instance instance{};size_t pc=0;unsigned awards=0;u32 awarded_lot=0;};
+std::array<std::array<GiftState,30>,3> state_banks{};
+std::span<GiftState,30> states{state_banks[0]};
+std::array<bool,10000> flags{};
+
+void set_event(s64 event){WriteValue<s64>(reinterpret_cast<u64>(event_file.data()),0x90,event);}
+void reset_states(){
+    std::ranges::fill(states,GiftState{});flags.fill(false);set_event(9040);
+    for(auto& s:states){
+        WriteValue<u64>(reinterpret_cast<u64>(s.instance.data()),0xA8,reinterpret_cast<u64>(event_ref.data()));
+        WriteValue<u64>(reinterpret_cast<u64>(s.instance.data()),0xB0,reinterpret_cast<u64>(event_file.data())+0xE0);
+    }
+}
+bool type_answer(Condition& condition,u64 instance,int wanted=0,int entity=10000){
+    WriteValue<s32>(reinterpret_cast<u64>(condition.data()),0x28,entity);
+    WriteValue<s8>(reinterpret_cast<u64>(condition.data()),0x2C,static_cast<s8>(wanted));
+    condition[0x10]=0xA4; // Preserve unrelated condition bits.
+    GuestRegisterSnapshot registers{reinterpret_cast<u64>(condition.data()),instance};
+    const auto before=condition;const auto registers_before=registers;
+    CHECK(bbsc_dream_type_skip==0);
+    BbscDreamTypeCheckHook(1,&registers);
+    CHECK(std::memcmp(&registers,&registers_before,sizeof(registers))==0);
+    for(size_t i=0;i<condition.size();++i)if(i!=0x10)CHECK(condition[i]==before[i]);
+    CHECK((condition[0x10]&0xFE)==before[0x10]);
+    const bool overridden=bbsc_dream_type_skip!=0;
+    last_override=overridden;
+    if(overridden)CHECK((condition[0x10]&1)!=0);
+    bbsc_dream_type_skip=0; // The real trampoline consumes/resets this byte.
+    if(!overridden)condition[0x10]=static_cast<u8>((condition[0x10]&0xFE)|
+        (entity==10000 && wanted==character_type)); // Native answer.
     return (condition[0x10]&1)!=0;
 }
+u32 argument(const Instruction& instruction,size_t offset){
+    u32 result;std::memcpy(&result,instruction.args.data()+offset,4);return result;
+}
+void tick(size_t index){
+    auto& state=states[index];const auto gift=gifts[index];
+    const std::array<u32,2> parameters{gift.request,gift.lot};
+    for(;state.pc<native_9040.size();++state.pc){
+        auto instruction=native_9040[state.pc];
+        for(auto p:native_parameters)if(p[0]==state.pc)
+            std::memcpy(instruction.args.data()+p[1],reinterpret_cast<const u8*>(parameters.data())+p[2],p[3]);
+        const auto end=[&]{flags[9040+gift.slot]=true;state.pc=native_9040.size();};
+        if(instruction.bank==1003 && instruction.id==2){
+            CHECK(instruction.args[0]==0 && instruction.args[1]==1);
+            if(flags[argument(instruction,4)]){end();return;}
+        }else if(instruction.bank==4 && instruction.id==3){
+            CHECK(instruction.args[0]==15);
+            type_answer(state.condition,reinterpret_cast<u64>(state.instance.data()),
+                        instruction.args[8],static_cast<int>(argument(instruction,4)));
+        }else if(instruction.bank==1000 && instruction.id==2){
+            CHECK(instruction.args[0]==0 && instruction.args[1]==0 && instruction.args[2]==15);
+            if(!(state.condition[0x10]&1)){end();return;}
+        }else if(instruction.bank==3 && instruction.id==0){
+            CHECK(instruction.args[0]==0 && instruction.args[1]==1);
+            if(!flags[argument(instruction,4)])return; // Wait on MAIN.
+        }else if(instruction.bank==2003 && instruction.id==4){
+            ++state.awards;state.awarded_lot=argument(instruction,0);
+        }else CHECK(false);
+    }
+    flags[9040+gift.slot]=true; // Native event completion.
+}
+void all_gifts(){
+    reset_states();
+    for(size_t i=0;i<gifts.size();++i){CHECK(gifts[i].request==9040+gifts[i].slot);tick(i);}
+#ifdef EXPECT_FIXED
+    for(size_t i=0;i<gifts.size();++i){
+        CHECK(!flags[gifts[i].request] && states[i].pc==3 && states[i].awards==0);
+        // All thirty addresses coexist; group rechecks lack an event instance.
+        // Keep the production cache instead of resetting it for every call.
+        CHECK(type_answer(states[i].condition,0));
+    }
+    for(size_t requested=0;requested<gifts.size();++requested){
+        flags[gifts[requested].request]=true; // External local dialogue request.
+        for(size_t i=0;i<gifts.size();++i)tick(i);
+        for(size_t i=0;i<gifts.size();++i){
+            CHECK(states[i].awards==(i<=requested?1u:0u));
+            if(i<=requested)CHECK(states[i].awarded_lot==gifts[i].lot);
+            else CHECK(!flags[gifts[i].request]);
+        }
+    }
+    for(size_t i=0;i<gifts.size();++i){tick(i);CHECK(states[i].awards==1);}
+#else
+    for(size_t i=0;i<gifts.size();++i)CHECK(flags[gifts[i].request] && states[i].awards==0);
+#endif
+    // Precompleted/poisoned requests still bypass rewards on load.
+    reset_states();for(auto gift:gifts)flags[gift.request]=true;
+    for(size_t i=0;i<gifts.size();++i){tick(i);CHECK(states[i].awards==0);}
+}
+void installation(){
+    for(bool enabled:{false,true}){
+        dream=enabled;talk_hooks=type_hooks=install_errors=0;InstallBbscDreamHooks();
+#ifdef EXPECT_FIXED
+        CHECK(type_hooks==1 && talk_hooks==static_cast<unsigned>(enabled));
+        type_signature=false;install_errors=0;InstallBbscDreamHooks();CHECK(install_errors==1);
+        type_signature=true;
+#else
+        CHECK(type_hooks==static_cast<unsigned>(enabled) && talk_hooks==static_cast<unsigned>(enabled));
+#endif
+        if(enabled){talk_signature=false;install_errors=0;InstallBbscDreamHooks();CHECK(install_errors==1);talk_signature=true;}
+    }
+    image_base=0;talk_hooks=type_hooks=0;InstallBbscDreamHooks();CHECK(type_hooks==0 && talk_hooks==0);
+    image_base=0x10000000;dream=true;
+}
 int main(){
-    // Native 9040: request-on-at-load -> End; otherwise check Human, End if
-    // false, wait for own request, then award. Each slot's End writes 9040+slot,
-    // the same flag used by its dialogue. Old callback reproduces premature End.
-    const bool human_answer=run(9040,1);
+    expose(global);expose(event_file);expose(event_ref);expose(state_banks);
+    const u64 file=reinterpret_cast<u64>(event_file.data());
+    WriteValue<s64>(file,0x10,1);WriteValue<u64>(file,0x18,0x90);WriteValue<u64>(file,0x28,0xC0);
+    WriteValue<u64>(file,0x98,5);WriteValue<u64>(file,0xA0,0);
+    WriteValue<u64>(reinterpret_cast<u64>(event_ref.data()),8,file);
+    installation();
+    // Fresh addresses and later address reuse after synthetic character/map/death
+    // loads. Ninety addresses pass through the 64-entry cache without resetting it.
+    for(bool enabled:{true,false})for(int type:{1,2,12,13}){
+        dream=enabled;character_type=type;session=6;global[0x1592]=0;
+        for(int load=0;load<3;++load){states=std::span<GiftState,30>{state_banks[load]};all_gifts();}
+    }
 #ifdef EXPECT_FIXED
-    CHECK(human_answer);
-    bool request=false;unsigned awards=0;
-    const bool ended_early=!human_answer;
-    if(ended_early)request=true;
-    CHECK(!ended_early && !request && awards==0);
-    request=true; // only the player's actual dialogue requests the reward
-    if(human_answer && request)++awards;
-    CHECK(awards==1);
-    // Every foreign phantom can otherwise poison the same persistent gift bits,
-    // including invaders. Only this event's Human guard is answered; no reward
-    // occurs until the player's own dialogue actually requests one.
-    for(int t:{1,2,12,13})CHECK(run(9040,t));
-#else
-    CHECK(!human_answer); // unmodified callback: all 30 slots end without gifts
-    for(int t:{1,2,12,13})CHECK(!run(9040,t));
+    // In one's own world the native Human answer also reaches the same rewards.
+    character_type=0;session=0;dream=false;all_gifts();session=6;
 #endif
-    for(int t:{0,8,-1})CHECK(!run(9040,t));
-    CHECK(!run(9040,1,false));
-    CHECK(!run(9040,1,true,1));CHECK(!run(9040,1,true,0,10001));
-    for(s64 e:{9039,9041,9042,9054,9075,12400657})CHECK(!run(e,1));
-    CHECK(run(5500,1));CHECK(run(12100112,1));
+    reset_states();auto& state=states[0];auto instance=reinterpret_cast<u64>(state.instance.data());
+    character_type=1;dream=true;
 #ifdef EXPECT_FIXED
-    dream=false;boss_notes=0;
-    CHECK(run(9040,1));CHECK(!run(5500,1));CHECK(!run(12100112,1));CHECK(boss_notes==0);
-    InstallBbscDreamHooks();CHECK(type_hooks==1 && talk_hooks==0);
+    CHECK(type_answer(state.condition,instance));
 #else
-    dream=false;
-    InstallBbscDreamHooks();CHECK(type_hooks==0 && talk_hooks==0);
+    CHECK(!type_answer(state.condition,instance));
 #endif
-    dream=true;talk_hooks=type_hooks=0;
-    InstallBbscDreamHooks();CHECK(type_hooks==1 && talk_hooks==1);
-    image_base=0;talk_hooks=type_hooks=0;
-    InstallBbscDreamHooks();CHECK(type_hooks==0 && talk_hooks==0);
-    accessible=false;CHECK(!run(9040,1));
-    BbscDreamTypeCheckHook(0,nullptr);
-    std::puts("PASS: production gift callback, native early-End regression, foreign phantom waiting, and host/other-event guards");
+    for(int type:{0,8,-1}){
+        character_type=type;CHECK(type_answer(state.condition,instance)==(type==0));CHECK(!last_override);
+    }
+    character_type=1;
+    for(int state_id:{0,3,4}){session=state_id;CHECK(!type_answer(state.condition,instance));}
+    session=6;global[0x1592]=1;CHECK(!type_answer(state.condition,instance));global[0x1592]=0;
+    CHECK(type_answer(state.condition,instance,1));CHECK(!last_override);
+    CHECK(!type_answer(state.condition,instance,2));CHECK(!type_answer(state.condition,instance,0,10001));
+    for(s64 event:{9039,9041,9042,9054,9073,9075,12400657}){set_event(event);CHECK(!type_answer(state.condition,instance));}
+    CHECK(!type_answer(state.condition,0)); // Non-gift reuse invalidates a cached address.
+    for(s64 event:{5500,12100112}){
+        set_event(event);dream=true;CHECK(type_answer(state.condition,instance));
+#ifdef EXPECT_FIXED
+        dream=false;boss_notes=0;CHECK(!type_answer(state.condition,instance));CHECK(boss_notes==0);
+#endif
+    }
+    set_event(9040);dream=false;boss_notes=0;
+#ifdef EXPECT_FIXED
+    CHECK(type_answer(state.condition,instance));CHECK(boss_notes==0);
+    bbsc_dream_type_skip=0; // Direct invalid-input checks below do not run the trampoline.
+#endif
+    GuestRegisterSnapshot invalid{0,instance};BbscDreamTypeCheckHook(1,&invalid);CHECK(bbsc_dream_type_skip==0);
+    accessible=false;invalid.rdi=reinterpret_cast<u64>(state.condition.data());
+    BbscDreamTypeCheckHook(1,&invalid);CHECK(bbsc_dream_type_skip==0);accessible=true;
+    BbscDreamTypeCheckHook(1,nullptr);
+#ifdef EXPECT_FIXED
+    std::puts("PASS: 30 native slot/request/ItemLot mappings, wait/request/award-once gates, precompleted saves, real event/guest callbacks, persistent-cache rechecks, synthetic reloads, and installation signatures");
+#else
+    std::puts("PASS: pre-guard production callback reproduces all 30 premature completions with zero awards");
+#endif
 }

@@ -3,12 +3,18 @@
 在 Windows x64 上使用 MSYS2 **CLANG64**，需要 Windows PowerShell 5.1 和系统 .NET Framework 编译器。GitHub Actions 的完整环境列表见 `.github/workflows/windows.yml`。
 
 ```bash
+set -euo pipefail
 python scripts/fetch_sources.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File server/windows/build-native.ps1 -Toolchain "$(cygpath -m /clang64)"
 python scripts/prepare_sources.py .build/bbsc
 python scripts/localize.py .build/bbsc
 python scripts/prepare_session_recovery.py .build/bbsc
 python scripts/prepare_personal_rewards.py .build/bbsc
 python scripts/prepare_kit_initialization.py .build/bbsc
+python scripts/prepare_game_hardening.py .build/bbsc
+python scripts/prepare_save_hardening.py .build/bbsc
+python tests/test_relay_auth_native.py --source .build/bbsc
+python scripts/prepare_relay_auth.py .build/bbsc
 cd .build/bbport
 bash build.sh
 bash tools/fetch_fsr4_assets.sh
@@ -17,14 +23,19 @@ python packaging/windows/fetch_fg401_dx12.py
 python packaging/windows/prepare_fsr4vk.py
 cd ../..
 python scripts/fetch_dlss.py
+python scripts/fetch_vc_runtime.py
 bash scripts/build-mod.sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-entry.ps1
 python -m unittest discover -s tests -v
-python scripts/package.py --toolchain "$(cygpath -m /clang64)"
+version="$(python -c 'import json; print(json.load(open("upstream.lock.json"))["version"])')"
+python scripts/package.py --toolchain "$(cygpath -m /clang64)" --server-package "server/windows/dist/TheHuntServer-Windows-v${version}.zip"
 python scripts/source_archive.py
+python server/scripts/archive-source.py
 ```
 
 `fetch_sources.py` 只接受新构建目录，防止覆盖修改过的上游源码。准备脚本对预期代码进行精确匹配；上游变化时停止，而不会猜测替换。
+
+Windows 服务端的 `prepare-sources.py` 每次从重新校验 SHA-256 的缓存归档干净解包，重新应用补丁后替换可丢弃的 `server/windows/src/` 和 `bbsc-game/`。`.source-revision` 仅记录来源，不用于跳过准备；不要在这两个目录保存需要保留的改动。下载或补丁失败时停止构建，保留原有生成输入供检查。
 
 `prepare_personal_rewards.py` 在既有会话恢复源码通过固定摘要检查后，增加个人奖励修复及同轮返家后的原生保存凭据。打包脚本自动包含 `launcher/home_save_proof.py`；运行时验证模块与 DLL 必须成套使用。
 
@@ -35,12 +46,15 @@ DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.5 发行�
 产物位于 `dist/`：
 
 - `TheHuntLauncher-<version>-windows-x64.zip`：干净的首次安装包。
-- `TheHuntLauncher-sources.zip`：对应应用源码、补丁及构建脚本。
-- `BBSC-Launcher-<version>-windows-x64.zip`：与主安装包逐字节相同的旧版自动更新兼容包。
+- `TheHuntLauncher-sources.zip`：对应应用源码、补丁、构建脚本及逐文件 `SOURCE-MANIFEST.json`。
 - `SHA256SUMS.txt`：全部发布 ZIP 的校验值。
 - `fsr4vk-v0.4.3-amdfix-src.zip`：Vulkan 动态组件的对应源码，另列入校验文件并随发布提供。
 
 构建依赖来自 MSYS2；Actions 另保存 `toolchain-packages.txt`。核心源码固定版本，但工具链尚未固定到完整离线快照，不能将产物描述为逐字节可重现。
+
+源码归档从 Git 登记清单收录本仓库文件；新建源码和测试须先登记，未登记的本地文件不会自动进入归档。BBSC 按锁定提交清单加显式生成文件白名单收录，保存助手只收录两份指定的生成 C++；BBport 子模块按记录提交递归收录。缺失来源、生成文件或新增但未登记的本地 BBSC include 会停止归档。原始服务端下载保存在包内 `bbsc-launcher/server/windows/downloads/`，便于准备脚本重新校验和复用。
+
+源码 ZIP 的 `bbsc/`、`bbport/`、`save-bridge/` 是供核对的实际构建源码；`bbsc/` 已打过补丁，不要对它重复执行补丁链。重新构建可进入 `bbsc-launcher/`，在新 `.build/` 中按以上步骤获取锁定上游并生成。源码 ZIP 不包含 Git 元数据，重新生成源码归档需使用有完整登记清单和上游 Git 对象的仓库检出。
 
 ## 发布
 
@@ -55,5 +69,7 @@ DLSS 桥接及 NVIDIA SR/FG 运行库取自固定的官方 BBport 1.9.5 发行�
 ## 统一仓库构建
 
 先执行 `server/windows/build-native.ps1` 构建并检查无缝服务端，再将其同版本 ZIP 传给客户端打包器的 `--server-package`。客户端拒绝版本不一致、包含普通模式或私人状态的服务端包。服务端版本 `server/VERSION` 必须与根目录 `upstream.lock.json` 一致。
+
+客户端和独立服务端均包含服务端 `README.md`、`docs/` 与公开 `recipe/`，供包内相对链接使用。文档复制过滤实际 `.env`、账号库、日志和原子写入临时文件，只保留公开模板。归档前检查暂存目录，归档后核对实际 ZIP 成员、CRC 和摘要；运行过的安装目录不能用于发布。
 
 `launcher/HuntUpdates.cs` 是共享更新器源码。CI 同时构建 Windows 服务端、Linux 配方和客户端；完整客户端内置服务端，发布页也附带独立 Windows 服务端和 Linux 配方。

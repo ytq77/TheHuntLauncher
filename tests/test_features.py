@@ -78,7 +78,10 @@ class GameplayFeatures(unittest.TestCase):
             (self.root / name).write_text("test")
         (self.root / ".private").mkdir()
         (self.root / ".private/account.clixml").write_text("private")
-        included = {path.name for path in launcher_sources(self.root)}
+        from unittest.mock import patch
+        with patch('source_archive.tracked', return_value=[
+                'features.json', 'profile.json', 'feature-catalog.json', 'client.py', '.private/account.clixml']):
+            included = {path.name for path in launcher_sources(self.root)}
         self.assertEqual(included, {"feature-catalog.json", "client.py"})
 
 

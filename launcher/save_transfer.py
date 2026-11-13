@@ -14,6 +14,7 @@ import stat
 import subprocess
 import uuid
 import offline_aux
+import offline_save
 import trophy_sync
 
 ROOT = Path(__file__).resolve().parent
@@ -40,6 +41,41 @@ def plain_path(path):
 
 def overlaps(first, second):
     return first == second or first in second.parents or second in first.parents
+
+
+def validate_savedata(folder, *, allow_empty=False):
+    """Validate the exact path loaded by this launcher, before copying a branch."""
+    folder = plain_path(folder)
+    if allow_empty and not any(folder.rglob('userdata*')):
+        return
+    game = folder/'1/CUSA00207/SPRJ0005'
+    profile = game/'userdata0010'
+    if not profile.is_file() or profile.stat().st_size < 84 or not any(profile.read_bytes()):
+        raise ValueError('存档缺少有效的 userdata0010 角色列表，未替换。')
+    used = 0
+    for slot in range(10):
+        primary, backup = (game/f'{stem}{slot:04}' for stem in ('userdata', 'backup'))
+        if not primary.exists():
+            if backup.exists() and any(backup.read_bytes()):
+                raise ValueError('存档有备档但缺少对应主角色文件，未替换。')
+            continue
+        raw = primary.read_bytes()
+        if len(raw) != 0x140000:
+            raise ValueError('角色文件长度异常，未替换。')
+        if not any(raw):
+            continue  # The game's unused slots are all zero.
+        role = offline_save.parse(raw)
+        offline_aux.flag_bank(raw)
+        used += 1
+        if backup.exists():
+            old = backup.read_bytes()
+            other = offline_save.parse(old)
+            offline_aux.flag_bank(old)
+            if (raw[role.username:role.username+32] != old[other.username:other.username+32] or
+                    raw[role.face+4:role.face+239] != old[other.face+4:other.face+239]):
+                raise ValueError('角色主备两代身份不一致，未替换。')
+    if not used:
+        raise ValueError('存档没有可读取的已使用角色，未替换。')
 
 
 def game_running():
@@ -126,6 +162,8 @@ def copy_verified(source, destination, expected=None):
 
 def import_auxiliary_snapshot(root=None):
     root = ROOT if root is None else Path(root)
+    from world_recovery import require_review_clear_for_transfer
+    require_review_clear_for_transfer(root)
     result = {}
     for category in AUXILIARY:
         folder = plain_path(root / 'mod' / category)
@@ -157,7 +195,10 @@ def inspect(install):
         raise ValueError("普通版与无缝版的存档路径相同或互相包含，已停止导入。")
     if not destination.parent.is_dir():
         raise ValueError("无缝版尚未初始化，请先启动一次；首次启动会自动导入普通版存档。")
+    if (ROOT/'.save-conversion-pending.json').exists():
+        raise ValueError('存在未完成的原版存档替换，请先在转换页核对恢复记录。')
     inventory = snapshot(source)
+    validate_savedata(source)
     files = inventory[1]
     valid = any(re.fullmatch(r"userdata000[0-9]", Path(name).name, re.IGNORECASE)
                 and "SPRJ0005" in (part.upper() for part in Path(name).parts)
@@ -182,14 +223,15 @@ def inspect(install):
 def import_lock(root=None):
     path = plain_path((ROOT if root is None else Path(root)) / ".save-import.lock")
     try:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o600)
     except FileExistsError:
         raise ValueError("已有存档导入操作或遗留导入锁，请确认没有导入任务后再处理。") from None
     recovery_required = False
     try:
         os.write(descriptor, str(os.getpid()).encode("ascii"))
-        yield
-    except ImportRecoveryError:
+        os.fsync(descriptor)
+        yield descriptor
+    except (ImportRecoveryError, KeyboardInterrupt, SystemExit):
         recovery_required = True
         raise
     finally:
@@ -199,7 +241,7 @@ def import_lock(root=None):
 
 
 def apply(install, expected_source=None):
-    with import_lock():
+    with import_lock() as descriptor:
         require_stopped()
         info, original = inspect(install)
         auxiliary = import_auxiliary_snapshot()
@@ -227,6 +269,25 @@ def apply(install, expected_source=None):
         moved = []
         installed = False
         old_destination = snapshot(destination) if destination.exists() else None
+        intent = {
+            'schema': 1, 'pid': os.getpid(), 'state': 'prepared',
+            'destination': str(destination), 'stage': str(stage),
+            'backup': str(backup_parent/'savedata'), 'auxiliary_backup': str(backup_parent/'auxiliary'),
+            'trophy_backup': str(trophy_backup),
+            'original': {name: row[-1] for name, row in old_destination[1].items()} if old_destination else None,
+            'expected': {name: row[-1] for name, row in original[1].items()},
+        }
+        # Publish the full intent before the first rename. If the worker stops
+        # abruptly, the existing startup blocker now points to exact backups.
+        payload = json.dumps(intent, ensure_ascii=False, indent=2).encode('utf-8')
+        with (backup_parent/'install.json').open('xb') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        os.write(descriptor, payload)
+        os.ftruncate(descriptor, len(payload))
+        os.fsync(descriptor)
         try:
             if old_destination is not None:
                 backup = backup_parent / 'savedata'
@@ -272,6 +333,11 @@ def apply(install, expected_source=None):
         info['trophies'] = trophies['summary']
         info['trophy_backup'] = str(trophy_backup)
         info['notice'] += '\n' + trophy_sync.notice(trophies['summary'])
+        intent['state'] = 'complete'
+        with (backup_parent/'install.json').open('wb') as stream:
+            stream.write(json.dumps(intent, ensure_ascii=False, indent=2).encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
         return info
 
 

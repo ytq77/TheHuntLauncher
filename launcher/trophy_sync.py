@@ -1,6 +1,7 @@
 """Merge BBport's recorded local unlocks, never infer trophies from character saves."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import uuid
 
@@ -89,6 +90,8 @@ def atomic_write(path, raw):
     try:
         with temp.open('xb') as stream:
             stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
         temp.replace(path)
     finally:
         temp.unlink(missing_ok=True)

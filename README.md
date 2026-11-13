@@ -6,11 +6,11 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.21) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.22) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.21**，基于 **BBport 1.9.7**。本版修复房主退出或断开后客机的返程位置，限制纷争之铃仅由房主切换互伤，并处理退出桌面时可能误回提灯的残留传送目标。箱子拾取改动已通过自动检查，实机待验；跨图招募和空枪动画仍在调查。洗点关闭。详见[发布说明](docs/releases/v0.1.0-preview.21.md)与[验收表](docs/validation-current.md)。
+当前版本为 **0.1.0-preview.22**，基于 **BBport 1.9.7**。本版修复客机跟随跨图后的断鸣空弹动作，恢复纷争之铃的铃声，并在启动器左下角加入使用文档入口。详见[发布说明](docs/releases/v0.1.0-preview.22.md)与[验收表](docs/validation-current.md)。
 
 ## 功能
 
@@ -32,12 +32,14 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.21-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.21.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.21.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.22-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.22.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.22.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
+
+客户端包内保留 `server/README.md`、`server/docs/` 和公开 `server/recipe/`，可从本说明打开部署教程及配方；独立服务端包中的对应路径为 `README.md`、`docs/` 和 `recipe/`。
 
 ## 快速开始
 
@@ -84,6 +86,12 @@ The Hunt 使用所填服务器上的账号，与普通版 SuperMedo 登录分开
 导入与转换会备份并合并实际奖杯记录，按编号去重、保留最早解锁时间。原版未记录的历史奖杯不会仅凭存档进度自动点亮，见[奖杯同步](docs/trophies.md)。
 
 「检查更新」支持查询、下载校验、程序备份与替换，并保留账号和存档，见[自动更新](docs/updates.md)。合作结束后的世界恢复说明见[世界恢复流程](docs/world-recovery.md)；保留待确认记录，按提示关闭游戏并完成核对。
+
+## 故障排查
+
+复现问题后，双击客户端根目录的 **Collect-TheHunt-Diagnostics.cmd**。窗口会显示本机 ZIP 的位置。普通收集只包含版本、恢复状态和筛选后的日志事件，不含存档、账号或服务器地址。请先检查 ZIP，再决定是否分享。
+
+需要核对存档时，先关闭游戏和启动器，在客户端目录执行 `Collect-TheHunt-Diagnostics.cmd -Deep` 并按提示确认。深度 ZIP 含两代存档和恢复记录，请私下交给你信任的协助者。两种模式都不会自动上传。
 
 ## 文档与源码
 

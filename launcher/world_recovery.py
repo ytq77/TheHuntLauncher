@@ -1,10 +1,12 @@
 """Bounded BBSC recovery protocol. Disk writes occur only with the game stopped."""
 import hashlib
 import json
+import mmap
 import os
 from pathlib import Path
 import re
 import struct
+import sys
 import time
 import uuid
 
@@ -12,17 +14,36 @@ import offline_aux
 import offline_save
 import save_proof
 import home_save_proof
-from save_transfer import plain_path, require_stopped, import_lock
+from save_transfer import plain_path, require_stopped, import_lock, snapshot, content_inventory, copy_verified
 
 HEADER = struct.Struct('<4sIQ32sIIIQ')
 ROW = struct.Struct('<II125s125s')
 LIMIT = 10000
-CAPTURE, RESTORE, APPLIED, QUIT, BLOCKED = range(1, 6)
+CAPTURE, RESTORE, APPLIED, QUIT, BLOCKED, RELOADED = range(1, 7)
+MODE_NAMES = ('CAPTURE', 'RESTORE', 'APPLIED', 'QUIT', 'BLOCKED', 'RELOADED')
 _next_poll = {}
+
+
+def quit_seal(token):
+    # The worker owns this mapping until it observes the game exit. The game
+    # can revoke a quit without rewriting a file, and a restarted worker
+    # cannot inherit the previous worker's authorization.
+    return mmap.mmap(-1, 8, tagname='Local\\TheHuntRecovery-'+token)
+
+
+def read_quit_seal(seal):
+    return struct.unpack('<Q', seal[:])[0]
 
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+class ExitRecordWriteError(PermissionError):
+    def __init__(self, token, exit_code, cause):
+        super().__init__(str(cause))
+        self.token = token
+        self.exit_code = exit_code
 
 
 def atomic(path, data):
@@ -33,15 +54,19 @@ def atomic(path, data):
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
+    critical = (path.name == 'job.json' or
+                path.parent.name == 'runs' and re.fullmatch(r'[0-9a-f]{32}\.json', path.name) or
+                path.parent.name == 'acks' and re.fullmatch(r'[0-9]\.ack', path.name))
+    attempts = 40 if critical else 10
     try:
-        for attempt in range(10):
+        for attempt in range(attempts):
             try:
                 temp.replace(path)
                 break
             except PermissionError:
-                if attempt == 9:
+                if attempt == attempts-1:
                     raise
-                time.sleep(0.002)
+                time.sleep(0.0025*(attempt+1) if critical else 0.002)
     finally:
         temp.unlink(missing_ok=True)
 
@@ -76,16 +101,23 @@ def layout(root):
     return root/'data/user/world-recovery', root/'data/user/savedata/1/CUSA00207/SPRJ0005'
 
 
-def read_request(root, path):
-    data = stable(path)
+def request_header(data):
     if len(data) < HEADER.size:
         raise ValueError('世界恢复请求不完整。')
     magic, version, seq, token, slot, mode, count, journal_hash = HEADER.unpack_from(data)
     token = token.decode('ascii')
     if (magic != b'THWR' or version != 2 or not re.fullmatch('[0-9a-f]{32}', token)
-            or not seq or not 0 <= slot < 10 or mode not in range(1, 6)
-            or not 0 < count <= LIMIT or len(data) != HEADER.size+count*ROW.size):
+            or not seq or not 0 <= slot < 10 or not CAPTURE <= mode <= RELOADED
+            or not 0 < count <= LIMIT):
         raise ValueError('世界恢复请求格式不受支持。')
+    return seq, token, slot, mode, count, journal_hash
+
+
+def read_request(root, path, *, enroll=True):
+    data = stable(path)
+    seq, token, slot, mode, count, journal_hash = request_header(data)
+    if len(data) != HEADER.size+count*ROW.size or path.name != f'world-save-{slot}.bin':
+        raise ValueError('世界恢复请求长度或槽位文件名不匹配。')
     folder, saves = layout(root)
     context = json.loads(stable(folder/'runs'/f'{token}.json'))
     if context['token'] != token or context['root'] != str(plain_path(root)):
@@ -127,7 +159,7 @@ def read_request(root, path):
     if str(slot) not in context['identities']:
         # Only a complete pre-join, still-own-world snapshot may enroll a role
         # created during this run. An already known identity is never replaced.
-        if mode != CAPTURE or any(before != after for _, _, before, after in rows):
+        if not enroll or mode != CAPTURE or any(before != after for _, _, before, after in rows):
             raise ValueError('新角色尚无可信入房前身份记录，已停止。')
         primary = saves/f'userdata{slot:04}'
         backup = saves/f'backup{slot:04}'
@@ -196,22 +228,35 @@ def job_for(request):
     return request['folder']/'jobs'/request['id']
 
 
-def prepare(request):
+def read_job(request):
     job = job_for(request)
     manifest = job/'job.json'
     if manifest.exists():
         value = json.loads(stable(manifest))
+        if value['state'] not in ('prepared', 'primary-ready', 'verified', 'complete'):
+            raise ValueError('恢复任务状态无效。')
         if value['request_identity'] != [request['token'], request['slot'], request['seq']]:
             raise ValueError('恢复任务编号冲突。')
         if value['plan_sha256'] != request['plan_sha256']:
             raise ValueError('恢复任务中的状态内容发生变化，已停止。')
         if value['baseline_sha256'] != sha(request['baseline']):
             raise ValueError('入房前固定映射的凭据发生变化，已停止。')
+        if (value['identity'] != request['identity'] or
+                set(value['files']) != {f'{stem}{request["slot"]:04}' for stem in ('userdata', 'backup')}):
+            raise ValueError('恢复任务与当前角色或两代存档不一致，请保留恢复记录。')
         return value
+    return None
+
+
+def prepare(request, *, current=None):
+    value = read_job(request)
+    if value is not None:
+        return value
+    job = job_for(request)
     files = {}
     for stem in ('userdata', 'backup'):
         name = f'{stem}{request["slot"]:04}'
-        before = stable(request['saves']/name)
+        before = stable(request['saves']/name) if current is None else current[name]
         after = image(before, request)
         atomic(job/'before'/name, before)
         atomic(job/'expected'/name, after)
@@ -225,7 +270,7 @@ def prepare(request):
              'request_sha256': request['request_sha256'], 'plan_sha256': request['plan_sha256'],
              'baseline_sha256': sha(request['baseline']),
              'mode': request['mode']}
-    json_file(manifest, value)
+    json_file(job/'job.json', value)
     return value
 
 
@@ -233,32 +278,45 @@ def file_matches(request, value, name, current):
     job = job_for(request)
     if identity(current) != value['identity']:
         return False
-    before = (job/'before'/name).read_bytes()
-    after = (job/'expected'/name).read_bytes()
+    before = stable(job/'before'/name)
+    after = stable(job/'expected'/name)
     if sha(before) != value['files'][name]['before'] or sha(after) != value['files'][name]['after']:
         raise ValueError('恢复任务的备份或目标副本发生变化。')
-    a, b, c = (offline_aux.flag_bank(raw) for raw in (before, after, current))
-    # Verify only the recovery's changed bits, allowing later personal progress.
-    return not any((current[c+i] ^ after[b+i]) & (before[a+i] ^ after[b+i]) for i in range(150000))
+    b, c = (offline_aux.flag_bank(raw) for raw in (after, current))
+    # Every requested group must match even when this generation needed no
+    # changes at preparation. Native save proof can explain later event changes.
+    for key, index, _, _ in request['rows']:
+        if index == 0xffffffff:
+            continue
+        offset = index * 125
+        target = after[b+offset:b+offset+125]
+        actual = current[c+offset:c+offset+125]
+        if key//10000 == 5:
+            if any(a & t != t for a, t in zip(actual, target)):
+                return False
+        elif actual != target:
+            return False
+    return True
 
 
-def saved_matches(request, value):
-    current = {name:stable(request['saves']/name) for name in value['files']}
+def saved_matches(request, value, *, current=None, running_token=None):
+    if current is None:
+        current = {name:stable(request['saves']/name) for name in value['files']}
     # Preserve strict baseline/identity validation even if a native descendant
     # can later explain legitimate changes to load-time event completion flags.
     strict = [file_matches(request, value, name, raw) for name,raw in current.items()]
     if all(strict):
         return True
-    proof = (save_proof.verify(request, value, current) or
-             home_save_proof.verify(request, value, current))
+    proof = (save_proof.verify(request, value, current, running_token=running_token) or
+             home_save_proof.verify(request, value, current, running_token=running_token))
     if proof:
         request['native_save_proof'] = proof
     return proof is not None
 
 
-def finish(request, value, *, proof):
+def finish(request, value, *, proof, current=None, running_token=None):
     job = job_for(request)
-    if not saved_matches(request, value):
+    if not saved_matches(request, value, current=current, running_token=running_token):
         return False
     original_journal = (job/'journal.bin').read_bytes()
     waiting = request['journal'].with_suffix('.bin.awaiting-save')
@@ -297,21 +355,94 @@ def confirm(folder, slot, seq):
         atomic(path, expected)
 
 
-def complete_stopped(request, *, can_write):
+def later_run_exited_cleanly(request, token, observed_exit):
+    """Only the latest later session for this root can explain changed rows."""
+    context = request['context']
+    original_start = context.get('started_ns')
+    if type(original_start) is not int or original_start <= 0:
+        return False
+    latest = None
+    try:
+        runs = plain_path(request['folder']/'runs')
+        for path in runs.glob('*.json'):
+            if not re.fullmatch(r'[0-9a-f]{32}', path.stem):
+                continue
+            run = json.loads(stable(path))
+            if not isinstance(run, dict) or run.get('token') != path.stem:
+                return False
+            if run.get('root') != context['root']:
+                continue
+            started = run.get('started_ns')
+            if type(started) is not int or started <= 0:
+                return False
+            if started <= original_start:
+                continue
+            if latest is None or started > latest['started_ns']:
+                latest = run
+            elif started == latest['started_ns']:
+                return False
+    except (OSError, ValueError):
+        return False
+    if latest is None or (token is not None and token != latest['token']):
+        return False
+    identities = latest.get('identities')
+    if not isinstance(identities, dict) or identities.get(str(request['slot'])) != request['identity']:
+        return False
+    if observed_exit is not None and (type(observed_exit) is not int or observed_exit != 0):
+        return False
+    if 'exit_code' in latest:
+        return type(latest['exit_code']) is int and latest['exit_code'] == 0
+    return token is not None and type(observed_exit) is int and observed_exit == 0
+
+
+def can_wait_after_progress(request, value, token=None, observed_exit=None):
+    return (value is not None and value['state'] == 'primary-ready' and
+            request['mode'] not in (BLOCKED, RELOADED) and
+            later_run_exited_cleanly(request, token, observed_exit))
+
+
+def complete_stopped(request, *, can_write, compare_only=False, current_token=None, observed_exit=None):
     root = Path(request['context']['root'])
     with import_lock(root):
-        if (root/'.save-conversion.lock').exists():
-            raise ValueError('存档转换尚未完成，已停止世界恢复写入。')
+        require_no_conversion(root)
+        if compare_only:
+            require_stopped()
+            actual = read_request(root, request['path'], enroll=False)
+            if actual['request_sha256'] != request['request_sha256']:
+                raise ValueError('恢复请求在核对前发生变化，已保留原记录。')
+            request = actual
+            check_journal_location(request)
+            current, status = compare_generations(request)
+            if 'different-character' in status.values():
+                raise ValueError('主存档或游戏备份与本次恢复的角色不一致，请保留两代存档与恢复记录。')
+            primary_status = status[f'userdata{request["slot"]:04}']
+            later_progress = (primary_status == 'unverified' and
+                              can_wait_after_progress(request, read_job(request),
+                                                      current_token, observed_exit))
+            if primary_status != 'verified' and not later_progress:
+                raise ValueError('无法确认主存档已恢复。请保留两代存档与恢复记录，不要删除或改名。')
+            return check_stopped_without_replay(request, current=current, later_progress=later_progress)
         return _complete_stopped(request, can_write=can_write)
+
+
+def require_no_conversion(root):
+    if ((root/'.save-conversion.lock').exists() or
+            (root/'.save-conversion-pending.json').exists()):
+        raise ValueError('存档转换尚未完成，已停止世界恢复操作。')
 
 
 def _complete_stopped(request, *, can_write):
     require_stopped()
+    if request['mode'] in (BLOCKED, RELOADED):
+        return check_stopped_without_replay(request)
     value = prepare(request)
     if finish(request, value, proof='both save generations already contain the recovery'):
         return 'verified'
     job = job_for(request)
     if value['state'] == 'primary-ready':
+        primary = f'userdata{request["slot"]:04}'
+        if not file_matches(request, value, primary, stable(request['saves']/primary)):
+            raise ValueError('无法确认主存档已恢复，已保留两代存档供复核。')
         mark_waiting(request, job)
         return 'waiting-backup-save'  # Never replay a completed primary recovery.
     staged = {}
@@ -368,6 +499,81 @@ def _complete_stopped(request, *, can_write):
     return 'primary-restored-waiting-backup-save'
 
 
+def compare_generations(request):
+    value = read_job(request)
+    job = job_for(request)
+    if value is not None and stable(job/'journal.bin') != request['journal_bytes']:
+        raise ValueError('恢复任务的世界记录与当前请求不匹配。')
+    slot = request['slot']
+    current, status = {}, {}
+    for name in (f'userdata{slot:04}', f'backup{slot:04}'):
+        try:
+            raw = stable(request['saves']/name)
+        except FileNotFoundError:
+            status[name] = 'missing'
+            continue
+        current[name] = raw
+        try:
+            same_role = identity(raw) == request['identity']
+        except ValueError:
+            status[name] = 'invalid'
+            continue
+        if not same_role:
+            status[name] = 'different-character'
+            continue
+        if value is not None:
+            if image(stable(job/'before'/name), request) != stable(job/'expected'/name):
+                raise ValueError('恢复任务的目标与已核对的恢复计划不一致。')
+        matches = (image(raw, request) == raw if value is None else file_matches(request, value, name, raw))
+        status[name] = 'verified' if matches else 'unverified'
+    if (value is not None and set(current) == set(status) and
+            set(status.values()) <= {'verified', 'unverified'} and
+            saved_matches(request, value, current=current)):
+        status = dict.fromkeys(status, 'verified')
+    return current, status
+
+
+def check_journal_location(request):
+    journal = request['journal']
+    waiting = journal.with_suffix('.bin.awaiting-save')
+    if journal.exists() and waiting.exists():
+        raise ValueError('同一槽位存在两个待处理的世界记录。')
+    if not journal.exists() and not waiting.exists():
+        if stable(journal.with_suffix('.bin.restored')) != request['journal_bytes']:
+            raise ValueError('世界记录与归档副本不匹配。')
+
+
+def check_stopped_without_replay(request, *, current=None, later_progress=False):
+    # These modes can establish what is already on disk, never authorize a save write.
+    slot = request['slot']
+    primary, backup = f'userdata{slot:04}', f'backup{slot:04}'
+    try:
+        if current is None:
+            current = {name: stable(request['saves']/name) for name in (primary, backup)}
+        if set(current) != {primary, backup}:
+            raise ValueError('存档代次不完整。')
+        identities = {identity(raw) for raw in current.values()}
+    except (OSError, ValueError) as error:
+        raise ValueError('无法核对主存档和游戏备份，请保留两代存档与恢复记录。') from error
+    if identities != {request['identity']}:
+        raise ValueError('主存档或游戏备份与本次恢复的角色不一致，请保留两代存档与恢复记录。')
+    if any(stable(request['saves']/name) != raw for name, raw in current.items()):
+        raise ValueError('核对期间存档发生变化，已保留原记录。')
+    value = prepare(request, current=current)
+    if finish(request, value, proof='both save generations verified without replay', current=current):
+        return 'verified'
+    # Only an earlier, completed primary recovery may wait through later gameplay.
+    if not (later_progress and value['state'] == 'primary-ready') and not file_matches(
+            request, value, primary, current[primary]):
+        raise ValueError('无法确认主存档已恢复。请保留两代存档与恢复记录，不要删除或改名。')
+    job = job_for(request)
+    if value['state'] != 'primary-ready':
+        value.update(state='primary-ready', proof='verified current primary without replay; awaiting native backup save')
+        json_file(job/'job.json', value)
+    mark_waiting(request, job)
+    return 'waiting-backup-save'
+
+
 def mark_waiting(request, job):
     waiting = request['journal'].with_suffix('.bin.awaiting-save')
     if request['journal'].exists():
@@ -380,91 +586,223 @@ def mark_waiting(request, job):
 
 def poll(root, token):
     folder, _ = layout(root)
+    failure = None
     for path in sorted((folder/'requests').glob('*.bin')):
-        with path.open('rb') as stream:
-            data = stream.read(HEADER.size)
-        if len(data) < HEADER.size:
-            continue
-        _, _, seq, run_token, slot, mode, _, _ = HEADER.unpack_from(data)
-        request_token = run_token.decode('ascii')
-        job = folder/'jobs'/f'{request_token}-{slot}-{seq}'/'job.json'
-        job_state = json.loads(stable(job))['state'] if job.exists() else None
-        if job_state == 'primary-ready':
-            key = (str(folder), request_token, slot, seq, 'backup')
-            now = time.monotonic()
-            if now < _next_poll.get(key, 0):
-                continue
-            _next_poll[key] = now+1
-            request = read_request(root, path)
-            finish(request, prepare(request), proof='native game save advanced both complete generations')
-            continue
-        if request_token != token:
-            continue
-        if job_state == 'complete':
-            confirm(folder, slot, seq)
-            continue
-        if mode == CAPTURE:
-            context = json.loads(stable(folder/'runs'/f'{token}.json'))
-            if str(slot) not in context['identities']:
-                read_request(root, path)
-            continue
-        if mode not in (RESTORE, APPLIED):
-            continue
+        try:
+            poll_request(root, folder, token, path)
+        except Exception as error:
+            if failure is None:
+                failure = error
+    if failure is not None:
+        raise failure
+
+
+def poll_request(root, folder, token, path):
+    with plain_path(path).open('rb') as stream:
+        data = stream.read(HEADER.size)
+    if len(data) < HEADER.size:
+        return
+    seq, request_token, slot, mode, _, _ = request_header(data)
+    job = folder/'jobs'/f'{request_token}-{slot}-{seq}'/'job.json'
+    job_state = json.loads(stable(job))['state'] if job.exists() else None
+    if job_state == 'primary-ready':
+        key = (str(folder), request_token, slot, seq, 'backup')
+        now = time.monotonic()
+        if now < _next_poll.get(key, 0):
+            return
+        _next_poll[key] = now+1
+        request = read_request(root, path, enroll=False)
+        finish(request, prepare(request), proof='native game save advanced both complete generations',
+               running_token=token)
+        return
+    if request_token != token:
+        return
+    if job_state == 'complete':
+        ack = folder/'acks'/f'{slot}.ack'
+        if ack.exists() and stable(ack) == struct.pack('<Q', seq):
+            return
+        confirm_complete(root, path, running_token=token)
+        return
+    if mode == CAPTURE:
+        context = json.loads(stable(folder/'runs'/f'{token}.json'))
+        if str(slot) not in context['identities']:
+            read_request(root, path)
+        return
+    if mode not in (RESTORE, APPLIED, RELOADED):
+        return
+    ready = folder/'ready'/f'{slot}.ready'
+    if mode == RESTORE and ready.exists() and stable(ready) == struct.pack('<Q', seq):
+        value = json.loads(stable(job))
+        packet = stable(path)
+        if sha(packet[:52]+packet[56:]) != value['plan_sha256']:
+            raise ValueError('已准备的世界恢复请求内容发生变化。')
+        return
+    key = (str(folder), token, slot, seq)
+    if mode in (APPLIED, RELOADED):
+        now = time.monotonic()
+        if now < _next_poll.get(key, 0):
+            return
+        _next_poll[key] = now+1
+    request = read_request(root, path, enroll=False)
+    value = prepare(request)
+    if mode == RESTORE:
         ready = folder/'ready'/f'{slot}.ready'
-        if mode == RESTORE and ready.exists() and stable(ready) == struct.pack('<Q', seq):
-            value = json.loads(stable(job))
-            packet = stable(path)
-            if sha(packet[:52]+packet[56:]) != value['plan_sha256']:
-                raise ValueError('已准备的世界恢复请求内容发生变化。')
-            continue
-        key = (str(folder), token, slot, seq)
-        if mode == APPLIED:
-            now = time.monotonic()
-            if now < _next_poll.get(key, 0):
+        expected = struct.pack('<Q', seq)
+        if not ready.exists() or stable(ready) != expected:
+            atomic(ready, expected)
+    else:
+        finish(request, value, proof='read-only comparison of both actual save generations',
+               running_token=token)
+
+
+def confirm_complete(root, path, *, write=True, running_token=None):
+    request = read_request(root, path, enroll=False)
+    journal = request['journal']
+    value = read_job(request)
+    if (journal.exists() or journal.with_suffix('.bin.awaiting-save').exists() or
+            value is None or value['state'] != 'complete'):
+        raise ValueError('旧归档状态与实际世界记录不符，已保留。')
+    ack = request['folder']/'acks'/f'{request["slot"]}.ack'
+    if ack.exists() and stable(ack) == struct.pack('<Q', request['seq']):
+        # Import may already have backed up the retired .restored file.
+        return
+    if stable(journal.with_suffix('.bin.restored')) != request['journal_bytes']:
+        raise ValueError('旧归档状态与实际世界记录不符，已保留。')
+    # Only finish() publishes these proofs after saved_matches verifies both saves.
+    # Reissuing the same ack is a metadata operation, using the archived evidence.
+    committed = value.get('proof') in (
+        'both save generations already contain the recovery',
+        'both save generations verified without replay',
+        'native game save advanced both complete generations',
+        'read-only comparison of both actual save generations',
+    )
+    if committed:
+        job = job_for(request)
+        for name, expected in value['files'].items():
+            for generation in ('before', 'expected'):
+                digest = expected['after' if generation == 'expected' else 'before']
+                if sha(stable(job/generation/name)) != digest:
+                    raise ValueError('恢复任务的备份或目标副本发生变化。')
+    elif not saved_matches(request, value, running_token=running_token):
+        raise ValueError('旧归档缺少确认，当前两代存档无法重新核验。')
+    if write:
+        confirm(request['folder'], request['slot'], request['seq'])
+
+
+def pending_journals(root):
+    folder = plain_path(Path(root)/'mod/own-world')
+    return set(folder.glob('own-save-*.bin')) | set(folder.glob('own-save-*.bin.awaiting-save'))
+
+
+def unmatched_jobs(folder, requested, *, supersede=False):
+    pattern = re.compile(r'([0-9a-f]{32})-([0-9])-([1-9][0-9]*)')
+    jobs = sorted(plain_path(folder/'jobs').glob('*'))
+    newest = {}
+    if supersede:
+        evidence = set(requested)
+        for job in jobs:
+            try:
+                if plain_path(job).is_dir():
+                    evidence.add(job.name)
+            except (OSError, ValueError):
                 continue
-            _next_poll[key] = now+1
-        request = read_request(root, path)
-        value = prepare(request)
-        if mode == RESTORE:
-            ready = folder/'ready'/f'{slot}.ready'
-            expected = struct.pack('<Q', seq)
-            if not ready.exists() or stable(ready) != expected:
-                atomic(ready, expected)
-        else:
-            finish(request, value, proof='read-only comparison of both actual save generations')
+        for job_id in evidence:
+            if match := pattern.fullmatch(job_id):
+                key = (match[1], int(match[2]))
+                newest[key] = max(newest.get(key, 0), int(match[3]))
+    for job in jobs:
+        match = pattern.fullmatch(job.name)
+        if not match or job.name in requested:
+            continue
+        token, slot, seq = match[1], int(match[2]), int(match[3])
+        manifest = job/'job.json'
+        try:
+            value = json.loads(stable(manifest))
+            state = value.get('state')
+            if state in ('complete', 'superseded'):
+                continue
+            later = newest.get((token, slot), 0)
+            if (state == 'prepared' and later > seq and
+                    value.get('request_identity') == [token, slot, seq]):
+                try:
+                    attempted = next(plain_path(job/'attempts').iterdir(), None) is not None
+                except FileNotFoundError:
+                    attempted = False
+                if not attempted:
+                    json_file(manifest, dict(value, state='superseded', superseded_by=later))
+                    continue
+        except (OSError, ValueError, AttributeError):
+            pass  # Unreadable evidence is still a blocker.
+        yield job.name, slot
 
 
-def finalize(root, token):
+def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
     folder, _ = layout(root)
     results = []
+    waiting = set()
+    requested = set()
+    failure = None
     for path in sorted((folder/'requests').glob('*.bin')):
-        data = stable(path)
-        if len(data) < HEADER.size:
-            raise ValueError('存在不完整世界恢复请求，已保留。')
-        _, _, seq, run_token, slot, mode, _, _ = HEADER.unpack_from(data)
-        job = folder/'jobs'/f'{run_token.decode("ascii")}-{slot}-{seq}'/'job.json'
-        job_state = json.loads(stable(job))['state'] if job.exists() else None
-        if token is not None and run_token.decode('ascii') != token and job_state != 'primary-ready':
-            continue
-        if job_state == 'complete':
-            confirm(folder, slot, seq)
-            continue
-        request = read_request(root, path)
-        if mode == BLOCKED:
-            raise ValueError('退出后又重新读档，世界记录暂不自动套用；请保留存档与恢复任务。')
-        results.append(complete_stopped(request, can_write=(mode == APPLIED or
-                        (mode == QUIT and request['context'].get('exit_code') == 0))))
-    pending = list((Path(root)/'mod/own-world').glob('own-save-*.bin'))
-    if pending:
-        raise ValueError('仍有缺少完整恢复凭据的世界记录，已保留；不要删除或手动改名。')
+        try:
+            packet = stable(path)
+            seq, run_token, slot, mode, count, _ = request_header(packet)
+            if len(packet) != HEADER.size+count*ROW.size or path.name != f'world-save-{slot}.bin':
+                raise ValueError('世界恢复请求长度或槽位文件名不匹配。')
+            requested.add(f'{run_token}-{slot}-{seq}')
+            job = folder/'jobs'/f'{run_token}-{slot}-{seq}'/'job.json'
+            job_state = json.loads(stable(job))['state'] if job.exists() else None
+            if token is not None and run_token != token and job_state != 'primary-ready':
+                continue
+            if job_state == 'complete':
+                with import_lock(root):
+                    require_no_conversion(Path(root))
+                    require_stopped()
+                    confirm_complete(root, path)
+                continue
+            request = read_request(root, path, enroll=run_token == token)
+            recorded_exit = request['context'].get('exit_code')
+            clean_exit = (run_token == token and type(recorded_exit) is int and recorded_exit == 0 and
+                          (observed_exit is None or observed_exit == 0))
+            # A live worker may substitute only the exit-code write that failed,
+            # for this exact sealed QUIT. Never substitute a recorded exit code.
+            live_quit = (run_token == token and mode == QUIT and
+                         type(quit_sequence) is int and seq == quit_sequence and
+                         type(observed_exit) is int and observed_exit == 0 and
+                         'exit_code' not in request['context'] and
+                         isinstance(exit_record_failure, ExitRecordWriteError) and
+                         exit_record_failure.token == token and exit_record_failure.exit_code == 0)
+            result = complete_stopped(request, compare_only=run_token != token,
+                                      current_token=token, observed_exit=observed_exit,
+                                      can_write=live_quit or (clean_exit and (mode == APPLIED or
+                                                                 (mode == QUIT and seq == quit_sequence))))
+            results.append(result)
+            if 'waiting-backup-save' in result:
+                waiting.add(request['journal'].with_suffix('.bin.awaiting-save'))
+        except Exception as error:
+            if failure is None:
+                failure = error
+    if failure is not None:
+        raise failure
+    missing = '仍有缺少完整恢复凭据的世界记录，已保留；不要删除或手动改名。'
+    if pending_journals(root) - waiting:
+        raise ValueError(missing)
+    if (folder/'jobs').exists():
+        with import_lock(root):
+            require_no_conversion(Path(root))
+            require_stopped()
+            if next(unmatched_jobs(folder, requested, supersede=True), None):
+                raise ValueError(missing)
     return results
 
 
 def begin(root):
     require_stopped()
     if (layout(root)[0]/'review-required.json').exists():
-        raise ValueError('本轮世界恢复记录正在核查，隔离副本暂不启动；请保留现有记录。')
-    finalize(root, None)
+        raise ValueError('世界恢复记录正在核查，请打开「世界恢复复核」查看标记来源。')
+    try:
+        finalize(root, None)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f'{error} 请打开「世界恢复复核」查看角色和证据。') from error
     folder, saves = layout(root)
     token = uuid.uuid4().hex
     identities = {}
@@ -483,8 +821,173 @@ def begin(root):
 
 
 def process_exited(root, token, exit_code):
+    if type(exit_code) is not int:
+        raise ValueError('游戏进程的退出码未知。')
     folder, _ = layout(root)
     path = folder/'runs'/f'{token}.json'
     value = json.loads(stable(path))
+    if value['token'] != token or value['root'] != str(plain_path(root)):
+        raise ValueError('退出码与本次游戏会话不匹配。')
     value['exit_code'] = exit_code
-    json_file(path, value)
+    try:
+        json_file(path, value)
+    except PermissionError as error:
+        raise ExitRecordWriteError(token, exit_code, error) from error
+
+
+def review_items(root):
+    """Inspect evidence without preparing jobs, enrolling identities or issuing ACKs."""
+    folder, saves = layout(root)
+    items = []
+    marker = plain_path(folder/'review-required.json')
+    if marker.exists():
+        item = {'state': 'review-required', 'kind': 'marker', 'reason': '现有复核标记仍阻止启动。'}
+        try:
+            value = json.loads(stable(marker))
+            item['origin'] = {key: value[key][:300] for key in ('origin', 'reason', 'source')
+                              if isinstance(value.get(key), str)}
+        except (OSError, ValueError, AttributeError):
+            item['origin'] = {'reason': '标记不可读或格式未知。'}
+        items.append(item)
+    journals = pending_journals(root)
+    requested = set()
+    for path in sorted(plain_path(folder/'requests').glob('*.bin')):
+        item = {'state': 'review-required', 'kind': 'request', 'file': path.name}
+        try:
+            data = stable(path)
+            item['request_sha256'] = sha(data)
+            seq, token, slot, mode, _, _ = request_header(data)
+            requested.add(f'{token}-{slot}-{seq}')
+            item.update(slot=slot, mode=MODE_NAMES[mode-1], run=token, sequence=seq)
+            request = read_request(root, path, enroll=False)
+            value = read_job(request)
+            item.update(identity=request['identity'], plan_sha256=request['plan_sha256'],
+                        recorded_exit=request['context'].get('exit_code'))
+            journal = request['journal']
+            associated = {journal, journal.with_suffix('.bin.awaiting-save')} & journals
+            if value is not None and value['state'] == 'complete':
+                confirm_complete(root, path, write=False)
+                continue
+            check_journal_location(request)
+            current, status = compare_generations(request)
+            item['generations'] = {name: {'state': state, 'sha256': sha(current[name]) if name in current else None}
+                                   for name, state in status.items()}
+            journals.difference_update(associated)
+            if set(status.values()) == {'verified'}:
+                item.update(state='verified', reason='两代均有恢复证据。可重试正常启动以归档。')
+            elif (status[f'userdata{slot:04}'] == 'verified' and
+                  status[f'backup{slot:04}'] == 'unverified' and associated):
+                item.update(state='waiting-backup', reason='主档已核验。可重试正常启动，并用同一角色正常保存以更新游戏备档。')
+            elif (associated and status[f'userdata{slot:04}'] == 'unverified' and
+                  status[f'backup{slot:04}'] in ('verified', 'unverified') and
+                  can_wait_after_progress(request, value)):
+                item.update(state='waiting-backup', reason='主档曾完成核验，此后同一角色正常退出。可继续游玩，等待游戏更新备档。')
+            else:
+                item['reason'] = '现有证据不足以安全启动原档；请保留原档并核对证据副本。'
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            item['reason'] = str(error)
+            if 'slot' in item and 'generations' not in item:
+                item['generations'] = unverified_generations(saves, item['slot'])
+        items.append(item)
+    for path in sorted(journals):
+        item = {'state': 'review-required', 'kind': 'orphan', 'file': path.name,
+                'reason': '存在未关联到可核验请求的世界记录。'}
+        match = re.fullmatch(r'own-save-([0-9])\.bin(?:\.awaiting-save)?', path.name)
+        if match:
+            item['slot'] = int(match[1])
+            item['generations'] = unverified_generations(saves, item['slot'])
+        items.append(item)
+    for job_id, slot in unmatched_jobs(folder, requested):
+        items.append({'state': 'review-required', 'kind': 'orphan-job', 'file': job_id, 'slot': slot,
+                      'reason': '存在缺少请求的未结案恢复任务。',
+                      'generations': unverified_generations(saves, slot)})
+    return items
+
+
+def unverified_generations(saves, slot):
+    result = {}
+    for name in (f'userdata{slot:04}', f'backup{slot:04}'):
+        try:
+            result[name] = {'state': 'unverified', 'sha256': sha(stable(saves/name))}
+        except FileNotFoundError:
+            result[name] = {'state': 'missing', 'sha256': None}
+        except (OSError, ValueError):
+            result[name] = {'state': 'unreadable', 'sha256': None}
+    return result
+
+
+def require_review_clear_for_transfer(root):
+    # The transfer paths already reject pending own-world journals. Also guard
+    # moved/incomplete evidence whose journal is missing, and explicit markers.
+    folder, _ = layout(root)
+    if (plain_path(folder/'review-required.json').exists() or
+            (not pending_journals(root) and review_items(root))):
+        raise ValueError('有未结案的世界恢复记录，请先打开「世界恢复复核」；已停止存档导入、转换和导出。')
+
+
+def evidence_inventory(root):
+    folder, saves = layout(root)
+    sources = {'world-recovery': folder, 'own-world': Path(root)/'mod/own-world', 'save-generations': saves}
+    return {label: (source, snapshot(source)) for label, path in sources.items()
+            if (source := plain_path(path)).exists()}
+
+
+def evidence_plan(inventory):
+    # Include file identities and timestamps as well as hashes: a replace or
+    # an interrupted append after review requires a fresh confirmation.
+    exact = {label: (str(source), files) for label, (source, files) in inventory.items()}
+    return sha(json.dumps(exact, sort_keys=True).encode('utf-8'))
+
+
+def review(root):
+    require_stopped()
+    before = evidence_inventory(root)
+    items = review_items(root)
+    require_stopped()
+    if evidence_inventory(root) != before:
+        raise ValueError('复核期间证据发生变化，请重新读取。')
+    return {'ok': True, 'items': items, 'digest': evidence_plan(before) if items else None}
+
+
+def export_evidence(root, expected):
+    root = plain_path(root)
+    with import_lock(root):
+        require_no_conversion(root)
+        require_stopped()
+        inventory = evidence_inventory(root)
+        if not isinstance(expected, str) or expected != evidence_plan(inventory):
+            raise ValueError('复核后来源文件发生变化，请重新读取并确认。')
+        items = review_items(root)
+        if not items:
+            raise ValueError('当前没有需要保留的复核项目。')
+        base = plain_path(root/'save-backups'/'world-recovery-evidence')
+        target = base/uuid.uuid4().hex
+        stage = target.with_suffix('.partial')
+        stage.mkdir(parents=True)
+        for label, (source, files) in inventory.items():
+            copy_verified(source, stage/label, files)
+        json_file(stage/'manifest.json', {
+            'schema': 1, 'kind': 'evidence-only', 'plan_sha256': expected, 'items': items,
+            'sources': {label: {'path': str(source), 'inventory': content_inventory(files)}
+                        for label, (source, files) in inventory.items()},
+        })
+        require_stopped()
+        if evidence_inventory(root) != inventory:
+            raise ValueError('复制期间原始证据发生变化，未发布复核副本。')
+        stage.rename(target)
+        return {'ok': True, 'path': str(target)}
+
+
+if __name__ == '__main__':
+    try:
+        root = Path(__file__).resolve().parent
+        if sys.argv[1:] == ['review']:
+            result = review(root)
+        elif sys.argv[1:] == ['copy-evidence']:
+            result = export_evidence(root, json.load(sys.stdin)['digest'])
+        else:
+            raise ValueError('请选择复核或复制证据。')
+        print(json.dumps(result, ensure_ascii=True))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(json.dumps({'ok': False, 'error': str(error)}, ensure_ascii=True))
+        sys.exit(1)

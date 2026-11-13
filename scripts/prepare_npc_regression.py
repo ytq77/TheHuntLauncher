@@ -40,6 +40,10 @@ def generate(source, destination):
     protocol_stubs='''bool BbscWorldRecoveryEnabled(){return false;}
 bool BbscWorldRecoveryCanCapture(){return true;}
 void CaptureBbscGuestReturnOrigin(){} // Separate return-placement fixture covers this capture.
+struct NativeToken{int slot=0;u64 lineage=1;};
+std::optional<NativeToken> BbscNativeActiveSaveToken(){return NativeToken{};}
+using BbscSaveSlot=Slot;
+u64 bbsc_own_world_generation=0;
 bool BbscRestoreWorldTransaction(std::string_view){return false;}
 std::vector<int> bbsc_recovery_rows;
 '''

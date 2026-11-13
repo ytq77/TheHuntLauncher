@@ -1,0 +1,196 @@
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
+using u8=std::uint8_t;using u32=std::uint32_t;using u64=std::uint64_t;
+using s32=std::int32_t;using s64=std::int64_t;
+// These scenarios preserve the separately supported public/legacy behavior.
+// Private authenticated authority has its own actual protocol/core regression.
+namespace BbscMod {
+bool RelayAuthPrivate(){return false;}
+u32 RelayAuthOwner(){return 0;}
+u32 RelayAuthOwnId(){return 0;}
+void RelayAuthInvalidate(){}
+}
+void OnBbscRelayAuthContextChanged(u32){}
+// RELAY_AUTH_GUARD
+#define LOG_INFO(...) ((void)0)
+constexpr u64 image_base=1,CandidateLocalStatePointerOffset=0x1000;
+constexpr u32 BbscPvpTeam=21;
+constexpr s64 BbscPvpSendMs=1000;
+std::array<u8,0x68> world{};
+std::array<u8,0x1598> global{};
+std::array<u8,0x400> local{},remote{},other{};
+std::array<u8,0xA8> entries{};
+bool readonly=false,bell=false,strict_mode=false,transform_ok=true;
+u32 current_map=0x18000000;
+u64 matching=1;
+s32 session=3;
+s64 now=10000;
+int writes=0;
+std::atomic<u64> bbsc_character_reload_generation{0};
+std::atomic<s64> bbsc_leave_event_ms{0};
+std::atomic<bool> bbsc_duel_bell_ready{true},bbsc_pvp_on{false};
+std::atomic<int> bbsc_pvp_host_state{-1};
+std::atomic<s64> bbsc_pvp_host_state_ms{0};
+std::mutex bbsc_pvp_packet_mutex;
+u32 bbsc_pvp_message_sender=0;
+u64 bbsc_pvp_message_generation=0;
+std::atomic<u32> bbsc_relay_locked_host{77};
+std::atomic<s32> bbsc_relay_session_state{6};
+std::atomic<u64> bbsc_relay_selection_generation{0};
+constexpr s64 BbscRelayHostFreshMs=5000,BbscRelayUnlockMs=5000;
+constexpr float BbscRelayLockMetres=15.f;
+// RELAY_DECLARATIONS
+std::mutex bbsc_relay_mutex;
+std::map<u32,BbscRelayHostSeen> bbsc_relay_hosts;
+struct BbscTransform{std::array<float,4> position{100,200,300,1};};
+BbscTransform native_transform;
+std::vector<std::pair<u8,bool>> packets;
+std::vector<std::string> notices;
+enum class MemoryProt{CpuWrite};
+u64 address(const auto& a){return reinterpret_cast<u64>(a.data());}
+void put(auto& a,size_t off,auto v){assert(off+sizeof(v)<=a.size());std::memcpy(a.data()+off,&v,sizeof(v));}
+bool ReadablePointer(u64 a,size_t n){
+    for(auto [start,size]:std::array<std::pair<u64,size_t>,6>{{{address(world),world.size()},{address(global),global.size()},
+        {address(local),local.size()},{address(remote),remote.size()},{address(other),other.size()},{address(entries),entries.size()}}})
+        if(a>=start && a-start<=size && n<=size-(a-start))return true;
+    return false;
+}
+template<class T>T ReadValue(u64 a,size_t off){
+    if(a+off==image_base+CandidateLocalStatePointerOffset)return static_cast<T>(address(world));
+    assert(ReadablePointer(a,off+sizeof(T)));T v{};std::memcpy(&v,reinterpret_cast<void*>(a+off),sizeof(v));return v;
+}
+bool HasMemoryAccess(u64 a,size_t n,MemoryProt){return !readonly && ReadablePointer(a,n);}
+template<class T>void WriteValue(u64 a,size_t off,T v){assert(HasMemoryAccess(a+off,sizeof(v),MemoryProt::CpuWrite));++writes;std::memcpy(reinterpret_cast<void*>(a+off),&v,sizeof(v));}
+bool IsValidMemberId(u64 id){return ReadablePointer(id,0x20) && ReadValue<u64>(id,8)!=0;}
+u64 GetGlobalState(){return address(global);}
+u64 GetMatchingState(){return matching;}
+s64 SteadyNowMs(){return now;}
+s32 GetSessionState(){return session;}
+s32 GetCharacterType(u64 chr){return ReadablePointer(chr,0x80)?ReadValue<s32>(chr,0x78):-1;}
+u32 GetCurrentPackedMap(){return current_map;}
+void ClearBbscHostWorldSnapshots(){}
+std::optional<BbscTransform> ReadCharacterTransform(u64 chr){
+    if(!transform_ok || chr!=address(remote))return std::nullopt;return native_transform;
+}
+bool EnvFlagEnabled(const char* name){assert(std::string_view(name)=="SHADPS4_BBSC_PVP_REQUIRE_ROOM_BINDING");return strict_mode;}
+bool BbscDuelBellEffectActive(){return bell;}
+void SendBbscPvpPacket(u8 kind,bool on){packets.emplace_back(kind,on);}
+void BbscAnnounce(const char16_t*,const char* tag){notices.emplace_back(tag);}
+void StartBbscDuelBell(){}
+void TickBbscDuelBellGive(){}
+void TickBbscHostBlank(){}
+void TickBbscEmptyHostCancel(){}
+void TickBbscInvadable(){}
+// CALLBACKS
+u32 team(){return ReadValue<u32>(address(remote),0x88);}
+int main(int argc,char** argv){
+    assert(argc==2);const std::string mode=argv[1];
+    put(world,0x60,address(local));put(world,0x30,s32{2});put(world,0x38,address(entries));
+    put(entries,0,address(local));put(entries,0x38,address(remote));
+    put(remote,8,u32{1234});
+    put(remote,0x78,s32{1});put(remote,0x88,u32{20});put(remote,0x3B0,u64{123});
+    put(remote,0x1C8,u64{234});put(remote,0x3D8,u64{345});put(remote,0x3E0,u64{456});
+    strict_mode=mode=="strict";
+    if(mode=="host"){
+        TickBbscPvp();bell=true;TickBbscPvp();assert(bbsc_pvp_on && team()==21);
+        TickBbscPvp();assert(bbsc_pvp_on);bell=false;TickBbscPvp();bell=true;TickBbscPvp();
+        assert(!bbsc_pvp_on && team()==20);OnBbscPvpPacket(1,1,88);TickBbscPvp();assert(!bbsc_pvp_on);
+    }else if(mode=="guest"){
+        session=6;bell=true;TickBbscPvp();
+        assert(!bbsc_pvp_on && team()==20 && packets.empty());
+        assert(notices==std::vector<std::string>{"pvp host only"});
+        OnBbscPvpPacket(0,1,77);TickBbscPvp();assert(bbsc_pvp_on && team()==21);
+        OnBbscPvpPacket(1,0,88);TickBbscPvp();assert(bbsc_pvp_on);
+        OnBbscPvpPacket(0,0,77);TickBbscPvp();assert(!bbsc_pvp_on && team()==20);
+    }else if(mode=="strict"){
+        session=6;TickBbscPvp();OnBbscPvpPacket(0,1,77);TickBbscPvp();
+        assert(!bbsc_pvp_on && team()==20);bell=true;TickBbscPvp();
+        assert(notices.back()=="pvp authority unavailable");
+    }else if(mode=="expired" || mode=="fresh-unbound" || mode=="wrong-room"){
+        session=6;TickBbscPvp();
+        if(mode=="expired"){
+            OnBbscPvpPacket(0,1,77);TickBbscPvp();assert(bbsc_pvp_on && team()==21);now+=5000;
+        }else if(mode=="fresh-unbound")bbsc_relay_locked_host=0;
+        OnBbscPvpPacket(0,1,mode=="wrong-room"?88:77);
+        if(mode=="expired")now+=5000;
+        TickBbscPvp();assert(!bbsc_pvp_on && team()==20 && bbsc_pvp_host_state==-1 && bbsc_pvp_host_state_ms==0);
+    }else if(mode=="selection-switch"){
+        session=6;TickBbscPvp();OnBbscPvpPacket(0,1,77);TickBbscPvp();assert(bbsc_pvp_on);
+        SelectBbscRelayHost(88);TickBbscPvp();assert(!bbsc_pvp_on && team()==20);
+        OnBbscPvpPacket(0,1,77);TickBbscPvp();assert(!bbsc_pvp_on);
+        OnBbscPvpPacket(0,1,88);TickBbscPvp();assert(bbsc_pvp_on && team()==21);
+        OnBbscPvpPacket(0,0,88);TickBbscPvp();assert(!bbsc_pvp_on && team()==20);
+    }else if(mode=="packet-concurrency"){
+        session=6;TickBbscPvp();
+        std::array<std::thread,4> receive;
+        for(int i=0;i<4;++i)receive[i]=std::thread([i]{
+            for(int n=0;n<5000;++n)OnBbscPvpPacket(0,(n+i)&1,i%2?77:88);
+        });
+        for(int n=0;n<5000;++n)TickBbscPvp();
+        for(auto& t:receive)t.join();
+        OnBbscPvpPacket(0,0,77);TickBbscPvp();assert(!bbsc_pvp_on && team()==20);
+    }else if(mode.starts_with("relay-")){
+        session=6;bbsc_relay_locked_host=0;put(remote,0x78,s32{0});
+        bbsc_relay_hosts[77]={current_map,100,200,300,now};
+        bool accepted=mode=="relay-one" || mode=="relay-distant-other" || mode=="relay-cross-map" || mode=="relay-leave" || mode=="relay-matching";
+        if(mode=="relay-other-map")bbsc_relay_hosts[77].map=0x21000000;
+        else if(mode=="relay-far")bbsc_relay_hosts[77].x=116;
+        else if(mode=="relay-stale")bbsc_relay_hosts[77].ms=now-5001;
+        else if(mode=="relay-future")bbsc_relay_hosts[77].ms=now+1;
+        else if(mode=="relay-nan")bbsc_relay_hosts[77].x=std::numeric_limits<float>::quiet_NaN();
+        else if(mode=="relay-no-transform")transform_ok=false;
+        else if(mode=="relay-native-nan")native_transform.position[0]=std::numeric_limits<float>::quiet_NaN();
+        else if(mode=="relay-no-native-host")put(remote,0x78,s32{1});
+        else if(mode=="relay-two-native-hosts"){
+            put(world,0x30,s32{3});put(entries,0x70,address(other));put(other,0x78,s32{0});put(other,0x3E0,u64{9});
+        }else if(mode=="relay-ambiguous")bbsc_relay_hosts[88]={current_map,101,200,300,now};
+        else if(mode=="relay-distant-other")bbsc_relay_hosts[88]={current_map,200,200,300,now};
+        else if(mode=="relay-loading")global[8]=1;
+        TickBbscRelayHostLock();assert(BbscRelayHostForPackets()==(accepted?77u:0u));
+        if(mode=="relay-cross-map"){
+            current_map=0x21000000;bbsc_relay_hosts[77].map=0x22000000;transform_ok=false;
+            now+=300;TickBbscRelayHostLock();assert(BbscRelayHostForPackets()==77); // Keep follow continuity.
+        }else if(mode=="relay-leave" || mode=="relay-matching"){
+            if(mode=="relay-leave")bbsc_leave_event_ms=now;else ++matching;
+            bbsc_relay_hosts.clear();now+=300;TickBbscRelayHostLock();assert(BbscRelayHostForPackets()==0);
+        }
+    }else if(mode=="session"){
+        TickBbscPvp();bell=true;TickBbscPvp();assert(bbsc_pvp_on);
+        ++matching;put(remote,0x88,u32{20});bell=false;TickBbscPvp();assert(!bbsc_pvp_on && team()==20);
+    }else{
+        bbsc_pvp_on=true;ApplyBbscPvpTeams();assert(team()==21 && writes==1);
+        if(mode=="removed")put(world,0x30,s32{1});
+        else if(mode=="reuse-actor")put(remote,8,u32{5678});
+        else if(mode=="reuse-member")put(remote,0x3D8,u64{999});
+        else if(mode=="reuse-modules")put(remote,0x3B0,u64{999});
+        else if(mode=="reuse-effects")put(remote,0x1C8,u64{999});
+        else if(mode=="reuse-type")put(remote,0x78,s32{0});
+        else if(mode=="reload")++bbsc_character_reload_generation;
+        else if(mode=="invalid-list")put(world,0x30,s32{65});
+        else if(mode=="readonly")readonly=true;
+        else if(mode=="native-reset"){
+            put(remote,0x88,u32{23});ApplyBbscPvpTeams();assert(team()==21 && writes==2);
+        }else if(mode=="loading"){
+            global[8]=1;bbsc_pvp_on=false;ApplyBbscPvpTeams();assert(team()==21 && writes==1);global[8]=0;
+        }else assert(mode=="restore");
+        bbsc_pvp_on=false;ApplyBbscPvpTeams();
+        if(mode=="restore" || mode=="loading")assert(team()==20 && writes==2);
+        else if(mode=="native-reset")assert(team()==23 && writes==3);
+        else assert(team()==21 && writes==1); // Never write an old baseline into an unproven object.
+    }
+    std::printf("PASS: hardened actual PvP callbacks: %s\n",argv[1]);
+}

@@ -6,6 +6,7 @@ from bell_session import apply as apply_bell_session
 from pvp_bell import apply as apply_pvp_bell
 from guest_return import apply as apply_guest_return
 from guest_chests import apply as apply_guest_chests
+from coop_effect_restore import apply as apply_coop_effect_restore
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -142,10 +143,12 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('source',type=Path);args=parser.parse_args()
     core=args.source/'emulator/src/core';path=core/'bloodborne_re_zh_cn.cpp'
     text=path.read_text(encoding='utf-8');updated=apply_guest_chests(apply_guest_return(apply_pvp_bell(apply_bell_session(apply(text)))))
+    updated=apply_coop_effect_restore(updated)
     header=core/'bbsc_patch_tables.h'
     updated_header=apply_header(header.read_text(encoding='utf-8'))
     for name in ['bbsc_personal_rewards.inc','bbsc_personal_rewards_policy.h',
-                 'bbsc_summon_type.inc','bbsc_blank_menu.inc','bbsc_guest_return.inc']:
+                 'bbsc_summon_type.inc','bbsc_blank_menu.inc','bbsc_guest_return.inc',
+                 'bbsc_coop_effect_restore.inc']:
         shutil.copy2(ROOT/'patches'/name,core/name)
     path.write_text(updated,encoding='utf-8',newline='\n')
     header.write_text(updated_header,encoding='utf-8',newline='\n')

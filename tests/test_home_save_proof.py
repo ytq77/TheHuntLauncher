@@ -9,7 +9,7 @@ import home_save_proof
 
 
 class HomeProofTests(RecoveryTests):
-    def setup_home(self):
+    def setup_home(self, *, still_running=False):
         self.request(wr.RESTORE)
         wr.poll(self.root, self.token)
         self.req = self.request(wr.APPLIED)
@@ -38,6 +38,8 @@ class HomeProofTests(RecoveryTests):
             p.write_bytes(self.later)
             os.utime(p, ns=((now+2)*1000000, (now+2)*1000000))
         self.current = {name: (self.saves/name).read_bytes() for name in self.value['files']}
+        if not still_running:
+            self.exited()
 
     def write_home(self, records=None):
         (self.proof/'native.jsonl').write_text(''.join(
@@ -109,11 +111,32 @@ class HomeProofTests(RecoveryTests):
         self.setup_home(); self.exited(3)
         self.assertIsNone(self.verify_home())
 
+    def test_home_title_reload_proof_still_works_while_own_game_is_running(self):
+        self.setup_home(still_running=True)
+        self.req = self.request(wr.RELOADED)
+        self.restored['stage'] = 'title-reload'
+        self.write_home()
+        self.assertIsNone(self.verify_home())
+        wr.poll(self.root, self.token)
+        self.assertTrue(self.journal.with_suffix('.bin.restored').exists())
+
     def test_home_non_applied_request_rejected(self):
         self.setup_home()
         for mode in (wr.CAPTURE, wr.RESTORE, wr.QUIT, wr.BLOCKED):
             self.req['mode'] = mode
             self.assertIsNone(self.verify_home())
+
+    def test_home_title_reload_requires_its_own_receipt_for_both_generations(self):
+        self.setup_home()
+        self.req = self.request(wr.RELOADED)
+        self.assertIsNone(self.verify_home())
+        self.restored['stage'] = 'title-reload'
+        self.write_home()
+        self.assertIsNotNone(self.verify_home())
+        self.current['backup0000'] = RAW
+        (self.saves/'backup0000').write_bytes(RAW)
+        self.assertIsNone(self.verify_home())
+        self.assertTrue(self.journal.exists())
 
     def test_home_missing_restored_partial_and_short_receipt_rejected(self):
         self.setup_home()

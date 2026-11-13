@@ -20,7 +20,11 @@ constexpr u64 BannerTextOffset = 0x100;
 std::array<u8, 8192> memory{};
 std::vector<std::string> logs;
 std::map<std::pair<u32, u32>, u64> slots;
-struct GuestRegisterSnapshot { u64 rsi; u64 rsp; };
+struct GuestRegisterSnapshot { u64 rsi; u64 rsp; u64 r13{}; };
+bool ConsumeBbscRetainedJoinLine(u64, GuestRegisterSnapshot*, u32) {
+    assert(false && "old banner tests must not consume retained-member lines");
+    return false;
+}
 #define PS4_SYSV_ABI
 #define LOG_INFO(category, ...) logs.push_back(fmt::format(__VA_ARGS__))
 

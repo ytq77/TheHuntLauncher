@@ -286,7 +286,8 @@ class Controller:
                 if action == "rename":
                     connection.execute("UPDATE account SET username=? WHERE user_id=?", (value, account_id))
                 elif action == "reset":
-                    connection.execute("UPDATE account SET hash=?,salt=?,reset_token=NULL WHERE user_id=?", (hashed, salt, account_id))
+                    connection.execute("UPDATE account SET hash=?,salt=?,token=?,reset_token=NULL WHERE user_id=?",
+                                       (hashed, salt, secrets.token_hex(32), account_id))
                 else:
                     connection.execute("DELETE FROM score WHERE user_id=?", (account_id,))
                     connection.execute("DELETE FROM account_timestamp WHERE user_id=?", (account_id,))

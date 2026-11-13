@@ -22,5 +22,6 @@ server.json
 update-settings.json
 update-backups/
 .update.lock
+.update-transaction.json
 windows/installer-tests/
 shadnet.cfg

@@ -1,0 +1,36 @@
+#include <atomic>
+#include <future>
+#include <mutex>
+#include <thread>
+#include <iostream>
+#include <stdexcept>
+#include "bbsc_visibility_wire.h"
+using Context=TheHuntVisibility::Context;
+std::mutex send_mutex;
+bool private_auth=true; uint64_t auth_context_ms=1000, now=1000;
+struct Client {bool visible=true; Context context;bool Visibility(){return visible;}const Context& VisibilityContext(){return context;}} auth_client;
+uint64_t GetTickCount64(){return now;}
+void require(bool b,const char* s){if(!b)throw std::runtime_error(s);}
+// ACTUAL_FUNCTION
+int calls=0;
+bool write_ok(void*){++calls;return true;}
+bool write_fail(void*){++calls;return false;}
+Context original(){Context c{17,2,1,{}};c.peers.push_back({1,1,91,{'A'},true});c.peers.push_back({2,2,92,{'B'},true});return c;}
+void reset(){private_auth=true;auth_context_ms=now=1000;auth_client.visible=true;auth_client.context=original();calls=0;}
+void rejected(Context expected){require(!RelayAuthUseVisibilityContext(expected,write_ok,nullptr),"accepted invalid context");require(calls==0,"callback on invalid context");}
+int main(){try{
+ reset();require(RelayAuthUseVisibilityContext(original(),write_ok,nullptr)&&calls==1,"valid rejected");
+ reset();now=2500;require(RelayAuthUseVisibilityContext(original(),write_ok,nullptr),"1500ms boundary rejected");
+ reset();now=2501;rejected(original());reset();now=999;rejected(original());
+ reset();private_auth=false;rejected(original());reset();auth_client.visible=false;rejected(original());reset();auth_context_ms=0;rejected(original());
+ reset();require(!RelayAuthUseVisibilityContext(original(),nullptr,nullptr),"null callback accepted");
+ for(int field=0;field<10;++field){reset();auto c=original();switch(field){case 0:c.room=0;break;case 1:++c.room;break;case 2:++c.owner;break;case 3:++c.own;break;case 4:++c.peers[0].joined;break;case 5:++c.peers[0].member;break;case 6:++c.peers[0].user;break;case 7:c.peers[0].npid[0]='Z';break;case 8:c.peers[0].capable=false;break;case 9:c.peers.pop_back();break;}rejected(c);}
+ reset();auth_client.context.room=0;auto c=auth_client.context;rejected(c);
+ reset();require(!RelayAuthUseVisibilityContext(original(),write_fail,nullptr)&&calls==1,"failure not propagated");require(send_mutex.try_lock(),"lock leaked after callback failure");send_mutex.unlock();
+ for(int i=0;i<100;++i){reset();std::promise<void> entered,attempted;auto e=entered.get_future();auto a=attempted.get_future();std::atomic<bool> updated=false;struct State{std::promise<void>* entered;std::future<void>* attempted;std::atomic<bool>* updated;} state{&entered,&a,&updated};
+  std::thread publisher([&]{e.wait();require(!send_mutex.try_lock(),"lease did not hold send mutex");attempted.set_value();std::scoped_lock l{send_mutex};++auth_client.context.room;updated=true;});
+  bool ok=RelayAuthUseVisibilityContext(original(),[](void* p){auto&s=*static_cast<State*>(p);s.entered->set_value();s.attempted->wait();require(!s.updated->load(),"publication entered callback");require(auth_client.context==original(),"context changed in callback");return true;},&state);
+  publisher.join();require(ok&&updated&&auth_client.context.room==18,"publisher failed after lease");rejected(original());
+ }
+ std::cout<<"PASS lease: fresh/private/full-identity negatives, callback failure, 100 synchronized concurrent context-publication cycles\n";
+}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

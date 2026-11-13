@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from package import check_public, copy_public_docs, public_docs
@@ -62,8 +63,9 @@ class PublicDocumentation(unittest.TestCase):
             fixture = root / 'installer-tests/case/installed'
             fixture.mkdir(parents=True)
             (fixture / 'Server.exe').write_bytes(b'generated-test-binary')
-            self.assertEqual([p.name for p in launcher_sources(root)],
-                             ['test_apply_update.py'])
+            with patch('source_archive.tracked', return_value=[
+                    'test_apply_update.py', 'installer-tests/case/installed/Server.exe']):
+                self.assertEqual([p.name for p in launcher_sources(root)], ['test_apply_update.py'])
 
 
 if __name__ == "__main__":

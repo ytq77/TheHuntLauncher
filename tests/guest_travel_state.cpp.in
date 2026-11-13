@@ -1,0 +1,381 @@
+// Only ACTUAL sections are production code. All native memory and callbacks are synthetic.
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+#include <fmt/format.h>
+using u8=uint8_t;using u16=uint16_t;using u32=uint32_t;using u64=uint64_t;using s32=int32_t;using s64=int64_t;
+#define PS4_SYSV_ABI
+std::vector<std::string> logs;
+#define LOG_INFO(category, ...) logs.push_back(fmt::format(__VA_ARGS__))
+#define LOG_WARNING(category, ...) logs.push_back(fmt::format(__VA_ARGS__))
+
+// ACTUAL_DECLARATIONS
+
+void require(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
+u64 image_base=0x10000000;
+constexpr u64 global=0x10000,flag_man=0x20000;
+constexpr u32 destination_map=0x1C000000;
+s64 now_ms=10'000;
+int session=6,loads=0,selectors=0,loot_calls=0;
+bool recovery_enabled=true,sync_enabled=true,private_session=true;
+bool bbsc_recovery_title_exit=false,bbsc_recovery_waiting=false;
+bool bbsc_join_teleport_done=true,change_at_selector=false,change_at_load=false;
+u32 auth_owner=42,auth_own=43;u64 auth_room=99;
+std::filesystem::path run_root;
+struct BbscSaveSlot {std::string user="save";int slot=0;};
+struct Token {int slot=0;u64 lineage=7;};
+std::optional<Token> active=Token{};
+std::optional<BbscSaveSlot> bbsc_own_world_slot=BbscSaveSlot{};
+u64 bbsc_own_world_generation=7;
+bool bbsc_own_world_dirty=false;
+std::map<u32,std::array<u8,BbscWorldGroupBytes>> table,bbsc_own_world;
+std::array<u8,150000> bank{};
+std::map<u32,u32> bbsc_recovery_initial_indices;
+std::vector<BbscRecoveryRow> bbsc_recovery_rows;
+std::vector<u8> bbsc_recovery_packet;
+u64 bbsc_recovery_sequence=0;u32 bbsc_recovery_mode=0;int bbsc_recovery_slot=-1;
+std::map<u32,BbscWorldSnapshot> bbsc_world_blocks;
+std::mutex bbsc_world_mutex,bbsc_follow_mutex;
+BbscWorldSnapshot bbsc_dream_ready;
+BbscDreamOwnState bbsc_dream_own;
+BbscFollowMessage bbsc_follow_latest;
+std::map<u64,u64> fields;
+u32 current_map=BbscDreamStateMap;
+u32 map_key=0;
+bool require_host_at_load=true;
+struct SummonPlacementDescriptor {u32 packed_region{};float x{},y{},z{},heading{};};
+enum class BbscPrivateJoinDecision {Wait,Position,Stop};
+void ClearBbscWipeRespawnTarget(){throw std::runtime_error("travel unexpectedly cleared a wipe target");}
+// Wipe has its own real-helper/native-descriptor fixture; travel must never arm it.
+void ArmBbscWipeRespawnTarget(u64,const SummonPlacementDescriptor&,u64){
+    throw std::runtime_error("travel unexpectedly armed a wipe destination");
+}
+template<class T>T ReadValue(u64 p,size_t offset=0,T fallback={}){
+    const auto it=fields.find(p+offset);return it==fields.end()?fallback:static_cast<T>(it->second);
+}
+template<class T>bool WriteValue(u64 p,size_t offset,T value){fields[p+offset]=static_cast<u64>(value);return true;}
+constexpr u64 guest_actor=0x30000, guest_vtable=0x31000;
+u64 current_actor=guest_actor;
+bool ReadablePointer(u64 p,size_t){return p==global||p==flag_man||p==reinterpret_cast<u64>(bank.data())||
+    p==guest_actor||p==guest_vtable;}
+enum class MemoryProt {CpuWrite};
+bool HasMemoryAccess(u64,size_t,MemoryProt){return true;}
+u64 GetGlobalState(){return global;}
+int GetSessionState(){return session;}
+int GetLocalPlayerType(){return 1;}
+u32 GetCurrentPackedMap(){return current_map;}
+s64 SteadyNowMs(){return now_ms;}
+bool BbscWorldSyncEnabled(){return sync_enabled;}
+bool BbscDreamEnabled(){return true;}
+bool BbscWarpTogetherEnabled(){return true;}
+bool BbscWorldRecoveryEnabled(){return recovery_enabled;}
+std::optional<Token> BbscNativeActiveSaveToken(){return active;}
+std::optional<BbscSaveSlot> BbscActiveSaveSlot(){return bbsc_own_world_slot;}
+u64 BbscFlagGroupStorage(u32 key){const auto it=table.find(key);return it==table.end()?0:reinterpret_cast<u64>(it->second.data());}
+std::filesystem::path BbscOwnWorldPath(const BbscSaveSlot&){return run_root/"own-save-0.bin";}
+void BbscRecoveryPollAck(){} // No real launcher/acknowledgement process in this fixture.
+size_t RestoreBbscOwnWorld(std::string_view){throw std::runtime_error("unexpected home branch");}
+bool RecoverBbscOwnWorldFile(const BbscSaveSlot&){throw std::runtime_error("unexpected recovery branch");}
+u64 GetLocalPlayerCharacter(){return current_actor;}
+int GetCharacterHp(u64){return 100;}
+void ApplyBbscGuestLootView(u32,std::string_view){++loot_calls;}
+bool BbscMapResident(u32){return false;}
+std::string BbscResidentMapsText(){return "synthetic";}
+void ArmBbscRejoinLines(bool,u32,s64){}
+enum class BbscLoadProtectionKind { Join, Travel, Respawn };
+struct BbscFollowLoadProtection {u64 ticket{},reload_before{};};
+enum class BbscFollowLanding {Done, Retry};
+constexpr s64 BbscLoadCoverLimitMs=75'000;
+std::atomic<u64> bbsc_character_reload_generation{0};
+struct BbscLoadProtectionState {
+    u64 serial{}, room{}, role_epoch{};
+    u32 owner{};
+    s64 started{};
+    bool leaving{};
+};
+BbscLoadProtectionState landing_scope;
+int native_landings=0, position_warps=0, transform_reads=0;
+bool native_transform_ready=true;
+BbscLoadProtectionState ReadBbscLoadProtection(){return landing_scope;}
+bool BbscLoadProtectionSameRole(const BbscLoadProtectionState& scope,u64 current_global){
+    return current_global==global && active && scope.role_epoch==active->lineage;
+}
+u32 BbscRelayHostForPackets(){return auth_owner;}
+std::optional<int> ReadCharacterTransform(u64 chr){
+    ++transform_reads;
+    return native_transform_ready && chr==current_actor ? std::optional{1} : std::nullopt;
+}
+u64 ArmBbscLoadProtection(BbscLoadProtectionKind kind) {
+    if(kind!=BbscLoadProtectionKind::Travel) return 0;
+    landing_scope={landing_scope.serial+1,auth_room,active->lineage,auth_owner,now_ms};
+    return landing_scope.serial;
+}
+u64 BbscLoadProtectionTicket() { return 0; }
+void MarkBbscLoadProtectionPlaced(u64, u32) {}
+void MarkBbscLoadProtectionPlaced(u64 ticket,u32 map,u64 actor,u64 generation){
+    require(ticket==landing_scope.serial&&ticket!=0,"arrival used the wrong transition ticket");
+    require(generation==bbsc_character_reload_generation.load(),"arrival used the wrong reload generation");
+    require(map==current_map&&actor==GetLocalPlayerCharacter(),"arrival used the wrong map or actor");
+    ++native_landings;
+}
+void StartBbscLoadCover(std::string_view){}
+void EndBbscLoadCover(std::string_view){}
+void BbscAnnounce(const char16_t*,std::string_view){}
+void NativePositionWarp(u64,float*,float*,u32){++position_warps;}
+bool IsEbootCodeAddress(u64 p){return p==reinterpret_cast<u64>(&NativePositionWarp);}
+namespace BbscMod {
+bool RelayAuthPrivate(){return private_session;}
+u32 RelayAuthOwner(){return auth_owner;}
+u32 RelayAuthOwnId(){return auth_own;}
+u64 RelayAuthRoom(){return auth_room;}
+}
+namespace TheHuntRelayAuth {struct EffectGuard {explicit EffectGuard(bool){}};}
+void WriteBbscOwnWorldFile();
+bool BbscOwnWorldReadyForGuest();
+bool BbscOwnWorldCaptureStillCurrent();
+void NoteBbscOwnDreamRestored(u32,const u8*);
+void ApplyBbscHostWorldFlagsAtLoad();
+bool WriteTransportedSummonPlacement(u64,const SummonPlacementDescriptor& to){
+    fields[global+0x14C4]=to.packed_region;return true;
+}
+void NativePosition(const void*){}
+void NativeOrientation(const void*){}
+void NativeMap(const void*){}
+void NativeWarpFlag(){fields[global+0x1520]=1;}
+bool NativeSelector(u64,s32){
+    ++selectors;fields[global+0x0C]=fields[global+0x14C4];
+    if(change_at_selector)++active->lineage;
+    return true;
+}
+std::vector<u8> read_file(const std::filesystem::path& path){
+    std::ifstream in(path,std::ios::binary);return std::vector<u8>((std::istreambuf_iterator<char>(in)),{});
+}
+u64 NativeTransition(){
+    ++loads;
+    require(BbscOwnWorldReadyForGuest(),"native load started before personal baseline publication");
+    if(recovery_enabled){
+        require(!read_file(run_root/"own-save-0.bin").empty(),"baseline was not written before load");
+        require(!read_file(run_root/"recovery/requests/world-save-0.bin").empty(),"recovery request not published before load");
+    }
+    if(require_host_at_load)require(table.at(map_key)==bbsc_world_blocks.at(destination_map).groups[0],"target host flags missing before native load");
+    // Inject a native reload resetting the destination's map bytes. This is a
+    // controlled condition, not evidence of actual Paarl event initialization.
+    table[map_key]=bbsc_own_world.at(map_key);current_map=static_cast<u32>(fields[global+0x14C4]);
+    if(change_at_load)++active->lineage;
+    ApplyBbscHostWorldFlagsAtLoad();
+    if(require_host_at_load&&!change_at_load)require(table.at(map_key)==bbsc_world_blocks.at(destination_map).groups[0],"character creation skipped host flags");
+    if(change_at_load)require(table.at(map_key)==bbsc_own_world.at(map_key),"stale load wrote host flags into new character");
+    fields[global+0x1520]=0; // Synthetic native completion consumes the forced-warp flag.
+    ++bbsc_character_reload_generation;
+    return 1;
+}
+const u64 SetForcedSummonPositionOffset=reinterpret_cast<u64>(&NativePosition)-image_base;
+const u64 SetForcedSummonOrientationOffset=reinterpret_cast<u64>(&NativeOrientation)-image_base;
+const u64 SetForcedSummonMapOffset=reinterpret_cast<u64>(&NativeMap)-image_base;
+const u64 SetForcedSummonWarpOffset=reinterpret_cast<u64>(&NativeWarpFlag)-image_base;
+const u64 SelectSummonedPlacementOffset=reinterpret_cast<u64>(&NativeSelector)-image_base;
+const u64 StageTransitionOffset=reinterpret_cast<u64>(&NativeTransition)-image_base;
+constexpr u64 SummonSessionRulesPointerOffset=0xABCDEF;
+
+// ACTUAL_FUNCTIONS
+
+// ACTUAL_PRIVATE_JOIN
+
+// ACTUAL_FOLLOW
+
+void refresh(s64 elapsed){
+    now_ms+=elapsed;
+    bbsc_follow_latest.received_ms=now_ms;bbsc_follow_latest.arrival_ms=now_ms;
+    for(auto& [map,snap]:bbsc_world_blocks)snap.complete_ms=now_ms;
+    bbsc_dream_ready.complete_ms=now_ms;
+}
+size_t waiting_logs(){
+    return std::count_if(logs.begin(),logs.end(),[](const auto& line){return line.find("BBSC travel state: waiting")!=line.npos;});
+}
+void journal_matches(){
+    const auto bytes=read_file(run_root/"own-save-0.bin");
+    require(bytes.size()==12+bbsc_own_world.size()*(4+BbscWorldGroupBytes),"incorrect baseline serialization length");
+    size_t at=12;
+    for(const auto& [key,group]:bbsc_own_world){
+        u32 actual;std::memcpy(&actual,bytes.data()+at,4);at+=4;
+        require(actual==key&&std::equal(group.begin(),group.end(),bytes.begin()+at),"serialized baseline lost personal changes");at+=group.size();
+    }
+    const auto request=read_file(run_root/"recovery/requests/world-save-0.bin");
+    require(request.size()==68+bbsc_own_world.size()*258,"incorrect real recovery request length");
+    require(request[0]=='T'&&request[1]=='H'&&request[2]=='W'&&request[3]=='R',"missing real recovery request header");
+}
+int main(int argc,char** argv){try{
+    require(argc==3,"expected scenario and isolated output folder");
+    const std::string mode=argv[1];run_root=argv[2];
+    require(!std::filesystem::exists(run_root/"own-save-0.bin"),"fixture folder must be fresh");
+    std::filesystem::create_directories(run_root);
+    const std::string folder=(run_root/"recovery").string();
+    _putenv_s("THEHUNT_WORLD_RECOVERY_DIR",folder.c_str());
+    _putenv_s("THEHUNT_WORLD_RECOVERY_TOKEN","00112233445566778899aabbccddeeff");
+    fields[global+0x1592]=0;fields[global+0x08]=0;fields[global+0x14C4]=destination_map;
+    fields[image_base+WorldFlagManPointerOffset]=flag_man;
+    fields[flag_man+0x24]=1200;fields[flag_man+0x28]=reinterpret_cast<u64>(bank.data());
+    map_key=BbscWorldGroupKey(destination_map,0);
+    table[1][0]=0x11;table[5][500/8]=0;table[BbscDreamSoldGroup][0]=1;table[map_key][0]=0x33;
+    table[BbscWorldGroupKey(BbscDreamStateMap,0)]={};
+    bbsc_own_world=table;
+    bbsc_own_world_dirty=true;
+    WriteBbscOwnWorldFile(); // Real initial baseline and recovery-request publication.
+    require(BbscOwnWorldReadyForGuest(),"initial publication did not establish the real ready gate");
+    const auto disk_before=read_file(run_root/"own-save-0.bin");
+    const auto request_before=read_file(run_root/"recovery/requests/world-save-0.bin");
+    const auto initial_before=read_file(run_root/"recovery/baselines/world-save-0.bbow");
+    bbsc_dream_ready.map=BbscDreamStateMap;bbsc_dream_ready.complete_ms=now_ms;
+    for(size_t i=0;i<BbscDreamStateKeys.size();++i){
+        if(!table.contains(BbscDreamStateKeys[i]))continue;
+        bbsc_dream_ready.present|=u64{1}<<i;
+        bbsc_dream_ready.groups[i]=table.at(BbscDreamStateKeys[i]);
+        if(mode!="follow-no-op")bbsc_dream_ready.groups[i][0]^=0x20;
+    }
+    BbscWorldSnapshot host;host.map=destination_map;host.present=1;host.complete_ms=now_ms;host.snapshot=1;host.groups[0][0]=0xA5;
+    bbsc_world_blocks[destination_map]=host;
+    BbscWorldSnapshot dream_map;dream_map.map=BbscDreamStateMap;dream_map.complete_ms=now_ms;dream_map.present=1;
+    bbsc_world_blocks[BbscDreamStateMap]=dream_map;
+    bbsc_follow_latest.packed_map=destination_map;bbsc_follow_latest.received_ms=now_ms;
+    bbsc_follow_latest.arrival_by_load=true;bbsc_follow_latest.arrival_map=destination_map;bbsc_follow_latest.arrival_ms=now_ms;
+    bbsc_follow_latest.x=bbsc_follow_latest.arrival_x=12;bbsc_follow_latest.y=bbsc_follow_latest.arrival_y=40;
+    bbsc_follow_latest.z=bbsc_follow_latest.arrival_z=-5;
+    require(BbscOwnWorldReadyForGuest(),"seeded captured/current baseline not ready");
+    if(mode!="initial-direct"&&mode!="follow-roundtrip")ApplyBbscHostDreamState("fixture enters host Dream");
+    const bool purchase=mode=="follow-purchase"||mode=="baseline-write-failure"||mode=="request-write-failure";
+    if(purchase){
+        table[BbscDreamSoldGroup][0]=9;
+        table[5][500/8]|=static_cast<u8>(0x80u>>(500%8)); // Host Dream NPC unlock must be restored.
+    }
+    const auto own_before=bbsc_own_world;
+    if(mode=="slot-changed")active->slot=1;
+    if(mode=="lineage-changed")++active->lineage;
+    if(mode=="no-token")active.reset();
+    if(mode=="title-exit")bbsc_recovery_title_exit=true;
+    if(mode=="waiting-ack")bbsc_recovery_waiting=true;
+    if(mode=="incomplete-baseline")bbsc_recovery_initial_indices.erase(1);
+    if(mode=="no-owner")auth_owner=0;
+    if(mode=="sync-disabled"){sync_enabled=false;require_host_at_load=false;}
+    if(mode=="legacy-fallback"){bbsc_world_blocks.clear();require_host_at_load=false;}
+    if(mode=="recovery-disabled")recovery_enabled=false;
+    if(mode=="load-generation-change")change_at_load=true;
+    const bool initial=mode.starts_with("initial-");
+    if(mode=="initial-direct")current_map=0x18010000;
+    if(mode=="initial-dream"){
+        current_map=0x18010000;bbsc_dream_own.held=0;
+        bbsc_follow_latest.packed_map=BbscDreamStateMap;
+        require_host_at_load=false;
+    }
+    if(mode=="initial-callback-change")change_at_selector=true;
+    const bool blocked=mode=="baseline-write-failure"||mode=="request-write-failure"||mode=="initial-write-failure";
+    std::filesystem::path obstacle;
+    if(blocked){
+        obstacle=mode=="request-write-failure"?run_root/"recovery/requests/world-save-0.bin.tmp":run_root/"own-save-0.bin.tmp";
+        std::filesystem::create_directories(obstacle);
+    }
+    const auto tick=[&]{
+        if(initial)return TickBbscPrivateJoinRecovery(global,current_map,now_ms);
+        TickBbscFollowHost();return BbscPrivateJoinDecision::Wait;
+    };
+    if(mode=="follow-roundtrip"){
+        current_map=destination_map;require_host_at_load=false;
+        bbsc_follow_latest.packed_map=BbscDreamStateMap;bbsc_follow_latest.arrival_map=BbscDreamStateMap;
+        tick();refresh(5'000);tick();
+        require(loads==1&&bbsc_dream_own.held,"established follow did not enter and overlay the Dream");
+        refresh(BbscFollowSettleMs);tick(); // Finish the first follow's arrival handling.
+        bbsc_follow_latest.packed_map=destination_map;bbsc_follow_latest.arrival_map=destination_map;
+        require_host_at_load=true;
+    }
+    tick();refresh(5'000);tick();
+    const bool delayed_landing=mode.starts_with("follow-native-landing-");
+    if(mode=="follow-host-walked-next-block"||delayed_landing){
+        require(loads==1&&current_map==destination_map,"guest did not reach requested native map");
+        fields[guest_actor]=guest_vtable;
+        fields[guest_vtable+0x5F8]=reinterpret_cast<u64>(&NativePositionWarp);
+        bbsc_follow_latest.packed_map=destination_map ^ 0x00010000;
+        bbsc_follow_latest.arrival_by_load=false;
+        native_transform_ready=!delayed_landing;
+        refresh(BbscFollowSettleMs);tick();
+        const bool expect_landing=!delayed_landing||mode=="follow-native-landing-delayed";
+        if(delayed_landing){
+            require(native_landings==0&&transform_reads==1,"first unavailable position was not tested");
+            if(mode=="follow-native-landing-stale-ticket")++landing_scope.serial;
+            if(mode=="follow-native-landing-room-changed")++auth_room;
+            if(mode=="follow-native-landing-role-changed")++active->lineage;
+            if(mode=="follow-native-landing-actor-changed")++current_actor;
+            if(mode=="follow-native-landing-reloaded")++bbsc_character_reload_generation;
+            if(mode=="follow-native-landing-map-changed")current_map^=0x00020000;
+            native_transform_ready=true;
+            refresh(mode=="follow-native-landing-expired"?BbscLoadCoverLimitMs:300);
+            bbsc_follow_latest.received_ms=0; // A retained landing does not need another host packet.
+            tick();
+            require(transform_reads==(expect_landing?2:1),"retry read position outside the original landing");
+            // Even if the old values appear again, a rejected pending attempt is gone.
+            auth_room=landing_scope.room;
+            active->lineage=landing_scope.role_epoch;
+            current_actor=guest_actor;
+            current_map=destination_map;
+        }
+        require(native_landings==expect_landing,"unexpected retained landing registration");
+        for(int i=0;i<16;++i){refresh(5'000);tick();}
+        require(loads==1&&selectors==1&&position_warps==0&&native_landings==expect_landing,
+                "walking to the next block reloaded, repositioned or duplicated the landing");
+    }
+    if(mode=="legacy-fallback"){refresh(5'000);tick();}
+    const bool stale=mode=="slot-changed"||mode=="lineage-changed"||mode=="no-token"||mode=="title-exit"||mode=="waiting-ack"||mode=="incomplete-baseline";
+    if(stale||mode=="no-owner"){
+        require(loads==0&&selectors==0,"invalid baseline/authorization still started native selection/load");
+        if(mode!="incomplete-baseline")require(bbsc_own_world==own_before,"stale character baseline was modified");
+        require(read_file(run_root/"own-save-0.bin")==disk_before,"stale baseline modified the retained journal");
+        if(stale){require(waiting_logs()<=2,"waiting diagnostics were not rate-limited");}
+    }else if(blocked){
+        require(loads==0&&selectors==0&&bbsc_own_world_dirty,"failed publication must remain dirty and not load");
+        if(initial)require(bbsc_private_join.requested_ms==0&&!bbsc_private_join.failed_ms,"publication wait incorrectly consumed initial join request");
+        for(int i=0;i<6;++i){refresh(250);tick();}
+        require(loads==0&&selectors==0&&bbsc_own_world_dirty,"retrying publication bypassed dirty protection");
+        require(waiting_logs()==1,"publication wait must log once in a five-second window");
+        require(read_file(run_root/"recovery/requests/world-save-0.bin")==request_before,"failed publication damaged the previous request");
+        if(purchase)require(bbsc_own_world.at(BbscDreamSoldGroup)[0]==9,"failed publication lost the personal purchase");
+        std::filesystem::remove(obstacle);
+        refresh(250);tick();
+        require(loads==1,"successful publication did not resume the pending travel");
+        require(initial||std::any_of(logs.begin(),logs.end(),[](const auto& line){return line.find("attempt 1 of")!=line.npos;}),"publication failures consumed follow attempts");
+        journal_matches();
+    }else if(mode=="initial-callback-change"){
+        require(selectors==1&&loads==0&&bbsc_private_join.failed_ms,"callback preparation failure was treated as success");
+        require(fields[global+0x1520]==0,"rejected callback left the native warp armed");
+    }else{
+        require(loads==(mode=="follow-roundtrip"?2:1),"unexpected native load count after valid preparation");
+        if(recovery_enabled)journal_matches();
+        if(purchase){
+            require(bbsc_own_world.at(BbscDreamSoldGroup)[0]==9,"legitimate personal purchase lost");
+            require(bbsc_own_world.at(5)==own_before.at(5),"host Dream shop/NPC unlock leaked into personal baseline");
+        }else require(bbsc_own_world==own_before,"host overlay changed personal baseline");
+        require(bbsc_own_world.at(map_key)==own_before.at(map_key),"host map progress leaked into personal baseline");
+    }
+    require(read_file(run_root/"recovery/baselines/world-save-0.bbow")==initial_before,"travel replaced the initial recovery baseline");
+    std::cout<<"PASS actual guest travel: "<<mode<<" loads="<<loads<<" selectors="<<selectors
+             <<" ready="<<BbscOwnWorldReadyForGuest()<<" dirty="<<bbsc_own_world_dirty
+             <<" request_bytes="<<read_file(run_root/"recovery/requests/world-save-0.bin").size()<<"\n";
+    return 0;
+}catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<"\n";return 1;}}

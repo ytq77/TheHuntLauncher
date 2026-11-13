@@ -1,0 +1,116 @@
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+using u8=std::uint8_t;using u16=std::uint16_t;using u32=std::uint32_t;using u64=std::uint64_t;
+using s32=std::int32_t;using s64=std::int64_t;
+#define PS4_SYSV_ABI __attribute__((sysv_abi))
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARNING(...) ((void)0)
+constexpr u64 image_base=0x100000000,EventFlagManPointerOffset=0x0553B100;
+std::array<u8,0x1598> global{};
+std::array<u8,0x410> player{};
+std::atomic<bool> bbsc_duel_bell_ready{true};
+std::atomic<u64> bbsc_character_reload_generation{0};
+s64 now=10000;
+int backups=0,adds=0,removes=0,flags=0,notices=0,capacity=10,add_fail=0;
+bool backup_ok=true,remove_ok=true,flag_ok=true,flag=false,manager=true;
+u32 no_fit=0;
+std::map<u64,std::set<u32>> inventory;
+// DECLARATIONS
+bool full(){for(const auto& item:BbscKit)if(!inventory[1].contains(item.id) && !inventory[2].contains(item.id))return false;return true;}
+bool retired(){for(u32 id:{200u,201u,205u,206u,225u,226u,111u})for(u64 inv:{1ull,2ull})if(inventory[inv].contains(id))return false;return true;}
+u64 GetLocalPlayerCharacter(){return reinterpret_cast<u64>(player.data());}
+u64 GetGlobalState(){return reinterpret_cast<u64>(global.data());}
+bool ReadablePointer(u64 a,size_t n){return (a==GetGlobalState() && n<=global.size()) || (a==GetLocalPlayerCharacter() && n<=player.size());}
+template<class T>T ReadValue(u64 a,size_t off){
+    if(a+off==image_base+0x0553B0D8 || a+off==image_base+EventFlagManPointerOffset)return static_cast<T>(manager);
+    assert(ReadablePointer(a,off+sizeof(T)));T v{};std::memcpy(&v,reinterpret_cast<void*>(a+off),sizeof(v));return v;
+}
+s64 SteadyNowMs(){return now;}
+s32 GetCharacterHp(u64){return 100;}
+u64 BbscCarriedInventory(){return 1;}
+u64 BbscStorageInventory(){return 2;}
+bool BbscInventoryHas(u64 inv,u32 code){return inventory[inv].contains(code&0x0FFFFFFF);}
+bool BbscEventFlag(u32 id){assert(id==6622);return flag;}
+bool BackupBbscSaves(){++backups;return backup_ok;}
+bool BbscInventoryRemove(u64 inv,u32 code){
+    assert(backups && backup_ok && full());++removes;
+    if(!remove_ok)return false;
+    return inventory[inv].erase(code&0x0FFFFFFF)!=0;
+}
+void BbscAnnounce(const char16_t*,const char*){assert(full());++notices;}
+s32 PS4_SYSV_ABI Fits(u64,const u32* code,s32 count){
+    assert(backups && backup_ok && count==1);
+    return ((*code&0x0FFFFFFF)==no_fit || capacity<=0)?0:1;
+}
+s32 PS4_SYSV_ABI Add(u64 inv,const u32* key,s32 count){
+    assert(backups && backup_ok && count==1);++adds;
+    if(add_fail==adds)return -1;
+    assert(capacity>0);--capacity;
+    assert(inventory[inv].insert(*key&0x0FFFFFFF).second);return adds;
+}
+u64 PS4_SYSV_ABI SetFlag(u64 unused,u32 id,u8 value){
+    assert(unused==0 && id==6622 && value==1 && backups && backup_ok && full() && retired());
+    ++flags;if(flag_ok)flag=true;return 0;
+}
+const u64 InventoryFitsOffset=reinterpret_cast<u64>(&Fits)-image_base;
+const u64 InventoryAddOffset=reinterpret_cast<u64>(&Add)-image_base;
+const u64 KitSetEventFlagOffset=reinterpret_cast<u64>(&SetFlag)-image_base;
+// CALLBACKS
+void tick(){now+=5000;TickBbscDuelBellGive();}
+int main(int argc,char** argv){
+    assert(argc==2);const std::string mode=argv[1];global[0x1592]=1;
+    for(u32 id:{200u,201u,205u,206u,225u,226u,111u})inventory[1].insert(id);
+    inventory[2].insert(200); // Both storage and carried retirement paths.
+    const auto old=inventory;
+    if(mode=="backup-failure")backup_ok=false;
+    else if(mode=="fits-failure")no_fit=11251;
+    else if(mode=="capacity-exhausted")capacity=2;
+    else if(mode=="add-failure")add_fail=3;
+    else if(mode=="remove-failure")remove_ok=false;
+    else if(mode=="flag-failure")flag_ok=false;
+    else if(mode=="already-complete" || mode=="flag-only" || mode=="storage" || mode=="flag-manager"){
+        inventory.clear();for(const auto& item:BbscKit)inventory[mode=="storage"?2:1].insert(item.id);
+        flag=mode!="flag-only" && mode!="flag-manager";
+        if(mode=="flag-manager")manager=false;
+    }else if(mode=="guest")global[0x1592]=0;
+    else if(mode=="not-ready")bbsc_duel_bell_ready=false;
+    else assert(mode=="fresh" || mode=="same-address-reload");
+    tick();
+    if(mode=="backup-failure" || mode=="fits-failure" || mode=="not-ready"){
+        assert(inventory==old && !flag && adds==0 && removes==0 && flags==0 && notices==0);
+        if(mode=="not-ready"){assert(backups==0);return 0;}
+        backup_ok=true;no_fit=0;tick();
+    }else if(mode=="capacity-exhausted" || mode=="add-failure"){
+        assert(!full() && !flag && removes==0 && flags==0 && notices==0);
+        for(auto [inv,items]:old)for(u32 id:items)assert(inventory[inv].contains(id));
+        capacity=10;add_fail=0;tick();
+        assert(adds==(mode=="add-failure"?6:5));
+    }else if(mode=="flag-manager"){
+        assert(full() && retired() && !flag && backups==0 && flags==0);
+        manager=true;tick();assert(backups==1 && flags==1 && flag);
+    }else if(mode=="same-address-reload"){
+        assert(full() && retired() && flag);
+        inventory=old;flag=false;capacity=10;++bbsc_character_reload_generation;tick();
+        assert(full() && retired() && flag && backups==2 && adds==10);
+    }else if(mode=="remove-failure"){
+        assert(full() && !retired() && !flag && flags==0);remove_ok=true;tick();assert(adds==5);
+    }else if(mode=="flag-failure"){
+        assert(full() && retired() && !flag && flags==1);flag_ok=true;tick();assert(adds==5 && flags==2);
+    }
+    assert(full() && retired());
+    if(mode=="already-complete" || mode=="storage")assert(backups==0 && adds==0 && removes==0 && flags==0 && notices==0);
+    else if(mode=="flag-only")assert(backups==1 && adds==0 && removes==0 && flags==1 && notices==0);
+    else if(mode=="guest")assert(!flag && flags==0);
+    else assert(flag);
+    const auto counts=std::array{backups,adds,removes,flags,notices};tick();
+    assert((std::array{backups,adds,removes,flags,notices}==counts));
+    std::printf("PASS: hardened actual kit callback: %s\n",argv[1]);
+}

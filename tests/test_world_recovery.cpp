@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -16,6 +17,11 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #define FMT_HEADER_ONLY
 #include <fmt/format.h>
 using u8=uint8_t;using u32=uint32_t;using u64=uint64_t;
@@ -28,6 +34,13 @@ std::vector<u8> bank(150000);
 u64 image_base=reinterpret_cast<u64>(image.data());
 std::map<u32,std::array<u8,125>> bbsc_own_world;
 bool bbsc_own_world_dirty=true,missing=false,personal_dream_change=false,relocated=false;
+bool current_role=true;
+bool BbscOwnWorldCaptureStillCurrent(){return current_role;}
+void BbscHomeProofRestored(){}
+struct ActiveLoad{int slot;u64 generation;};
+std::optional<ActiveLoad> reload_role;
+std::optional<ActiveLoad> BbscNativeActiveSaveToken(){return reload_role;}
+bool BbscRecordHomeSaveProof(u64 title_generation);
 std::array<u8,125> temporary_group{};
 struct Slot{std::string user="save";int slot=0;};
 std::optional<Slot>bbsc_own_world_slot=Slot{};
@@ -61,7 +74,16 @@ void WriteBbscOwnWorldFile(){
  for(u32 v:{0x574F4242u,125u,static_cast<u32>(bbsc_own_world.size())})out.write(reinterpret_cast<char*>(&v),4);
  for(const auto& [key,bits]:bbsc_own_world){out.write(reinterpret_cast<const char*>(&key),4);out.write(reinterpret_cast<const char*>(bits.data()),125);}
 }
-#include "../patches/bbsc_world_recovery.inc"
+#ifndef BBSC_RECOVERY_FRAGMENT
+#define BBSC_RECOVERY_FRAGMENT "../patches/bbsc_world_recovery.inc"
+#endif
+#include BBSC_RECOVERY_FRAGMENT
+bool BbscRecordHomeSaveProof(u64 title_generation){
+    assert(title_generation==42 && BbscHomeForOwnWorld());
+    return std::all_of(bbsc_recovery_rows.begin(),bbsc_recovery_rows.end(),[](const auto& row) {
+        return row.index<1200 && std::equal(row.after.begin(),row.after.end(),bank.begin()+row.index*125);
+    });
+}
 int main(int argc,char**argv){
  assert(argc==3);root=argv[1];std::string mode=argv[2];
  {std::ifstream f(root/"before-bank.bin",std::ios::binary);f.read(reinterpret_cast<char*>(bank.data()),bank.size());assert(f);}
@@ -87,7 +109,8 @@ int main(int argc,char**argv){
  }else if(mode=="late"){
    bbsc_recovery_at_load=false;
    assert(!BbscRestoreWorldTransaction("late"));assert(bank==before&&!bbsc_own_world.empty());
- }else if(mode=="quit"||mode=="quit-dream"||mode=="relocated-quit"){
+ }else if(mode=="quit"||mode=="quit-dream"||mode=="relocated-quit"||mode=="quit-reload-failed"||
+          mode=="title-reload-own"||mode=="title-reload-different"){
    if(mode=="relocated-quit"){
      std::copy(bank.begin()+625,bank.begin()+750,temporary_group.begin());relocated=true;
    }
@@ -98,6 +121,36 @@ int main(int argc,char**argv){
    if(mode=="quit-dream")assert(dream_writes==1&&(bbsc_recovery_rows.at(0).after[100]&4));
    const auto saved_sequence=bbsc_recovery_sequence;
    BbscWorldRecoveryQuit(false);assert(bbsc_recovery_sequence==saved_sequence);
+   if(mode=="quit-reload-failed"){
+     // Keep the old QUIT packet on disk by making its temp path unwritable.
+     std::filesystem::create_directory(BbscRecoveryFolder()/"requests/world-save-0.bin.tmp");
+     BbscWorldRecoveryLoadedAfterTitle();
+     assert(bbsc_recovery_mode==BbscRecoveryQuit);
+   }
+   if(mode=="title-reload-own"||mode=="title-reload-different"){
+     session=0;global[0x1592]=1;
+     reload_role=ActiveLoad{0,42};
+     BbscWorldRecoveryLoadedAfterTitle(); // Loaded data still does not match our own world.
+     assert(bbsc_recovery_mode==5 && !bbsc_recovery_waiting && bank==before);
+     bbsc_dream_own.held=1; // Failed native quit kept the old overlay in memory.
+     std::copy(own.begin(),own.end(),bank.begin()+625);
+     const auto loaded=bank;
+     reload_role=ActiveLoad{mode=="title-reload-own"?0:1,42};
+     BbscWorldRecoveryLoadedAfterTitle();
+     assert(bank==loaded); // The native routine never writes back an old world on reentry.
+     if(mode=="title-reload-own"){
+       assert(bbsc_recovery_mode==6 && bbsc_recovery_waiting && bbsc_recovery_title_exit);
+       assert(bbsc_dream_own.held==0 && dream_writes==0);
+       std::ofstream(root/"title-reloaded.ok")<<"ready";
+       for(int i=0;i<500&&bbsc_recovery_waiting;++i){
+         BbscRecoveryPollAck();std::this_thread::sleep_for(std::chrono::milliseconds(10));
+       }
+       assert(!bbsc_recovery_waiting&&!bbsc_recovery_title_exit&&bank==loaded);
+     } else {
+       assert(bbsc_recovery_mode==5 && !bbsc_recovery_waiting && bbsc_recovery_title_exit);
+       assert(bbsc_dream_own.held==1 && dream_writes==0);
+     }
+   }
  }else{
    std::thread change;
    if(mode=="changed")change=std::thread([]{

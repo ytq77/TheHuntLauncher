@@ -51,7 +51,7 @@ internal sealed class OwnedJob : IDisposable
         } catch { Dispose(); throw; } finally { Marshal.FreeHGlobal(memory); }
     }
     public void Assign(Process process) { if (!AssignProcessToJobObject(handle, process.Handle)) throw new Win32Exception(); }
-    public void Dispose() { if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; } }
+    public void Dispose() { var previous = Interlocked.Exchange(ref handle, IntPtr.Zero); if (previous != IntPtr.Zero) CloseHandle(previous); }
 }
 
 public sealed class AccountRow
@@ -64,12 +64,14 @@ internal sealed class DesktopManager
 {
     private readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     private readonly JavaScriptSerializer json = new JavaScriptSerializer();
-    private readonly object pipeLock = new object();
+    private readonly SemaphoreSlim pipeLock = new SemaphoreSlim(1, 1);
+    private int requestTimeoutMilliseconds = 30000;
     private readonly Window window;
     private Process worker;
     private OwnedJob job;
     private DispatcherTimer timer;
-    private bool busy, polling, closing;
+    private bool busy, polling, closeReady;
+    private volatile bool closing, workerFailed;
     private Dictionary<string, object> snapshot;
     private string currentVersion = "0.1.0-preview.4";
     private const string Mode = "bbsc";
@@ -114,7 +116,14 @@ internal sealed class DesktopManager
         }
         Get<Button>("CopyAll").Click += delegate { Copy(AllLinks()); };
         Get<Button>("OpenLogs").Click += delegate { OpenFolder(Path.Combine(root, Mode, "logs")); };
-        Get<Button>("CheckUpdates").Click += delegate { HuntUpdates.Show(window, root, "TheHuntServer", currentVersion, () => !busy && !Active(Mode)); };
+        Get<Button>("CheckUpdates").Click += delegate {
+            try { HuntUpdates.Show(window, root, "TheHuntServer", currentVersion, () => !busy && !Active(Mode)); }
+            catch (Exception error) { Say(error.Message, true); }
+        };
+        if (HuntUpdates.IsEmbeddedServer(root)) {
+            Get<Button>("CheckUpdates").IsEnabled = false;
+            Get<Button>("CheckUpdates").ToolTip = "内置服务端由父客户端统一更新。";
+        }
         Get<Button>("OpenBackups").Click += delegate { OpenFolder(Path.Combine(root, "backups", Mode)); };
         Get<Button>("RefreshAccounts").Click += async delegate { await RefreshAccounts(); };
         Get<DataGrid>("AccountGrid").SelectionChanged += delegate { UpdateState(); };
@@ -140,28 +149,41 @@ internal sealed class DesktopManager
         info.EnvironmentVariables["PYTHONUTF8"] = "1";
         info.EnvironmentVariables["PYTHONNOUSERSITE"] = "1";
         job = new OwnedJob();
-        worker = Process.Start(info);
-        try { job.Assign(worker); } catch { worker.Kill(); job.Dispose(); throw; }
+        try { worker = Process.Start(info); job.Assign(worker); }
+        catch { if (worker != null && !worker.HasExited) worker.Kill(); job.Dispose(); throw; }
         // Drain diagnostics; credentials and requests are never logged or echoed.
         worker.ErrorDataReceived += delegate { };
         worker.BeginErrorReadLine();
     }
 
-    private Task<object> Send(Dictionary<string, object> request) {
-        return Task.Run<object>(delegate {
-            lock (pipeLock) {
-                if (worker == null || worker.HasExited) throw new InvalidOperationException("后台管理进程已退出，请关闭后重新打开管理窗口。");
+    private async Task<object> Send(Dictionary<string, object> request) {
+        if (!await pipeLock.WaitAsync(requestTimeoutMilliseconds).ConfigureAwait(false))
+            throw new TimeoutException("等待后台操作超时，请核对服务和账号状态后重新打开窗口。");
+        try {
+            if (closing || workerFailed || worker == null || worker.HasExited)
+                throw new InvalidOperationException("后台管理进程已退出，请关闭后重新打开管理窗口。");
+            var current = worker;
+            var exchange = Task.Run<object>(delegate {
                 // ASCII JSON also works when the Windows stdin code page cannot represent Chinese.
                 var text = new StringBuilder();
                 foreach (char c in json.Serialize(request)) text.Append(c > 127 ? "\\u" + ((int)c).ToString("x4") : c.ToString());
-                worker.StandardInput.WriteLine(text.ToString()); worker.StandardInput.Flush();
-                string line = worker.StandardOutput.ReadLine();
+                current.StandardInput.WriteLine(text.ToString()); current.StandardInput.Flush();
+                string line = current.StandardOutput.ReadLine();
                 if (line == null) throw new InvalidOperationException("后台管理进程已退出，请查看日志或重新打开窗口。");
                 var response = json.Deserialize<Dictionary<string, object>>(line);
                 if (!Flag(response, "ok")) throw new InvalidOperationException(Convert.ToString(response["error"]));
                 return response["data"];
+            });
+            if (await Task.WhenAny(exchange, Task.Delay(requestTimeoutMilliseconds)).ConfigureAwait(false) != exchange) {
+                workerFailed = true;
+                if (job != null) job.Dispose();
+                try { if (!current.HasExited) current.Kill(); } catch { }
+                var observation = exchange.ContinueWith(task => { var observed = task.Exception; },
+                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+                throw new TimeoutException("后台操作超时，已停止此窗口的后台进程。操作可能已生效，请重新打开并核对账号和服务状态，勿重复提交。");
             }
-        });
+            return await exchange.ConfigureAwait(false);
+        } finally { pipeLock.Release(); }
     }
 
     private async Task Work(Func<Task> action) {
@@ -189,7 +211,7 @@ internal sealed class DesktopManager
         polling = true;
         try {
             snapshot = (Dictionary<string, object>)await Send(Request("status"));
-            UpdateState();
+            if (!closing) UpdateState();
         } catch (Exception error) { if (!closing) Say(error.Message, true); }
         finally { polling = false; }
     }
@@ -208,7 +230,7 @@ internal sealed class DesktopManager
     }
 
     private void UpdateState() {
-        bool alive = worker != null && !worker.HasExited;
+        bool alive = !workerFailed && worker != null && !worker.HasExited;
         bool running = Flag(ModeState(Mode), "running"), external = Flag(ModeState(Mode), "external");
         bool any = Active(Mode);
         Get<TextBox>("AddressBox").IsEnabled = !busy && !any;
@@ -281,19 +303,35 @@ internal sealed class DesktopManager
         await RefreshAccounts();
     }
 
-    private void Closing(object sender, CancelEventArgs args) {
-        if (closing) return;
+    private async void Closing(object sender, CancelEventArgs args) {
+        if (closing) { args.Cancel = !closeReady; return; }
         if ((AnyOwned() || busy) && MessageBox.Show(window, "关闭窗口将停止本窗口启动的服务及当前操作。确定关闭吗？", "The Hunt Server", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { args.Cancel = true; return; }
         closing = true;
+        args.Cancel = true;
         if (timer != null) timer.Stop();
-        if (worker != null && !worker.HasExited) {
-            try { worker.StandardInput.Close(); worker.WaitForExit(2500); } catch { }
+        try {
+            var graceful = Task.Run(delegate {
+                try {
+                    if (worker != null && !worker.HasExited) {
+                        // StreamWriter is not safe to close during a concurrent write.
+                        if (pipeLock.Wait(0)) {
+                            try { worker.StandardInput.Close(); } finally { pipeLock.Release(); }
+                        }
+                        worker.WaitForExit(2500);
+                    }
+                } catch { }
+            });
+            // Closing stdin can itself wait behind a blocked writer.
+            await Task.WhenAny(graceful, Task.Delay(2500));
+        } finally {
+            if (job != null) job.Dispose();
+            try { if (worker != null && !worker.HasExited) worker.Kill(); } catch { }
+            closeReady = true; window.Close();
         }
-        if (job != null) job.Dispose(); // Also handles an unresponsive or abruptly closed worker.
     }
 
     public int Show(Application application, bool test) {
-        if (!test) HuntUpdates.WatchStartup(window, Get<Button>("CheckUpdates"), root, "TheHuntServer", currentVersion);
+        if (!test && !HuntUpdates.IsEmbeddedServer(root)) HuntUpdates.WatchStartup(window, Get<Button>("CheckUpdates"), root, "TheHuntServer", currentVersion);
         if (test) {
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.Left = -20000; window.Top = -20000;
@@ -303,8 +341,10 @@ internal sealed class DesktopManager
             try {
                 StartWorker();
                 snapshot = (Dictionary<string, object>)await Send(Request("status"));
+                if (closing) return;
                 Get<TextBox>("AddressBox").Text = Convert.ToString(snapshot["address"]);
                 UpdateState(); await RefreshAccounts();
+                if (closing) return;
                 if (test) {
                     if (!Get<Button>("StartButton").IsEnabled) throw new InvalidOperationException("Start UI state incorrect");
                     await StartSelected();
@@ -331,7 +371,7 @@ internal sealed class DesktopManager
                 timer.Tick += async delegate { await Poll(); }; timer.Start();
             } catch (Exception error) {
                 if (test) { Console.Error.WriteLine(error.ToString()); closing = true; if (job != null) job.Dispose(); application.Shutdown(1); }
-                else { Say(error.Message, true); UpdateState(); }
+                else if (!closing) { Say(error.Message, true); UpdateState(); }
             }
         };
         return application.Run(window);

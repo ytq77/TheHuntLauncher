@@ -30,7 +30,7 @@ struct BbscWorldSnapshot{u32 map=0;s64 complete_ms=1;u64 present=0;std::array<st
 std::mutex bbsc_world_mutex;BbscWorldSnapshot bbsc_dream_ready;
 std::map<u32,std::array<u8,125>> table,bbsc_own_world,journal;
 bool bbsc_own_world_dirty=false;
-struct Slot{int slot=0;};std::optional<Slot> bbsc_own_world_slot;
+struct Slot{std::string user="save";int slot=0;};std::optional<Slot> bbsc_own_world_slot;
 std::filesystem::path BbscOwnWorldPath(const Slot&){return {};}
 std::map<u64,u64> fields;int session=4;
 template<class T>T ReadValue(u64 p,u64 offset=0,T fallback={}){
@@ -42,6 +42,8 @@ bool ReadablePointer(u64 p,size_t){return p!=0;}
 u64 GetGlobalState(){return 0x10000;}
 int GetSessionState(){return session;}
 bool BbscWorldSyncEnabled(){return true;}bool BbscDreamEnabled(){return true;}
+bool title_frozen=false;
+bool BbscWorldRecoveryJournalFrozen(){return title_frozen;}
 s64 SteadyNowMs(){return 10000;}
 u64 BbscFlagGroupStorage(u32 key){auto it=table.find(key);return it==table.end()?0:reinterpret_cast<u64>(it->second.data());}
 void WriteBbscOwnWorldFile(){journal=bbsc_own_world;}
@@ -123,6 +125,14 @@ int main(int argc,char**argv){try{
  require(table[70009][0]==1&&bbsc_own_world.at(70009)[0]==1,"own purchase lost");
  home();table[70009]={};RestoreBbscOwnWorld("home after purchase");require(table[70009][0]==1,"purchase journal lost");
  std::cout<<"own_shop_unlocks_and_purchase_preserved=1\n";
+ // A subsequent title load belongs to its own character, even if the old
+ // Dream overlay is still held in this process.
+ reset();CaptureBbscOwnWorldBeforeJoin();away();table[1]=host;ApplyBbscHostDreamState("Dream before quit");
+ require(bbsc_dream_own.held!=0,"Dream overlay was not active");
+ home();const auto reloaded=table;title_frozen=true;
+ RestoreBbscOwnDreamState("stale Dream tick after title");
+ require(table==reloaded,"stale Dream state wrote into a reloaded character");
+ title_frozen=false;
  // Capturing from another world or with an existing journal cannot replace a baseline.
  reset();away();CaptureBbscOwnWorldBeforeJoin();require(bbsc_own_world.empty(),"away capture allowed");
  home();session=4;CaptureBbscOwnWorldBeforeJoin();table[1]=host;CaptureBbscOwnWorldBeforeJoin();

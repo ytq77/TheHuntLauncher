@@ -1,0 +1,87 @@
+#include <windows.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <vector>
+#define FMT_HEADER_ONLY
+#include <fmt/format.h>
+using u8=uint8_t;using u16=uint16_t;using u32=uint32_t;using s32=int32_t;using u64=uint64_t;using s64=int64_t;
+#define PS4_SYSV_ABI __attribute__((sysv_abi))
+#define LOG_INFO(category,...) logs.push_back(fmt::format(__VA_ARGS__))
+#define LOG_WARNING(category,...) logs.push_back(fmt::format(__VA_ARGS__))
+#include "native_death_ui.inc"
+#include "bbsc_visibility_wire.snapshot.h"
+u64 image_base{};constexpr u64 MenuManPointerOffset=0x5562878,DeathTextEventOffset=0x132ead0;constexpr u32 DeathTextEventId=0xffa;
+s64 now=100000,bbsc_death_script_ms=0;u64 role=2,global{},actor{},menu{},event{};
+s32 session=6,type=1,hp=0;int events=0;bool enabled=true,curtain=false,idle=true,bbsc_kept_death_this_load=false;
+std::atomic<u64> bbsc_character_reload_generation{1};struct{bool active{};}bbsc_load_cover;
+std::vector<std::string> logs;
+TheHuntVisibility::Context auth{};bool authenticated=true;
+namespace BbscMod {bool RelayAuthVisibilityContext(TheHuntVisibility::Context& c){c=auth;return authenticated;}}
+namespace MemoryProt{constexpr int CpuRead=1,CpuWrite=2;}
+bool ReadablePointer(u64 p,size_t n){return p>=image_base&&p-image_base<=0x5600000&&n<=0x5600000-(p-image_base);}
+bool HasMemoryAccess(u64 p,size_t n,int){return ReadablePointer(p,n);}
+template<class T>T ReadValue(u64 p,size_t at){T x{};if(ReadablePointer(p+at,sizeof x))std::memcpy(&x,(void*)(p+at),sizeof x);return x;}
+template<class T>bool WriteValue(u64 p,size_t at,T x){if(!ReadablePointer(p+at,sizeof x))return false;std::memcpy((void*)(p+at),&x,sizeof x);return true;}
+s64 SteadyNowMs(){return now;}u64 GetGlobalState(){return global;}u64 GetLocalPlayerCharacter(){return actor;}u64 BbscLuaEventObject(){return event;}
+s32 GetSessionState(){return session;}s32 GetLocalPlayerType(){return type;}s32 GetCharacterHp(u64 p){return p==actor?hp:-1;}
+bool BbscDeathPenaltyEnabled(){return enabled;}bool BbscCurtainActive(){return curtain;}bool BbscRespawnNativeScreenIdle(){return idle;}u64 BbscLoadProtectionRoleEpoch(){return role;}
+u32 PS4_SYSV_ABI Cause(u64){return 7;}u32 PS4_SYSV_ABI Detail(u64){return 0;}
+bool IsEbootCodeAddress(u64 p){return p==(u64)&Cause||p==(u64)&Detail;}
+bool PS4_SYSV_ABI NetworkEvent(u64,u32 id,u32,u32){assert(id==0xffa);events++;return true;}
+#include "bbsc_death_ui.snapshot.inc"
+#include "death_raise.snapshot.inc"
+void trampoline(u64 at,u64 target){u8 b[]{0x48,0xb8,0,0,0,0,0,0,0,0,0xff,0xe0};std::memcpy(b+2,&target,8);std::memcpy((void*)(image_base+at),b,sizeof b);}
+void setup(){
+ global=image_base+0x10000;actor=image_base+0x12000;menu=image_base+0x14000;event=image_base+0x17000;
+ std::memset((void*)(image_base+0x10000),0,0x10000);bbsc_death_ui={};bbsc_kept_death_this_load=false;bbsc_death_script_ms=0;bbsc_character_reload_generation=1;
+ auth={17,2,1,{{1,1,10,{'h'},true},{2,2,11,{'g'},true}}};authenticated=true;
+ now=100000;role=2;session=6;type=1;hp=0;events=0;enabled=true;curtain=false;idle=true;bbsc_load_cover.active=false;logs.clear();
+ WriteValue<u64>(image_base,MenuManPointerOffset,menu);WriteValue<u64>(actor,0,image_base+0x18000);WriteValue<u64>(image_base+0x18000,0x558,(u64)&Cause);WriteValue<u64>(image_base+0x18000,0x598,(u64)&Detail);
+ std::memcpy((void*)(image_base+0x1381587),NativeFirstDeath,sizeof NativeFirstDeath);WriteValue<u8>(image_base,0x138160f,0xc3);
+ std::memcpy((void*)(image_base+0x13360b0),NativeSetEffect,sizeof NativeSetEffect);
+}
+void tick(){TickBbscGuestDeathUi(now,session,global,actor,hp);}
+void native_first(){
+ // Execute unchanged native menu-queue body at its actual RVA. A small fixture
+ // wrapper supplies its EAX=2 precondition and preserves the callee-saved R13.
+ const u64 code=image_base+0x1381680,target=image_base+0x13815c6;
+ u8 bytes[]{0x41,0x55,0xb8,2,0,0,0,0x49,0xbb,0,0,0,0,0,0,0,0,0x41,0xff,0xd3,0x41,0x5d,0xc3};
+ std::memcpy(bytes+9,&target,8);std::memcpy((void*)code,bytes,sizeof bytes);
+ using Run=void PS4_SYSV_ABI (*)();reinterpret_cast<Run>(code)();
+}
+void first_proof(){tick();native_first();assert(ReadValue<s32>(menu,0x15c8)==2);assert(ReadValue<s32>(menu,0x1610)==1);now+=4500;bbsc_death_script_ms=now;}
+int main(){
+ image_base=(u64)VirtualAlloc(nullptr,0x5600000,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);assert(image_base);trampoline(DeathTextEventOffset,(u64)&NetworkEvent);
+ setup();first_proof();ShowBbscGuestDeathText(event);assert(events==0);assert(bbsc_death_ui.seen);assert(ReadValue<s32>(menu,0x15c8)==2); // first local native producer retained
+ setup();bbsc_kept_death_this_load=true;tick();now+=500;tick();assert(bbsc_death_ui.requested);assert(ReadValue<s32>(menu,0x15c8)==2);assert(RaiseBbscDeathText(event,"repeat death"));assert(events==0);now+=300;tick();assert(ReadValue<s32>(menu,0x1610)==1); // native repeat repair once
+ setup();tick();now+=4500;ShowBbscGuestDeathText(event);assert(events==1); // no local evidence: existing fallback
+ setup();first_proof();session=3;type=0;WriteValue<u8>(global,0x1592,1);assert(RaiseBbscDeathText(event,"host"));assert(events==1);
+ setup();first_proof();session=0;type=0;assert(RaiseBbscDeathText(event,"solo"));assert(events==1);
+ setup();first_proof();type=2;assert(RaiseBbscDeathText(event,"invader"));assert(events==1);
+ setup();first_proof();session=-1;assert(RaiseBbscDeathText(event,"unknown"));assert(events==1);
+ setup();first_proof();hp=-1;assert(RaiseBbscDeathText(event,"unknown hp"));assert(events==1);
+ setup();first_proof();WriteValue<u8>(global,0x1592,1);assert(RaiseBbscDeathText(event,"ownworld"));assert(events==1);
+ setup();first_proof();role++;assert(RaiseBbscDeathText(event,"other role"));assert(events==1);
+ setup();first_proof();++bbsc_character_reload_generation;assert(RaiseBbscDeathText(event,"other reload"));assert(events==1);
+ setup();first_proof();WriteValue<u8>(image_base,0x1381587,0);assert(RaiseBbscDeathText(event,"unknown producer"));assert(events==1);
+ setup();first_proof();WriteValue<u8>(image_base,0x13360b0,0);assert(RaiseBbscDeathText(event,"unknown setter"));assert(events==1);
+ setup();first_proof();now+=15001;assert(RaiseBbscDeathText(event,"stale"));assert(events==1);
+ setup();bbsc_kept_death_this_load=true;tick();now+=500;WriteValue<u8>(menu,0x1724,1);tick();assert(!bbsc_death_ui.requested);assert(RaiseBbscDeathText(event,"blocked repeat"));assert(events==1);
+ setup();bbsc_kept_death_this_load=true;WriteValue<u8>(image_base,0x1381587,0);tick();now+=500;tick();assert(bbsc_death_ui.requested);assert(RaiseBbscDeathText(event,"unknown first pin"));assert(events==1); // new proof pin does not disable prior local repair
+ setup();first_proof();enabled=false;assert(!RaiseBbscDeathText(event,"disabled"));assert(events==0);
+ setup();first_proof();assert(!RaiseBbscDeathText(1,"bad event"));assert(events==0);
+ setup();first_proof();authenticated=false;assert(RaiseBbscDeathText(event,"public or stale auth"));assert(events==1);
+ setup();first_proof();auth.room=0;assert(RaiseBbscDeathText(event,"no room"));assert(events==1);
+ setup();first_proof();auth.owner=auth.own;assert(RaiseBbscDeathText(event,"auth owner"));assert(events==1);
+ setup();first_proof();auth.peers.pop_back();assert(RaiseBbscDeathText(event,"missing member"));assert(events==1);
+ setup();first_proof();auth.peers[0].capable=false;assert(RaiseBbscDeathText(event,"old host"));assert(events==1);
+ std::puts("PASS: 23 death-UI cases, actual Raise/Show/UI source, native first queue + native repeat setter, private authenticated guest + conservative fallback; no pixel claim");VirtualFree((void*)image_base,0,MEM_RELEASE);
+}

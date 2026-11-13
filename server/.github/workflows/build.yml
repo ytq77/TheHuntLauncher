@@ -74,6 +74,11 @@ jobs:
           docker compose -f recipe/compose.yaml up -d
       - name: 检查 HTTP、STUN 和登录路由
         run: python3 scripts/check-linux.py --server-ip "$TEST_SERVER_IP"
+      - name: 检查认证、原生房间与召唤所有权
+        run: |
+          sudo python3 -B tests/relay_v2_integration.py --server-ip "$TEST_SERVER_IP" \
+            --tcp-port 31413 --web-port 31415 --relay-port 20444 \
+            --state-dir recipe/shadnet-state
       - name: 停止本轮测试
         if: always()
         run: |

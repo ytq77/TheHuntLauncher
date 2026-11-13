@@ -1,0 +1,54 @@
+#include <array>
+#include <cassert>
+#include <iostream>
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+using u64=unsigned long long;
+struct Slot {std::string user="save"; int slot=1;};
+struct Token {int slot=1; u64 lineage=2;};
+std::optional<Token> token=Token{};
+std::optional<Token> BbscNativeActiveSaveToken(){return token;}
+bool enabled=true,bbsc_own_world_dirty=false,bbsc_recovery_title_exit=false;
+std::map<int,int> bbsc_own_world{{1,1}},bbsc_recovery_initial_indices{{1,1}};
+std::optional<Slot> bbsc_own_world_slot=Slot{};
+u64 bbsc_own_world_generation=2;
+bool BbscWorldRecoveryEnabled(){return enabled;}
+// ACTUAL_BASELINE_GUARDS
+enum class TraceKind {LuaSessionEvent,Other};
+struct Site {TraceKind kind=TraceKind::LuaSessionEvent;};
+struct GuestRegisterSnapshot {u64 rsi=0,rax=123,skip_original=0;};
+int state=0,handled=0,writes=0;
+int GetSessionState(){return state;}
+std::string ReadGuestAscii(u64 address,int){return reinterpret_cast<const char*>(address);}
+void HandleBbscLuaSessionEvent(std::string_view){++handled;}
+void WriteBbscOwnWorldFile(){++writes;}
+enum class BbscLoadProtectionKind { Join };
+void ArmBbscLoadProtection(BbscLoadProtectionKind) {
+    assert(state != 3 && BbscOwnWorldReadyForGuest() && BbscOwnWorldCaptureStillCurrent());
+}
+void ArmBbscFirstSpawn(){}
+#define LOG_WARNING(...) ((void)0)
+void Dispatch(const Site& site,const GuestRegisterSnapshot* registers){
+// ACTUAL_JOIN_DISPATCH
+}
+int main(){
+ Site site;GuestRegisterSnapshot r{reinterpret_cast<u64>("JoinSession_White")};
+ Dispatch(site,&r);assert(!r.skip_original&&handled==1&&writes==1);
+ token->lineage=3;
+ Dispatch(site,&r);assert(r.skip_original==1&&r.rax==0);
+ r.skip_original=0;token->lineage=2;bbsc_own_world_dirty=true;
+ Dispatch(site,&r);assert(r.skip_original==1);
+ r.skip_original=0;bbsc_own_world_dirty=false;bbsc_recovery_initial_indices.clear();
+ Dispatch(site,&r);assert(r.skip_original==1);
+ r.skip_original=0;state=3;Dispatch(site,&r);assert(!r.skip_original);
+ state=0;r.rsi=reinterpret_cast<u64>("OnLeaveMenu_Yes");
+ Dispatch(site,&r);assert(!r.skip_original);
+ r.rsi=reinterpret_cast<u64>("JoinSession_White");
+ bbsc_recovery_initial_indices[1]=1;bbsc_recovery_title_exit=true;
+ Dispatch(site,&r);assert(r.skip_original==1);
+ r.skip_original=0;bbsc_recovery_title_exit=false;token.reset();
+ Dispatch(site,&r);assert(r.skip_original==1);
+ std::cout<<"PASS: actual join dispatch rejects missing/partial/stale baselines before native execution; host and unrelated events retained\n";
+}

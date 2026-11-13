@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "launcher"))
 import save_transfer as transfer
+from synthetic_world_fixture import fixture_pair
+RAW, GOOD = fixture_pair()
 
 
 class SaveTransferTests(unittest.TestCase):
@@ -162,8 +164,9 @@ class SaveTransferTests(unittest.TestCase):
         patch.object(transfer, "ROOT", self.root).start()
         patch.dict(os.environ, {"APPDATA": str(self.appdata)}).start()
         patch.object(transfer, "game_running", return_value=False).start()
-        self.write_save(self.source, "userdata0000", b"normal-first-character")
-        self.write_save(self.source, "userdata0001", b"normal-second-character")
+        self.write_save(self.source, "userdata0000", RAW)
+        self.write_save(self.source, "userdata0001", GOOD)
+        self.write_save(self.source, "userdata0010", b'profile'+bytes(84))
         self.write_save(self.source, "sce_sys/param.sfo", b"save-metadata")
         self.write_save(self.destination, "userdata0000", b"old-bbsc-character")
         self.write_save(self.destination, "userdata0009", b"only-in-bbsc")
@@ -183,11 +186,37 @@ class SaveTransferTests(unittest.TestCase):
         before = transfer.snapshot(self.source)
         old = self.contents(self.destination)
         info, _ = transfer.inspect(self.install)
-        self.assertEqual(info["file_count"], 3)
+        self.assertEqual(info["file_count"], 4)
         self.assertIn("全部角色", info["notice"])
         self.assertEqual(transfer.snapshot(self.source), before)
         self.assertEqual(self.contents(self.destination), old)
         self.assertFalse((self.root / "save-backups").exists())
+
+    def test_incomplete_or_invalid_roles_never_replace_existing_branch(self):
+        original = self.contents(self.source)
+        old = self.contents(self.destination)
+        game = self.source/'1/CUSA00207/SPRJ0005'
+        for mode in ('profile', 'truncated', 'empty', 'backup', 'wrong-path'):
+            with self.subTest(mode=mode):
+                if mode == 'profile':
+                    (game/'userdata0010').unlink()
+                elif mode == 'truncated':
+                    (game/'userdata0000').write_bytes(RAW[:-1])
+                elif mode == 'empty':
+                    for slot in (0, 1):
+                        (game/f'userdata{slot:04}').write_bytes(bytes(0x140000))
+                elif mode == 'backup':
+                    (game/'backup0000').write_bytes(b'broken-backup')
+                else:
+                    game.rename(game.parent/'unloaded-game')
+                with self.assertRaises(ValueError):
+                    transfer.apply(self.install)
+                self.assertEqual(self.contents(self.destination), old)
+                shutil.rmtree(self.source)
+                for name, data in original.items():
+                    path = self.source/name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
 
     def test_success_preserves_full_backup_source_timestamps_and_metadata(self):
         before = transfer.snapshot(self.source)
@@ -346,6 +375,26 @@ class SaveTransferTests(unittest.TestCase):
             transfer.apply(self.install)
         self.assertEqual(lock.read_text(), "other import")
         self.assertEqual(self.contents(self.destination), old)
+
+    def test_interrupted_first_rename_leaves_a_durable_backup_plan_and_startup_lock(self):
+        old = self.contents(self.destination)
+        rename = Path.rename
+        def interrupt(path, target):
+            result = rename(path, target)
+            if path == self.destination:
+                raise KeyboardInterrupt('worker interrupted after old save moved')
+            return result
+        with patch.object(Path, 'rename', interrupt), self.assertRaises(KeyboardInterrupt):
+            transfer.apply(self.install)
+        lock = self.root/'.save-import.lock'
+        self.assertTrue(lock.exists())
+        plan = json.loads(lock.read_text('utf-8'))
+        self.assertEqual(plan['state'], 'prepared')
+        self.assertEqual(self.contents(Path(plan['backup'])), old)
+        self.assertFalse(self.destination.exists())
+        self.assertTrue((Path(plan['backup']).parent/'install.json').is_file())
+        with self.assertRaisesRegex(ValueError, '导入锁'):
+            transfer.apply(self.install)
 
     def test_game_started_during_copy_prevents_commit(self):
         old = self.contents(self.destination)

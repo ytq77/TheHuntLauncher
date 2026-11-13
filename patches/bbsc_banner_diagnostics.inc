@@ -60,6 +60,22 @@ void PS4_SYSV_ABI BbscEventTextHook(u64, const GuestRegisterSnapshot* registers)
     const bool found30 = slot30 != 0 && ReadValue<u64>(slot30, 0) != 0;
     LOG_INFO(Debug, "BBSC event text: id={} caller={:#x} category101={} category30={} "
                     "session={}", id, caller_offset, found101, found30, GetSessionState());
+    // Change this one builder invocation, not the shared role table. The
+    // producer identity must be from a retained task actually restarted after
+    // a same-map host reload. A later/new member keeps its native join line.
+    constexpr u64 RetainedHostJoinCaller = 0x0196BCFB;
+    constexpr u32 RetainedHostJoinMessage = 15000012;
+    if (caller_offset == RetainedHostJoinCaller) {
+        const u64 slot = FindBbscMessageSlot(30, RetainedHostJoinMessage, &fmg);
+        const u64 offset = slot ? ReadValue<u64>(slot, 0) : 0;
+        if (offset && ReadablePointer(fmg + offset, 2) &&
+            ReadValue<u16>(fmg + offset, 0) != 0 &&
+            ConsumeBbscRetainedJoinLine(registers->r13,
+                const_cast<GuestRegisterSnapshot*>(registers), RetainedHostJoinMessage)) {
+            LOG_INFO(Debug, "BBSC retained member text: same-map reload join {} -> {}",
+                     id, RetainedHostJoinMessage);
+        }
+    }
     constexpr u64 HostDismissCaller = 0x01387CA8;
     constexpr u32 HostDismissMessage = 20000400;
     constexpr u64 GuestReturnCaller = 0x0138A2A8;

@@ -4,6 +4,26 @@
 #include <QtEndian>
 #include "stream_extractor.h"
 #include "stun_server.h"
+#include "trusted_network.h"
+
+bool StunSecurity::RecordEndpoint(SharedState* shared, const QString& npid,
+                                  const QHostAddress& sender, uint16_t senderPort) {
+    bool ipv4 = false;
+    const quint32 ip = sender.toIPv4Address(&ipv4);
+    if (!shared || !ipv4 || !senderPort || !TrustedNetwork::Allows(sender))
+        return false;
+    QReadLocker loginLock(&shared->clientsLock);
+    const auto user = shared->npidToUserId.constFind(npid);
+    if (user == shared->npidToUserId.cend())
+        return false;
+    const auto client = shared->clients.constFind(*user);
+    if (client == shared->clients.cend() || client->npid != npid ||
+        client->signalingAddress.isNull() || client->signalingAddress.toIPv4Address() != ip)
+        return false;
+    QWriteLocker endpointLock(&shared->matching.udpLock);
+    shared->matching.udpExt[npid] = {QHostAddress(ip).toString(), senderPort};
+    return true;
+}
 
 // Match the framing used by both shadp2p and shadPS4 0.20 / bbport 1.9.1.
 static constexpr uint16_t SIGNALING_VPORT_NBO = 0xFFFF;
@@ -40,6 +60,10 @@ StunServer::StunServer(SharedState* shared, QObject* parent)
 }
 
 bool StunServer::Start(const QHostAddress& addr, uint16_t port) {
+    if (!TrustedNetwork::Allows(addr)) {
+        qCritical() << "STUN requires an explicit LAN/VPN/loopback IPv4";
+        return false;
+    }
     if (!m_socket->bind(addr, port)) {
         qCritical() << "STUN UDP bind failed on" << addr.toString() << ":" << port
                     << m_socket->errorString();
@@ -57,7 +81,7 @@ void StunServer::OnReadyRead() {
         uint16_t senderPort = 0;
         m_socket->readDatagram(raw.data(), raw.size(), &sender, &senderPort);
 
-        if (raw.isEmpty())
+        if (raw.isEmpty() || !TrustedNetwork::Allows(sender))
             continue;
 
         // Strip signaling vport header and preserve the caller's reply framing.
@@ -96,11 +120,9 @@ void StunServer::HandleStunPing(const QByteArray& data, const QHostAddress& send
 
     qInfo() << "STUN ping: npid=" << npid << "ext=" << extIpStr << ":" << senderPort;
 
-    // Record external endpoint
-    {
-        QWriteLocker lk(&m_shared->matching.udpLock);
-        m_shared->matching.udpExt[npid] = {extIpStr, senderPort};
-    }
+    // The legacy packet has no credential. An unauthenticated discovery ping
+    // may still receive its own observed endpoint, but cannot change a player.
+    StunSecurity::RecordEndpoint(m_shared, npid, sender, senderPort);
 
     // Reply: ext_ip(4 bytes network order) + ext_port(2 bytes network order)
     QHostAddress extAddr(extIpStr);

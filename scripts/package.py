@@ -9,29 +9,73 @@ import subprocess
 import zipfile
 from server_bundle import install_package
 from isolate_patches import patched_script
-from port_compat import patched_run_script, patched_mods_script, patched_coop_saves, patched_pc_menu_script
+from port_compat import (patched_run_script, patched_mods_script, patched_coop_saves, patched_pc_menu_script,
+                         patched_relay_credentials, patched_exit_backup_credentials)
 
 ROOT = Path(__file__).resolve().parents[1]
+DIAGNOSTIC_TOOLS = ("launcher/support/Collect-TheHunt-Diagnostics.cmd",
+                    "launcher/support/Collect-TheHunt-Diagnostics.ps1")
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"shadnet.cfg", ".server.lock","profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
                  "last-exit.json", "save-transfer-result.json", ".save-import.lock",
                  "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
-                 "conversion-current.json", ".save-conversion.lock", "update-settings.json", "desktop-settings.json", ".update.lock", "insight-fix.json"}
-DOC_PRIVATE_NAMES = {".build", ".env", "shadnet-state", "game-state", "backups", "__pycache__"}
+                 "conversion-current.json", ".save-conversion.lock", ".save-conversion-pending.json",
+                 "update-settings.json", "desktop-settings.json", ".update.lock", ".update-transaction.json",
+                 "insight-fix.json", "online-data.json"}
+PUBLIC_TEMPLATES = {".env.example", "shadnet.cfg.example"}
+
+
+def private_path(name, *, source_tree=False):
+    parts = [part.casefold() for part in Path(name).parts]
+    # Registered dependency sources may legitimately contain data/, user/ or
+    # diagnostics/. Runtime trees must never accept those directories.
+    excluded = (PRIVATE_PARTS - {"data", "user", "logs", "captures", "world-recovery", "save-proof",
+                                "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress"}
+                if source_tree else PRIVATE_PARTS)
+    if any(part.startswith("summon-record-") for part in parts):
+        return True
+    if set(parts) & excluded or any(
+            part.startswith((".savedata-import-", ".savedata-conversion-",
+                             "thehunt-diagnostics-", "thehunt-evidence-")) for part in parts):
+        return True
+    if re.search(r"(?:^|/)(?:normal|bbsc)/db(?:/|$)", name, re.IGNORECASE):
+        return True
+    for part in parts:
+        if part in PUBLIC_TEMPLATES:
+            continue
+        for private in PRIVATE_FILES:
+            # Atomic writers either append .<id>.tmp or replace the extension.
+            if part == private or part.startswith(private + "."):
+                return True
+            if ("." in private.lstrip(".") and part.startswith(private.rsplit(".", 1)[0] + ".") and
+                    re.search(r"\.(?:tmp|bak|old|new)(?:[.-].*)?$", part)):
+                return True
+    return False
 
 
 def public_docs(folder):
     """Keep deployment templates, excluding any locally initialized server state."""
     return sorted(path for path in folder.rglob("*") if path.is_file()
-                  and not (set(path.relative_to(folder).parts) & DOC_PRIVATE_NAMES))
+                  and not private_path(path.relative_to(folder).as_posix()))
 
 
 def copy_public_docs(source, destination):
     for path in public_docs(source):
+        if path.is_symlink() or not path.resolve().is_relative_to(source.resolve()):
+            raise ValueError("Unsafe documentation source: " + str(path))
         target = destination / path.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+
+
+def copy_diagnostic_tools(source, destination):
+    for relative in DIAGNOSTIC_TOOLS:
+        path = source / relative
+        if path.is_symlink() or not path.resolve().is_relative_to(source.resolve()):
+            raise ValueError("Unsafe diagnostic tool source: " + str(path))
+        encoding = "utf-8-sig" if path.suffix == ".ps1" else "ascii"
+        (destination / path.name).write_text(path.read_text("utf-8-sig"), encoding, newline="\r\n")
 
 
 def digest(path):
@@ -39,28 +83,32 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def check_public(files):
+def check_public(files, *, source_tree=False):
     for name in files:
         path = Path(name)
-        if re.match(r"^(?:server/)?(?:normal|bbsc)/(?:db/|online-data\.json$)", name):
-            raise ValueError("Private server state in release: " + name)
-        if name.startswith("/") or path.is_absolute() or ".." in path.parts or ":" in name or "\\" in name:
+        if (not name or path.is_absolute() or ":" in name or "\\" in name or
+                any(part in ("", ".", "..") or re.search(r'[. ]$|[\x00-\x1f<>"|?*]', part) or
+                    re.match(r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", part, re.I)
+                    for part in name.split("/"))):
             raise ValueError("Unsafe archive path: " + name)
-        if ({part.lower() for part in path.parts} & PRIVATE_PARTS or path.name.lower() in PRIVATE_FILES or
-                any(part.startswith((".savedata-import-", ".savedata-conversion-")) for part in path.parts)):
+        if private_path(name, source_tree=source_tree):
             raise ValueError("Private state in release: " + name)
 
 
 def archive_tree(folder, archive):
-    files = {p.relative_to(folder).as_posix(): digest(p)
-             for p in folder.rglob("*") if p.is_file() and p.name != "file-sha256.json"}
-    check_public(files)
+    paths = {p.relative_to(folder).as_posix(): p for p in folder.rglob("*") if p.is_file()}
+    check_public(paths)
+    for path in paths.values():
+        if path.is_symlink() or not path.resolve().is_relative_to(folder.resolve()):
+            raise ValueError("Unsafe package source: " + str(path))
+    files = {name: digest(path) for name, path in paths.items() if name != "file-sha256.json"}
     (folder / "file-sha256.json").write_text(json.dumps(files, indent=2), encoding="utf-8")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as out:
         for name in [*files, "file-sha256.json"]:
             out.write(folder / name, folder.name + "/" + name)
     with zipfile.ZipFile(archive) as check:
-        if check.testzip() is not None:
+        expected_members = {folder.name + "/" + name for name in files} | {folder.name + "/file-sha256.json"}
+        if check.testzip() is not None or set(check.namelist()) != expected_members:
             raise ValueError("Archive CRC check failed.")
         for name, expected in files.items():
             if hashlib.sha256(check.read(folder.name + "/" + name)).hexdigest() != expected:
@@ -98,6 +146,7 @@ def main():
     for path in (ROOT / "launcher").iterdir():
         if path.suffix in (".ps1", ".xaml", ".py"):
             shutil.copy2(path, dest / path.name)
+    copy_diagnostic_tools(ROOT, dest)
     shutil.copy2(ROOT / "launcher/feature-catalog.json", dest / "feature-catalog.json")
     shutil.copy2(ROOT / "launcher/trophy-catalog.json", dest / "trophy-catalog.json")
     shutil.copytree(ROOT / 'assets', dest / 'assets')
@@ -144,7 +193,8 @@ def main():
         shutil.copy2(args.port / relative, dest / "licenses" / name)
     shutil.copy2(args.port / "run.py", dest / "engine/run.py")
     run_script = dest / "engine/run.py"
-    run_script.write_text(patched_coop_saves(patched_run_script(run_script.read_text(encoding="utf-8"))), encoding="utf-8")
+    run_script.write_text(patched_relay_credentials(patched_coop_saves(patched_run_script(
+        run_script.read_text(encoding="utf-8")))), encoding="utf-8")
     # The direct runner uses driver discovery and optional exit backups.
     # Include their small dependency closure, without the upstream GUI/accounts.
     (dest / "engine/launcher").mkdir()
@@ -152,6 +202,8 @@ def main():
                  "bbport_character", "bbport_trophies", "bbport_trophy_icons", "bbport_tls"):
         shutil.copy2(args.port / "launcher" / (name + ".py"), dest / "engine/launcher" / (name + ".py"))
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    backup_runner = dest / 'engine/launcher/bbport_exit_backup.py'
+    backup_runner.write_text(patched_exit_backup_credentials(backup_runner.read_text('utf-8')), 'utf-8')
     pc_menu = dest / 'engine/scripts/pc_menu.py'
     pc_menu.write_text(patched_pc_menu_script(pc_menu.read_text('utf-8')), encoding='utf-8')
     menu_mods = dest / "engine/scripts/mods.py"
@@ -234,7 +286,8 @@ def main():
     info["features"].append("active-parameter-kit-init")
     info["kit_initialization_validation"] = "BBport 1.9.7, 2026-11-02: real active Goods/SpEffect repositories used without scan fallback; complete readiness 4005 ms after hook installation and table validation/preparation about 1 ms. Pre-grant backup, one grant/notice, both native save generations holding one of each kit item, unchanged other character files and normal exit verified. Eleven actual-callback regression modes cover loading, invalid/read-only/truncated tables, scan fallback, backup failure and existing/storage ownership. These timings are not whole-startup or load-time guarantees; co-op and PvP item use were not newly tested."
     info["features"].extend(["guest-blank-role-guard", "voluntary-return-text", "personal-npc-gift-guard"])
-    info["bell_session_validation"] = "BBport 1.9.7: paired tests verified both players returning to their personal arrival positions after hosting and guesting in turn. Normal host exits are corroborated by both traces; disconnect also passed by player report. Blank successfully returned and saved, but the guest may play an eating-like animation after travelling. Recruitment persisted after the first guest joined; the effect disappeared after Dream travel, with further recruitment not confirmed."
+    info["bell_session_validation"] = "BBport 1.9.7: preview.21 paired tests verified both players returning to their personal arrival positions after switching host and guest roles, and saving after Blank return. Normal host exits are corroborated by both traces; disconnect also passed by player report. In the preview.22 gameplay candidate, the player confirmed the guest Blank firing animation after travel, host Duel Bell sound when enabling and disabling friendly fire, and no repeated Hunt Bell prompt with the existing guest still present after travel to the Dream. New recruitment after travel remains unverified."
+    info["features"].extend(["guest-blank-cross-map-effect", "duel-bell-audio", "launcher-quick-start-link"])
     info["features"].extend(["personal-return-origin", "native-disconnect-return", "host-only-duel-bell", "native-chest-gating", "bbport197-p2p-bind"])
     info["coop_fix_validation"] = "Closed chest gating and stale warp cleanup passed targeted regression checks; live chest pickup and the exact host death/guest departure/exit sequence are pending. Both clients reached auxiliary P2P bind ready; no claim that enemy latency or GPU exit code 23 is resolved."
     info["npc_gift_validation"] = "The real common-9040 guard executed during a two-player guest session. All 30 gift-request flags matched their own pre-join baselines in both save generations after a normal return. No badge or sedative was granted automatically. Native regressions cover own-world, cooperative/invasion guest and Dream-disabled boundaries; actual NPC dialogue rewards and invasion gameplay were not re-tested. Existing damaged saves are not automatically repaired."
@@ -246,6 +299,7 @@ def main():
     info["features"].extend(["public-online-password-account", "split-public-content-private-seamless", "renamed-launcher-entry"])
     info["launcher_entry"] = "TheHuntLauncher.exe"
     info["public_online_validation"] = "Existing-account NP authentication, hybrid metadata, public game login and read-only notes query passed through the actual bridge (HTTP 200 / ResKind 0; empty notes list in the selected query). Loopback protocol/HTTP and credential isolation regressions passed. No real game, public content write or two-player hybrid-session acceptance is claimed. Unchanged gameplay results are reused only within their scope."
+    apply_hardening_metadata(info)
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)
@@ -253,6 +307,32 @@ def main():
                                                for path in (archive, graphics_source)), encoding="utf-8")
     print(json.dumps({"archive": str(archive), "bytes": archive.stat().st_size, "files": len(files),
                       "sha256": digest(archive)}, indent=2))
+
+
+def apply_hardening_metadata(info):
+    info["features"].extend([
+        "native-active-save-slot", "current-session-quit-seal", "durable-save-install-intent",
+        "durable-update-intent", "reload-generation-guards", "trusted-network-server-guards",
+        "stdin-only-account-helper", "explicit-source-archive-manifest",
+        "private-relay-v2-authentication", "native-room-role-routing", "authenticated-prejoin-placement",
+    ])
+    # Preserve the original evidence while distinguishing this changed candidate.
+    for key in ("session_recovery_validation", "npc_recovery_validation", "save_conversion_validation",
+                "kit_initialization_validation", "bell_session_validation", "coop_fix_validation",
+                "personal_rewards_validation", "save_safety_validation"):
+        if key in info:
+            info[key] += (" Historical gameplay evidence applies to the named earlier implementation only. "
+                          "The 2026-11-05 hardening changes have local regression/build coverage; "
+                          "changed save, reload, kit and co-op paths require targeted gameplay acceptance.")
+    info["hardening_validation"] = (
+        "Unreleased 2026-11-05 candidate. Native BBSC, save bridge and Windows server built locally; "
+        "synthetic interruption, native slot/load hooks, concurrent cancellation, update rollback, "
+        "credential/UI and packaging regressions passed. No installed game, production save or "
+        "running server was changed. Private relay v2 verifies the native account token, session MAC and "
+        "sequence, derives membership and owner roles from native rooms, and binds prejoin placement to "
+        "the authenticated broker-selected account. The legacy public-server path remains separate. "
+        "Build and container results do not establish two-PC gameplay acceptance of the new protocol. "
+        "Validation scope and remaining boundaries are recorded in docs/hardening-20261105.md.")
 
 
 if __name__ == "__main__":

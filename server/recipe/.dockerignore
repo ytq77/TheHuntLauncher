@@ -1,6 +1,12 @@
 *
 !Dockerfile
 !entrypoint.sh
+!security.py
+!account_helper.py
+!relay_auth.py
+!tests/
+!tests/*.cpp
+!tests/*.py
 !fixes/
 !fixes/**
 !.build/

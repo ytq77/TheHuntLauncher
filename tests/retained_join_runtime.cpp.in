@@ -1,0 +1,364 @@
+#include <windows.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
+using u8=uint8_t; using u16=uint16_t; using u32=uint32_t; using s32=int32_t;
+using u64=uint64_t; using s64=int64_t;
+#define PS4_SYSV_ABI __attribute__((sysv_abi))
+template<class... Args> void SilentLog(Args&&...) {}
+#define LOG_INFO(category,...) SilentLog(__VA_ARGS__)
+#define LOG_WARNING(category,...) SilentLog(__VA_ARGS__)
+#include "bbsc_visibility_wire.h"
+#include "bbsc_relay_auth_guard.h"
+#include "native_bytes.inc"
+
+// Synthetic engine/relay boundary objects. Production Arm/Capture/Queue/Consume,
+// accessors, context lease, native load, member comparison and producer run below.
+u64 image_base{}, active_global{}, denied_pointer{}; size_t denied_size{};
+alignas(16) std::array<u8,0x1800> world{}, world2{};
+alignas(16) std::array<u8,0x1000> world_chr{};
+alignas(16) std::array<u8,0x400> task1{},task2{},producer1{},producer2{},actor1{},actor2{},stage1{},stage2{};
+alignas(16) std::array<u8,0x300> local_slot{},slots{},manager{},resources{},stage_manager{},point_manager{},allocator{},render_manager{};
+alignas(16) std::array<u8,0x800> actor_vtable{},alloc_vtable{};
+alignas(16) std::array<u8,0x80> lock_vtable{},id_vtable{},id1{},id2{},original_type{};
+std::array<u64,2> task_list{};
+std::array<u8,0x70> actor_list{};
+TheHuntVisibility::Context auth;
+bool authenticated=true, change_at_lease=false;
+int auth_reads{},load_hits{},builder_hits{},native_set_hits{},cases{};
+u64 pending_rearm{},last_caller{},last_producer{};
+u32 last_message{}; s64 now=100000; int session=3,hp=0;
+u32 packed_map=0x19000000;
+std::atomic<u64> bbsc_character_reload_generation{0};
+std::mutex bbsc_active_save_mutex;
+u64 bbsc_active_save_generation=2;
+constexpr u64 PlayerSlotManagerPointerOffset=0x553b130,CandidateLocalStatePointerOffset=0x553e878;
+constexpr u64 MultiPlayManPointerOffset=0x5540230,MultiPlayerInsSetStateOffset=0x1e52560,MemberIdEqualsOffset=0xca1c70;
+constexpr s64 BbscReinsertSettleMs=2500,BbscReinsertTimeoutMs=120000;
+s32 bbsc_v8_saved_type=-1,bbsc_v8_original_type=-1,bbsc_v8_saved_sign_type=0;
+u8 bbsc_v8_saved_sign_extra=0;
+bool bbsc_v8_original_swapped=false,bbsc_v8_pending=false;
+s64 bbsc_v8_death_ms=0,bbsc_v8_ready_since_ms=0;
+struct GuestRegisterSnapshot {u64 rsi{},rsp{},r13{};};
+namespace MemoryProt {constexpr int CpuRead=1,CpuWrite=2;}
+template<class T> void Put(void* p,size_t at,T x) {std::memcpy(static_cast<u8*>(p)+at,&x,sizeof x);}
+template<class T> T Get(const void* p,size_t at) {T x;std::memcpy(&x,static_cast<const u8*>(p)+at,sizeof x);return x;}
+bool HasMemoryAccess(u64 p,size_t n,int) {
+    if(!p||!n||p+n<p)return false;
+    if(denied_pointer&&p<denied_pointer+denied_size&&p+n>denied_pointer)return false;
+    MEMORY_BASIC_INFORMATION m{};
+    return VirtualQuery(reinterpret_cast<void*>(p),&m,sizeof m)&&m.State==MEM_COMMIT&&
+        !(m.Protect&(PAGE_NOACCESS|PAGE_GUARD))&&p+n<=reinterpret_cast<u64>(m.BaseAddress)+m.RegionSize;
+}
+bool ReadablePointer(u64 p,size_t n){return HasMemoryAccess(p,n,MemoryProt::CpuRead);}
+template<class T> T ReadValue(u64 p,size_t at){return ReadablePointer(p+at,sizeof(T))?Get<T>(reinterpret_cast<void*>(p),at):T{};}
+template<class T> bool WriteValue(u64 p,size_t at,T x){if(!HasMemoryAccess(p+at,sizeof(T),MemoryProt::CpuWrite))return false;Put(reinterpret_cast<void*>(p),at,x);return true;}
+u64 GetGlobalState(){return active_global;}
+s32 GetSessionState(){return session;}
+u32 GetCurrentPackedMap(){return packed_map;}
+s64 SteadyNowMs(){return now;}
+s32 GetBbscLocalPlayerHp(){return hp;}
+s32 GetLocalCharacterType(){return Get<s32>(local_slot.data(),0xa4);}
+bool SetOwnWorldRestoreType(s32,s32*){return false;}
+bool EnvFlagEnabled(const char*){return false;}
+void ApplyPhantomCharacterFlags(u64){}
+void LogBbscSessionShape(std::string_view,bool=false){}
+void RestoreBbscOwnWorldAtLoad(){}
+void ApplyBbscSharedProgressAtLoad(){}
+#include "accessors.inc"
+#include "role.inc"
+namespace BbscMod {
+std::mutex send_mutex; bool private_auth=true; u64 auth_context_ms{};
+struct ClientBoundary {
+    bool Visibility(){return authenticated;}
+    TheHuntVisibility::Context VisibilityContext(){++auth_reads;if(change_at_lease&&auth_reads==2)++auth.room;return auth;}
+} auth_client;
+#include "lease.inc"
+}
+bool text_available=true;
+u64 FindBbscMessageSlot(u32 category,u32 id,u64* fmg){
+    *fmg=image_base;
+    return text_available&&category==30&&id==15000012?image_base+0x600:0;
+}
+#include "bbsc_retained_join.inc"
+#include "reinsert.inc"
+#include "trace_hook.inc"
+#include "event_text.inc"
+
+void Install(u64 offset,const void* data,size_t size){std::memcpy(reinterpret_cast<void*>(image_base+offset),data,size);FlushInstructionCache(GetCurrentProcess(),reinterpret_cast<void*>(image_base+offset),size);}
+void Trampoline(u64 offset,u64 target){u8 bytes[]{0x48,0xb8,0,0,0,0,0,0,0,0,0xff,0xe0};std::memcpy(bytes+2,&target,8);Install(offset,bytes,sizeof bytes);}
+void PS4_SYSV_ABI Noop(){}
+u64 PS4_SYSV_ABI Zero(){return 0;}
+bool PS4_SYSV_ABI Yes(){return true;}
+bool PS4_SYSV_ABI ObjectEquals(u64 a,u64 b){return Get<u64>(reinterpret_cast<void*>(a),8)==Get<u64>(reinterpret_cast<void*>(b),8);}
+void PS4_SYSV_ABI EmptyString(u64 p){std::memset(reinterpret_cast<void*>(p),0,0x30);Put(reinterpret_cast<void*>(p),0x20,u64{7});}
+void PS4_SYSV_ABI NullObject(u64 p){Put(reinterpret_cast<void*>(p),0,u64{0});}
+
+LONG WINAPI Trap(EXCEPTION_POINTERS* ep){
+    auto* c=ep->ContextRecord;
+    if(ep->ExceptionRecord->ExceptionCode==EXCEPTION_SINGLE_STEP&&pending_rearm){
+        const u8 cc=0xcc;Install(pending_rearm,&cc,1);pending_rearm=0;c->EFlags&=~0x100u;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if(ep->ExceptionRecord->ExceptionCode!=EXCEPTION_BREAKPOINT)return EXCEPTION_CONTINUE_SEARCH;
+    const u64 at=reinterpret_cast<u64>(ep->ExceptionRecord->ExceptionAddress)-image_base;
+    if(at==0x1938f65){
+        ++load_hits;
+        GuestRegisterSnapshot r{c->Rsi,c->Rsp,c->R13};
+        TraceHostLoad(&r); // exact production TraceEntry branch, extracted per variant
+        const u8 original=0x41;Install(at,&original,1);pending_rearm=at;
+        c->Rip=image_base+at;c->EFlags|=0x100; // execute the original native mov
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if(at==MultiPlayerInsSetStateOffset){
+        ++native_set_hits;
+        const u8 original=0x55;Install(at,&original,1);pending_rearm=at;
+        c->Rip=image_base+at;c->EFlags|=0x100;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if(at==0x1ae78b0){
+        ++builder_hits;
+        GuestRegisterSnapshot r{c->Rsi,c->Rsp,c->R13};
+        last_caller=ReadValue<u64>(r.rsp,0)-image_base;last_producer=r.r13;
+        auth_reads=0;
+        BbscEventTextHook(0,&r); // real producer's CALL/RSI/R13/stack, not a made-up caller
+        last_message=static_cast<u32>(r.rsi);c->Rsi=r.rsi;c->Rip=image_base+at+1;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if(at==0x196bcfb){
+        // UI rendering is outside this test. Return through the producer's own
+        // epilogue AFTER its real message-builder CALL has returned.
+        c->Rip=image_base+0x196bac9;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void Check(std::string_view label,bool ok){
+    if(!ok){std::cerr<<"FAIL "<<label<<"\n";throw std::runtime_error(std::string(label));}
+    ++cases;std::cout<<"PASS "<<label<<"\n";
+}
+void Identity(void* p,size_t at,void* object){Put(p,at,reinterpret_cast<u64>(object));Put(p,at+8,reinterpret_cast<u64>(lock_vtable.data()));}
+void Actors(int count){Put(world_chr.data(),0x30,s32(count));Put(world_chr.data(),0x38,reinterpret_cast<u64>(actor_list.data()));}
+void Tasks(int count){Put(manager.data(),0x10,reinterpret_cast<u64>(task_list.data()));Put(manager.data(),0x18,reinterpret_cast<u64>(task_list.data()+count));}
+void Reset(){
+    world.fill(0);world2.fill(0);world_chr.fill(0);task1.fill(0);task2.fill(0);producer1.fill(0);producer2.fill(0);
+    actor1.fill(0);actor2.fill(0);stage1.fill(0);stage2.fill(0);local_slot.fill(0);slots.fill(0);manager.fill(0);
+    active_global=reinterpret_cast<u64>(world.data());denied_pointer=denied_size=0;
+    now=100000;session=3;hp=0;packed_map=0x19000000;bbsc_character_reload_generation=0;bbsc_active_save_generation=2;
+    auth={12,1,1,{{1,34,100,{},true},{3,36,103,{},true}}};auth.peers[0].npid[0]='H';auth.peers[1].npid[0]='C';
+    authenticated=true;change_at_lease=false;auth_reads=load_hits=builder_hits=native_set_hits=0;last_message=0;last_caller=last_producer=0;
+    BbscMod::private_auth=true;BbscMod::auth_context_ms=GetTickCount64();text_available=true;
+    bbsc_retained_join={};bbsc_v8_pending=false;bbsc_v8_original_swapped=false;bbsc_v8_ready_since_ms=0;bbsc_v8_saved_sign_type=0;
+    world[0x1592]=1;
+    Put(slots.data(),8,reinterpret_cast<u64>(local_slot.data()));Put(local_slot.data(),0xa4,s32{0});
+    Put(reinterpret_cast<void*>(image_base),0x5556678,active_global);
+    Put(reinterpret_cast<void*>(image_base),PlayerSlotManagerPointerOffset,reinterpret_cast<u64>(slots.data()));
+    Put(reinterpret_cast<void*>(image_base),CandidateLocalStatePointerOffset,reinterpret_cast<u64>(world_chr.data()));
+    Put(reinterpret_cast<void*>(image_base),MultiPlayManPointerOffset,reinterpret_cast<u64>(manager.data()));
+    Put(reinterpret_cast<void*>(image_base),0x553b188,reinterpret_cast<u64>(original_type.data()));Put(original_type.data(),4,s32{0});
+    Put(reinterpret_cast<void*>(image_base),0x5540408,reinterpret_cast<u64>(allocator.data()));
+    Put(reinterpret_cast<void*>(image_base),0x553e8c8,reinterpret_cast<u64>(stage_manager.data()));
+    Put(reinterpret_cast<void*>(image_base),0x553e8c0,reinterpret_cast<u64>(point_manager.data()));
+    Put(reinterpret_cast<void*>(image_base),0x553b0e0,reinterpret_cast<u64>(stage_manager.data()));
+    Put(reinterpret_cast<void*>(image_base),0x5540388,reinterpret_cast<u64>(render_manager.data()));
+    Put(allocator.data(),0,reinterpret_cast<u64>(alloc_vtable.data()));
+    Put(stage_manager.data(),0xc,s32{0});
+    task_list={reinterpret_cast<u64>(task1.data()),reinterpret_cast<u64>(task2.data())};Tasks(1);
+    for(auto p:{task1.data(),task2.data()}){Put(p,0x50,s32{6});Put(p,0x54,s32{6});Put(p,0xe8,s32{1});}
+    Identity(task1.data(),0xc8,id1.data());Identity(task2.data(),0xc8,id2.data());
+    Identity(producer1.data(),0xd8,id1.data());Identity(producer2.data(),0xd8,id2.data());
+    Identity(actor1.data(),0x3d8,id1.data());Identity(actor2.data(),0x3d8,id2.data());
+    for(auto p:{producer1.data(),producer2.data()}){Put(p,0xf8,s32{-1});p[0xfc]=7;p[0xfd]=1;}
+    Put(actor1.data(),0,reinterpret_cast<u64>(actor_vtable.data()));Put(actor2.data(),0,reinterpret_cast<u64>(actor_vtable.data()));
+    Put(actor_list.data(),0,reinterpret_cast<u64>(actor1.data()));Put(actor_list.data(),0x38,reinterpret_cast<u64>(actor2.data()));Actors(1);
+    for(auto p:{stage1.data(),stage2.data()}){
+        Put(p,0x28,reinterpret_cast<u64>(resources.data()));Put(p,0x58,packed_map);
+        Put(p,0xa4,s32{3});Put(p,0xa8,s32{2});Put(p,0xd0,s32{2502950});
+    }
+    Put(reinterpret_cast<void*>(image_base),0x553d750+7*0x80+0x34,u32{102001});
+    Put(reinterpret_cast<void*>(image_base),0x600,u64{0x700});Put(reinterpret_cast<void*>(image_base),0x700,u16{'C'});
+}
+void Arm(){ArmBbscReinsertV8();}
+void Load(u8* stage=nullptr){
+    if(!stage)stage=stage1.data();
+    now+=500;Actors(0);world[8]=1;
+    reinterpret_cast<void(PS4_SYSV_ABI*)(u64)>(image_base+0x1942100)(active_global);
+    reinterpret_cast<void(PS4_SYSV_ABI*)(void*)>(image_base+0x1938de0)(stage);
+    world[8]=0;
+}
+void Queue(){Actors(0);hp=100;now+=10000;TickBbscReinsertV8();now+=2500;TickBbscReinsertV8();}
+u32 Notice(u8* producer=nullptr){
+    if(!producer)producer=producer1.data();Actors(2);last_message=0;
+    reinterpret_cast<void(PS4_SYSV_ABI*)(void*)>(image_base+0x196ba20)(producer);
+    return last_message;
+}
+void InstallNative(){
+    Install(0x1938de0,NativeHostLoad,sizeof NativeHostLoad);Install(0x196ba20,NativeJoin,sizeof NativeJoin);
+    Install(MemberIdEqualsOffset,NativeMemberEquals,sizeof NativeMemberEquals);Install(0x1942216,NativeOwnRole,sizeof NativeOwnRole);
+    Install(MultiPlayerInsSetStateOffset,NativeSetState,sizeof NativeSetState);
+    const u8 ret=0xc3,cc=0xcc;Install(0x1942272,&ret,1);
+    // SysV adapter provides the original block's input RAX; native body unchanged.
+    u8 adapter[]{0x48,0x89,0xf8,0x49,0xbb,0,0,0,0,0,0,0,0,0x41,0xff,0xe3};
+    const u64 body=image_base+0x1942216;std::memcpy(adapter+5,&body,8);Install(0x1942100,adapter,sizeof adapter);
+    for(u64 off:{0xf7ebc0,0x19cef70,0x19ce980,0x19cf580,0x154bfb0,0x139ce90,0x14ccd40,0x1ae8680})Trampoline(off,reinterpret_cast<u64>(&Noop));
+    for(u64 off:{0xfe68f0,0x19cf6b0})Trampoline(off,reinterpret_cast<u64>(&Zero));
+    Trampoline(0x19c9c50,reinterpret_cast<u64>(&EmptyString));Trampoline(0x1f8d8a0,reinterpret_cast<u64>(&NullObject));
+    const u8 builder[]{0xcc,0xc3};Install(0x1ae78b0,builder,sizeof builder);
+    Install(0x1938f65,&cc,1);Install(0x196bcfb,&cc,1);Install(MultiPlayerInsSetStateOffset,&cc,1);
+    Put(reinterpret_cast<void*>(image_base),0x53e3be0,image_base+0x1000);
+    Put(lock_vtable.data(),0,reinterpret_cast<u64>(lock_vtable.data()));
+    Put(lock_vtable.data(),0x18,reinterpret_cast<u64>(&Noop));Put(lock_vtable.data(),0x28,reinterpret_cast<u64>(&Noop));
+    Put(id_vtable.data(),0x58,reinterpret_cast<u64>(&ObjectEquals));
+    Put(id1.data(),0,reinterpret_cast<u64>(id_vtable.data()));Put(id2.data(),0,reinterpret_cast<u64>(id_vtable.data()));
+    Put(id1.data(),8,u64{36});Put(id2.data(),8,u64{37});
+    Put(actor_vtable.data(),0x618,reinterpret_cast<u64>(&Yes));Put(alloc_vtable.data(),0x58,reinterpret_cast<u64>(&Zero));
+}
+enum class When {Capture,Witness,Queue,Consume};
+void Reject(std::string_view label,When when,const std::function<void()>& change){
+    Reset();if(when==When::Capture)change();Arm();
+    if(when==When::Witness)change();Load();
+    if(when==When::Queue)change();Queue();
+    if(when==When::Consume)change();
+    Check(label,Notice()==102001);
+}
+void Negatives(){
+    Reset();Arm();Queue();Check("in-place reinsert without native load rejected",Notice()==102001);
+    Reset();Arm();++bbsc_character_reload_generation;Queue();
+    Check("guest counter increment alone cannot grant host reload",Notice()==102001);
+    Reset();Load();Actors(1);Arm();Queue();Check("load before capture cannot be reused",Notice()==102001);
+    Reset();Arm();Put(stage1.data(),0x168,reinterpret_cast<u64>(resources.data()));
+    Load();Check("native resource wait never reaches witness",load_hits==0&&Get<s32>(stage1.data(),0xc)==0);
+    Queue();Check("alive tick after blocked native load cannot queue",Notice()==102001);
+    Reset();Arm();Load();Load();Queue();Check("second load same stage address invalidates capture",Notice()==102001);
+    Reset();Arm();Load();Queue();Load(stage2.data());Check("new load after queue invalidates consumption",Notice()==102001);
+    Reset();Arm();Load();Queue();Load();Check("reused native stage after queue invalidates consumption",Notice()==102001);
+    Reset();Arm();Load();Tasks(2);Queue();
+    Check("actual Tick restarts retained and new task",native_set_hits==2);
+    Check("new task queued by Tick keeps native join message",Notice(producer2.data())==102001);
+    Check("retained task alongside new task gets caught-up message",Notice()==15000012);
+    Reset();Tasks(2);Actors(2);auth.peers.push_back({4,37,104,{},true});Arm();Load();Queue();
+    Check("second retained member consumed independently",Notice(producer2.data())==15000012);
+    Check("first retained member consumed independently",Notice()==15000012);
+    Check("each retained member consumes only once",Notice()==102001&&Notice(producer2.data())==102001);
+    Reset();Arm();Load();Queue();now+=10000;Check("queue age inclusive ten-second boundary",Notice()==15000012);
+    Reset();Arm();Load();now=207500;Queue();Check("capture age inclusive 120-second boundary",now==220000&&Notice()==15000012);
+
+    const std::vector<std::pair<std::string,std::function<void()>>> context_changes={
+        {"room",[]{++auth.room;}},{"own",[]{++auth.own;}},{"owner",[]{++auth.owner;}},
+        {"peer-user",[]{++auth.peers[1].user;}},{"peer-member",[]{++auth.peers[1].member;}},
+        {"peer-joined",[]{++auth.peers[1].joined;}},{"peer-npid",[]{++auth.peers[1].npid[0];}},
+        {"peer-capability",[]{auth.peers[1].capable=false;}},{"roster-size",[]{auth.peers.pop_back();}},
+        {"roster-order",[]{std::swap(auth.peers[0],auth.peers[1]);}}
+    };
+    for(auto when:{When::Witness,When::Queue,When::Consume}){
+        const std::string phase=when==When::Witness?"witness":when==When::Queue?"queue":"consume";
+        for(auto& [name,change]:context_changes)Reject(phase+" exact signed context rejects "+name,when,change);
+        Reject(phase+" rejects changed role epoch",when,[]{++bbsc_active_save_generation;});
+        Reject(phase+" rejects changed global identity",when,[]{world2=world;active_global=reinterpret_cast<u64>(world2.data());});
+        Reject(phase+" rejects changed character reload epoch",when,[]{++bbsc_character_reload_generation;});
+        Reject(phase+" rejects lost signed context",when,[]{authenticated=false;});
+        Reject(phase+" rejects public mode",when,[]{BbscMod::private_auth=false;});
+        Reject(phase+" rejects expired signed context",when,[]{BbscMod::auth_context_ms=GetTickCount64()-1501;});
+        Reject(phase+" rejects missing context timestamp",when,[]{BbscMod::auth_context_ms=0;});
+        Reject(phase+" rejects non-host session",when,[]{session=6;});
+        Reject(phase+" rejects unreadable global",when,[]{denied_pointer=active_global;denied_size=world.size();});
+    }
+    // Native OwnWorldStep legitimately restores type and ownWorld before the
+    // witness. Type/ownWorld negatives are applied AFTER it for Queue/Consume.
+    for(auto when:{When::Queue,When::Consume}){
+        const std::string phase=when==When::Queue?"queue":"consume";
+        Reject(phase+" rejects guest role",when,[]{Put(local_slot.data(),0xa4,s32{1});});
+        Reject(phase+" rejects not-own-world",when,[]{world[0x1592]=0;});
+        Reject(phase+" rejects different loaded map",when,[]{packed_map=0x18000000;});
+        Reject(phase+" rejects removed insert task",when,[]{Tasks(0);});
+        Reject(phase+" rejects reused task with different member",when,[]{Identity(task1.data(),0xc8,id2.data());});
+        Reject(phase+" rejects invalid member lock",when,[]{Put(task1.data(),0xd0,u64{0});});
+    }
+    Reject("capture rejects no existing actor",When::Capture,[]{Actors(0);});
+    Reject("capture rejects task not inserted",When::Capture,[]{Put(task1.data(),0x50,s32{4});});
+    Reject("capture rejects non-coop task",When::Capture,[]{Put(task1.data(),0xe8,s32{3});});
+    Reject("capture rejects zero role epoch",When::Capture,[]{bbsc_active_save_generation=0;});
+    Reject("capture rejects guest identity",When::Capture,[]{Put(local_slot.data(),0xa4,s32{1});});
+    Reject("capture rejects zero map",When::Capture,[]{packed_map=0;});
+    Reject("witness rejects different native map",When::Witness,[]{Put(stage1.data(),0x58,u32{0x18000000});});
+    Reject("witness rejects travel type",When::Witness,[]{Put(stage1.data(),0xa4,s32{5});});
+    Reject("witness rejects wrong subtype",When::Witness,[]{Put(stage1.data(),0xa8,s32{1});});
+    Reject("witness rejects negative point",When::Witness,[]{Put(stage1.data(),0xd0,s32{-1});});
+    Reject("witness rejects unreadable stage task",When::Witness,[]{denied_pointer=reinterpret_cast<u64>(stage1.data());denied_size=stage1.size();});
+    Reject("witness rejects capture timeout",When::Witness,[]{now+=120001;});
+    Reject("witness rejects clock before capture",When::Witness,[]{now-=501;});
+    Reject("queue rejects capture timeout",When::Queue,[]{now+=120001;});
+    Reject("queue rejects clock before capture",When::Queue,[]{now=80000;});
+    Reject("queue rejects clock before native witness",When::Queue,[]{now=88000-1;});
+    Reject("consume rejects capture timeout",When::Consume,[]{now+=120001;});
+    Reject("consume rejects queue timeout",When::Consume,[]{now+=10001;});
+    Reject("consume rejects clock before queue",When::Consume,[]{--now;});
+    Reject("consume rejects missing replacement text",When::Consume,[]{text_available=false;});
+    Reject("consume rejects empty replacement text",When::Consume,[]{Put(reinterpret_cast<void*>(image_base),0x700,u16{0});});
+    // A corrupt member cannot safely enter the native producer: native code
+    // dereferences its lock first. Test this production guard directly instead.
+    Reset();Arm();Load();Queue();Put(producer1.data(),0xe0,u64{0});
+    GuestRegisterSnapshot invalid_member{102001,0,reinterpret_cast<u64>(producer1.data())};
+    Check("consume guard rejects invalid producer member",!ConsumeBbscRetainedJoinLine(invalid_member.r13,&invalid_member,15000012)&&invalid_member.rsi==102001);
+    Reset();Arm();Load();Queue();
+    const auto queued=bbsc_retained_join.members[0].queued;
+    change_at_lease=true;Check("context change at final production lease rejects write",Notice()==102001);
+    Check("failed lease does not consume",!bbsc_retained_join.members[0].consumed&&bbsc_retained_join.members[0].queued==queued);
+    change_at_lease=false;--auth.room;Check("retry after refused lease consumes exactly once",Notice()==15000012&&Notice()==102001);
+    Reset();Arm();++auth.peers[1].joined;Load();--auth.peers[1].joined;Queue();
+    Check("context restored after invalid witness does not resurrect capture",Notice()==102001);
+    Reset();Arm();Load();hp=100;Actors(1);now+=10000;TickBbscReinsertV8();now+=2500;TickBbscReinsertV8();
+    Check("existing remote actor prevents actual Tick queue",native_set_hits==0&&Notice()==102001);
+    Reset();Arm();Load();Actors(0);hp=0;now+=10000;TickBbscReinsertV8();now+=2500;TickBbscReinsertV8();
+    Check("dead host prevents actual Tick queue",native_set_hits==0&&Notice()==102001);
+    Reset();Arm();Load();Actors(0);hp=100;world[8]=1;now+=10000;TickBbscReinsertV8();now+=2500;TickBbscReinsertV8();
+    Check("active load request prevents actual Tick queue",native_set_hits==0&&Notice()==102001);
+    Reset();Arm();Load();Actors(0);hp=100;now+=10000;TickBbscReinsertV8();now+=2499;TickBbscReinsertV8();
+    Check("native ready settle interval preserved",native_set_hits==0&&Notice()==102001);
+    Reset();Arm();Load();Queue();Arm();Check("new Arm cannot reuse previously queued witness",Notice()==102001);
+    Reset();Arm();Load();Queue();Identity(task1.data(),0xc8,id2.data());
+    Check("new producer cannot consume reused task",Notice(producer2.data())==102001);
+    Reset();Arm();Load();Queue();
+    Check("unretained producer cannot spend retained receipt",Notice(producer2.data())==102001&&!bbsc_retained_join.members[0].consumed&&Notice()==15000012);
+    Reset();Arm();Load();Queue();const u8 saved=ReadValue<u8>(image_base+0x196ba34,0),bad=0x90;
+    Install(0x196ba34,&bad,1);
+    // Do not execute corrupt code; check the production pin guard separately.
+    Check("native layout guard rejects changed owner pin",!BbscRetainedJoinLayoutMatches());Install(0x196ba34,&saved,1);
+    Check("native code restored after pin negative",Notice()==15000012);
+}
+int main(int argc,char** argv){try{
+    SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
+    std::cout.setf(std::ios::unitbuf);std::cerr.setf(std::ios::unitbuf);
+    image_base=reinterpret_cast<u64>(VirtualAlloc(nullptr,0x5600000,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    if(!image_base)throw std::runtime_error("image allocation");
+    InstallNative();auto handler=AddVectoredExceptionHandler(1,&Trap);if(!handler)throw std::runtime_error("VEH");
+    Reset();Arm();
+    Check("production Arm captured existing inserted member",bbsc_retained_join.members[0].task==reinterpret_cast<u64>(task1.data())&&bbsc_retained_join.role==2);
+    Check("native producer/code pins match",BbscRetainedJoinLayoutMatches());
+    std::cout<<"TRACE capture guestReload="<<bbsc_character_reload_generation.load()<<" role="<<BbscLoadProtectionRoleEpoch()<<" nativeCurrent="<<Get<s32>(task1.data(),0x50)<<"\n";
+    Load();Check("native host load reached actual trace hook and advanced native task",load_hits==1&&Get<s32>(stage1.data(),0xc)==1);
+    Check("host path has NO guest ReloadFinish increment",bbsc_character_reload_generation.load()==0);
+    Queue();Check("production Tick invoked native SetState FirstSyncWait",native_set_hits==1&&Get<s32>(task1.data(),0x54)==4);
+    const u32 result=Notice();
+    Check("actual native producer delivered caller and member owner",builder_hits==1&&last_caller==0x196bcfb&&last_producer==reinterpret_cast<u64>(producer1.data()));
+    std::cout<<"TRACE HOST reload guestReload="<<bbsc_character_reload_generation.load()<<" queue="<<bbsc_retained_join.members[0].queued<<" caller=0x"<<std::hex<<last_caller<<std::dec<<" expected=15000012 actual="<<result<<"\n";
+    Check("HOST reload retained notice with guest ReloadFinish absent",result==15000012);
+    Check("single consume keeps subsequent native join ID",Notice()==102001);
+    Check("new member preserves native join ID",Notice(producer2.data())==102001);
+    Check("role table remains unchanged",Get<u32>(reinterpret_cast<void*>(image_base),0x553d750+7*0x80+0x34)==102001);
+    if(argc>1&&std::string_view(argv[1])=="--first"){RemoveVectoredExceptionHandler(handler);return 0;}
+    Negatives();
+    std::cout<<"TOTAL PASS "<<cases<<"\n";
+    RemoveVectoredExceptionHandler(handler);VirtualFree(reinterpret_cast<void*>(image_base),0,MEM_RELEASE);return 0;
+}catch(const std::exception& e){std::cerr<<"FIRSTFAIL "<<e.what()<<"\n";return 23;}}

@@ -10,9 +10,15 @@ $cmake = Join-Path $Toolchain 'bin\cmake.exe'
 if ($LASTEXITCODE) { throw 'Seamless-only summon polling checks failed.' }
 & $python ./prepare-sources.py
 if ($LASTEXITCODE) { throw 'Source preparation failed.' }
+& $python ../recipe/security.py --shadnet ./src
+if ($LASTEXITCODE) { throw 'Server security patch failed.' }
+& $python ../recipe/relay_auth.py --shadnet ./src
+if ($LASTEXITCODE) { throw 'Server relay authentication patch failed.' }
+& $python -B -m unittest discover -s ../tests -p 'test_*.py' -v
+if ($LASTEXITCODE) { throw 'Offline server and account helper regressions failed.' }
 & $cmake -S ./src -B ./build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_PREFIX_PATH=$($Toolchain.Replace('\','/'))" -DBUILD_TESTING=ON "-DFETCHCONTENT_SOURCE_DIR_ABSL=$($PSScriptRoot.Replace('\','/'))/src/externals/abseil-cpp" -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DABSL_PROPAGATE_CXX_STD=ON
 if ($LASTEXITCODE) { throw 'CMake configure failed.' }
-& $cmake --build ./build --target shadnet shadnet-sample shadnet-admin test_bloodborne_summon_broker --parallel 6
+& $cmake --build ./build --target shadnet shadnet-sample shadnet-admin test_bloodborne_summon_broker test_server_security test_relay_auth relay_auth_integration --parallel 6
 if ($LASTEXITCODE) { throw 'Native build failed.' }
 & (Join-Path $Toolchain 'bin\ctest.exe') --test-dir ./build --output-on-failure
 if ($LASTEXITCODE) { throw 'Upstream tests failed.' }

@@ -19,9 +19,27 @@ RUNTIME = ROOT / "runtime" / "bin"
 PORTS = {"bbsc": (31413, 31414, 31415)}
 
 
+def ensure_not_updating():
+    roots = [ROOT]
+    if ROOT.name.casefold() == "server":
+        roots.append(ROOT.parent)
+    for root in roots:
+        if (root / ".update-transaction.json").exists():
+            raise RuntimeError(f"更新事务未完成，请保留 {root / 'update-backups'} 并核对恢复记录后再启动。")
+        lock = root / ".update.lock"
+        if lock.exists():
+            # .NET's FileShare.None lock is enforced by the Windows open call.
+            try:
+                with lock.open("rb"):
+                    pass
+            except OSError:
+                raise RuntimeError("此目录正在更新，请等待更新助手完成后再启动。") from None
+
+
 @contextmanager
 def mode_lock(mode):
     """Serialize service lifetime with offline account maintenance in this folder."""
+    ensure_not_updating()
     import msvcrt
     if mode not in PORTS:
         raise ValueError("无效服务模式。")
@@ -139,7 +157,7 @@ def _start(mode):
         launch([str(RUNTIME / "python.exe"), "-B", "-u",
                 str(ROOT / "bbsc-game" / "bbsc_gameserver.py"), "--host", address,
                 "--advertise", address, "--shadnet", address, "--shadnet-webapi",
-                f"http://{address}:{web}", "--port", "20443", "--relay-port", "20444",
+                f"http://{address}:{web}", "--port", "20443", "--relay-port", "0",
                 "--no-bbhost", "--no-playlog", "--summon-interval", "2",
                 "--log-dir", str(logs),
                 "--data", str(ROOT / mode / "online-data.json")], "gameserver")
@@ -187,22 +205,30 @@ def account(mode):
     password = getpass.getpass("密码：")
     if not password or password != getpass.getpass("重复密码："):
         raise ValueError("两次密码不同，或密码为空。")
-    for action, values, marker in (
-        ("register", [name, password, email, general["RegistrationSecretKey"]],
-         "[create] Account created successfully."),
-        ("login", [name, password], "[login] OK userId="),
+    for action, values in (
+        ("register", dict(name=name, password=password, email=email, key=general["RegistrationSecretKey"])),
+        ("login", dict(name=name, password=password)),
     ):
-        result = subprocess.run([str(RUNTIME / "shadnet-sample.exe"), address,
-                                 general["UnsecuredPort"], action, *values],
-                                env=environment(), capture_output=True, timeout=25,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-        if result.returncode or marker.encode() not in result.stdout:
-            reason = re.search(rb"\[(?:create|login)\] FAILED: (\w+)", result.stdout)
-            raise RuntimeError(f"{action} 失败：" + (reason.group(1).decode() if reason else "先启动对应服务并检查日志"))
+        try:
+            result = subprocess.run([str(RUNTIME / "shadnet-admin.exe"), address,
+                                     general["UnsecuredPort"], action],
+                                    input=json.dumps(values, ensure_ascii=True).encode("ascii") + b"\n",
+                                    env=environment(), capture_output=True, timeout=25,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            raise RuntimeError("账号命令未完成，请检查 stdin 账号助手和服务状态；注册可能已生效，请先核对账号列表。") from None
+        try:
+            rows = result.stdout.decode("utf-8", errors="replace").splitlines()
+            response = json.loads(next((row for row in reversed(rows) if row.startswith('{"ok":')), '{}'))
+        except (ValueError, TypeError):
+            response = {}
+        if result.returncode or not isinstance(response, dict) or response.get("ok") is not True:
+            raise RuntimeError("账号操作未得到成功确认，请核对账号列表和服务状态，勿重复注册。")
     print(f"{mode} 账号 {name} 已创建并通过登录验证。")
 
 
 def main():
+    ensure_not_updating()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("start", "account", "configure"), nargs="?")
     parser.add_argument("mode", choices=PORTS, nargs="?", default="bbsc")
@@ -229,6 +255,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except subprocess.SubprocessError:
+        print("操作失败：后台命令未完成，请检查服务状态和日志。", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError, RuntimeError) as error:
         print(f"操作失败：{error}", file=sys.stderr)
         sys.exit(1)

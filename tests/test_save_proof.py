@@ -13,10 +13,10 @@ import save_proof
 
 class SaveProofTests(RecoveryTests):
     # Only new tests are enumerated by this module's explicit suite below.
-    def setup_proof(self):
+    def setup_proof(self, *, still_running=False):
         self.request()
         self.exited()
-        wr.finalize(self.root, self.token)
+        self.finalize()
         self.token2 = wr.begin(self.root)['THEHUNT_WORLD_RECOVERY_TOKEN']
         self.request2 = wr.read_request(self.root,self.path)
         self.value = wr.prepare(self.request2)
@@ -42,6 +42,8 @@ class SaveProofTests(RecoveryTests):
             path.write_bytes(self.raw)
             os.utime(path,ns=((now+2)*1000000,(now+2)*1000000))
         self.current = {name:(self.saves/name).read_bytes() for name in self.value['files']}
+        if not still_running:
+            wr.process_exited(self.root, self.token2, 0)
 
     def write_receipt(self, records):
         (self.proof/'native.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records))
@@ -116,6 +118,23 @@ class SaveProofTests(RecoveryTests):
     def test_proof_failed_run_rejected(self):
         self.setup_proof();wr.process_exited(self.root,self.token2,3);self.assertIsNone(self.verify())
 
+    def test_proof_missing_exit_only_accepted_for_currently_supervised_run(self):
+        self.setup_proof(still_running=True)
+        self.assertIsNone(self.verify())
+        wr.poll(self.root, self.token)  # The old run cannot vouch for the new one.
+        self.assertTrue(self.journal.with_suffix('.bin.awaiting-save').exists())
+        wr._next_poll.clear()
+        wr.poll(self.root, self.token2)
+        self.assertTrue(self.journal.with_suffix('.bin.restored').exists())
+
+    def test_proof_malformed_jsonl_and_boolean_numbers_are_rejected(self):
+        self.setup_proof()
+        (self.proof/'native.jsonl').write_bytes(b'{"stage":\n{}\n')
+        self.assertIsNone(self.verify())
+        self.loaded['sequence'] = True
+        self.write_receipt([self.loaded, self.entry])
+        self.assertIsNone(self.verify())
+
     def test_proof_tampered_input_rejected(self):
         self.setup_proof(); (self.proof/'input-save.bin').write_bytes(self.raw)
         with self.assertRaises(ValueError): self.verify()
@@ -126,8 +145,11 @@ class SaveProofTests(RecoveryTests):
 
     def test_proof_does_not_prepare_from_unverified_primary(self):
         self.setup_proof()
-        token=wr.begin(self.root)['THEHUNT_WORLD_RECOVERY_TOKEN']
-        self.assertFalse((self.folder/'save-proof'/token).exists())
+        wr.process_exited(self.root, self.token2, 3)
+        existing = set((self.folder/'runs').glob('*.json'))
+        with self.assertRaisesRegex(ValueError, '无法确认主存档已恢复'):
+            wr.begin(self.root)
+        self.assertEqual(set((self.folder/'runs').glob('*.json')), existing)
 
 
 def load_tests(loader, tests, pattern):

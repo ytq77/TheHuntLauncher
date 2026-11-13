@@ -14,20 +14,27 @@ def install_package(archive, destination, version, check_public):
         if not entries or source.testzip() is not None:
             raise ValueError('Invalid server archive.')
         prefix = entries[0].filename.split('/')[0] + '/'
+        check_public([prefix.rstrip('/')])
         files = {}
+        seen = set()
         for item in entries:
             if not item.filename.startswith(prefix):
                 raise ValueError('Server package has multiple roots.')
             name = item.filename[len(prefix):]
             check_public([name, 'server/' + name])
-            if name.casefold() in {key.casefold() for key in files} or (item.external_attr >> 16) & 0o170000 == 0o120000:
+            if name.casefold() in seen or (item.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ValueError('Duplicate or symbolic-link server file.')
-            if name.startswith('normal/'):
+            if name.casefold().startswith('normal/'):
                 raise ValueError('Obsolete normal mode in server package.')
+            seen.add(name.casefold())
             files[name] = item
+        for name in files:
+            if any(parent.as_posix().casefold() in seen for parent in Path(name).parents if parent != Path('.')):
+                raise ValueError('Server archive file conflicts with a directory.')
         required = {'Server.exe', 'server.json', 'BUILD-INFO.json', 'bbsc/shadnet.exe',
                     'runtime/bin/python.exe', 'runtime/bin/shadnet-admin.exe',
-                    'bbsc-game/bbsc_gameserver.py', 'Apply-Update.ps1'}
+                    'bbsc-game/bbsc_gameserver.py', 'Apply-Update.ps1',
+                    'README.md', 'docs/deployment.md', 'docs/windows.md', 'recipe/sources.json'}
         if not required <= files.keys():
             raise ValueError('Incomplete server package.')
         info = json.loads(source.read(files['BUILD-INFO.json']))

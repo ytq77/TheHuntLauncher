@@ -45,7 +45,7 @@ services:
       - --port
       - '20443'
       - --relay-port
-      - '20444'
+      - '0'
       - --no-bbhost
       - --no-playlog
       - --summon-interval
