@@ -112,7 +112,7 @@ public sealed class DesktopWindow
         AsyncClick("Launch",Launch);
         AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
-        Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://github.com/ytq77/TheHuntLauncher#快速开始") {UseShellExecute=true}); });
+        Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
         Click("OpenLogs",delegate { OpenFolder(Directory.Exists(PathAt(@"data\user")) ? PathAt(@"data\user"):root); });
         Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有导入备份。首次替换现有无缝存档时会自动创建。"; });
         AsyncClick("RefreshSaves",delegate { return Transfer(false); });
