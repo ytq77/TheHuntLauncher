@@ -125,7 +125,29 @@ def _prune(root):
         folder = current['_folder']
         if folder.resolve().parent != base or current['fingerprint'] != row['fingerprint']:
             raise ValueError('旧备份在清理前发生变化，已停止清理。')
-        shutil.rmtree(folder)
+        hidden = transfer.plain_path(base/('.prune-' + uuid.uuid4().hex + '.tmp'))
+        if hidden.exists():
+            raise ValueError('旧备份清理临时目录冲突，已停止清理。')
+        folder.rename(hidden)  # Never expose a partially deleted backup in the selectable list.
+        if transfer.plain_path(hidden).resolve().parent != base:
+            raise ValueError('旧备份清理路径变化，已停止清理。')
+        shutil.rmtree(hidden)
+
+
+def _prune_after_success(root, result):
+    try:
+        _prune(root)
+    except (OSError, ValueError) as error:
+        result['message'] += (' 旧备份清理未完成，不影响本次操作；未清理完的文件保留在 '
+                              f'save-backups 的原目录或 .prune-* 临时目录中：{error}')
+    return result
+
+
+def _restore_auxiliary(root):
+    try:
+        return transfer.import_auxiliary_snapshot(root)
+    except ValueError as error:
+        raise ValueError(str(error).replace('导入', '恢复')) from error
 
 
 def _no_conversion(root):
@@ -149,6 +171,9 @@ def launch_backup(root):
     saves = transfer.plain_path(root/'data/user/savedata')
     try:
         with transfer.installation_guard(root):
+            if transfer.plain_path(root/'.save-import.lock').exists():
+                raise ValueError('存档导入或恢复尚未完成，请先在存档页处理对应记录。')
+            _no_conversion(root)
             # run_session checks require_stopped before calling us, including the skip path.
             if not saves.exists():
                 return {'created': False, 'message': '启动备份已跳过：存档目录不存在。'}
@@ -156,28 +181,25 @@ def launch_backup(root):
             if not original[1]:
                 return {'created': False, 'message': '启动备份已跳过：存档目录为空。'}
             transfer.require_stopped('启动备份')
-            _no_conversion(root)
-            with transfer.import_lock(root):
-                rows, warnings = _list(root)
-                if rows and not warnings and rows[0]['_inventory'] == _inventory(original):
-                    return {'created': False, 'message': '启动备份已跳过：与最近一份备份内容完全相同。'}
-                created = datetime.now().astimezone()
-                name = 'launch-' + created.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
-                base = transfer.plain_path(root/'save-backups')
-                base.mkdir(exist_ok=True)
-                stage = base/('.launch-' + uuid.uuid4().hex + '.tmp')
-                stage.mkdir()
-                transfer.copy_verified(saves, stage/'savedata', original)
-                _write_json(stage/'backup.json', _metadata('launch', created.isoformat(), _inventory(original)))
-                transfer.require_stopped('启动备份')
-                if transfer.snapshot(saves) != original or not _matches(stage/'savedata', _inventory(original)):
-                    raise ValueError('复制期间存档或备份发生变化。')
-                final = transfer.plain_path(base/name)
-                stage.rename(final)
-                _backup(root, name)
-                _prune(root)
-                return {'created': True, 'backup': str(final),
-                        'message': f'启动备份已校验：{name}（{len(original[1])} 个文件）。'}
+            rows, warnings = _list(root)
+            if rows and not warnings and rows[0]['_inventory'] == _inventory(original):
+                return {'created': False, 'message': '启动备份已跳过：与最近一份备份内容完全相同。'}
+            created = datetime.now().astimezone()
+            name = 'launch-' + created.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
+            base = transfer.plain_path(root/'save-backups')
+            base.mkdir(exist_ok=True)
+            stage = base/('.launch-' + uuid.uuid4().hex + '.tmp')
+            stage.mkdir()
+            transfer.copy_verified(saves, stage/'savedata', original)
+            _write_json(stage/'backup.json', _metadata('launch', created.isoformat(), _inventory(original)))
+            transfer.require_stopped('启动备份')
+            if transfer.snapshot(saves) != original or not _matches(stage/'savedata', _inventory(original)):
+                raise ValueError('复制期间存档或备份发生变化。')
+            final = transfer.plain_path(base/name)
+            stage.rename(final)
+            _backup(root, name)
+            return _prune_after_success(root, {'created': True, 'backup': str(final),
+                'message': f'启动备份已校验：{name}（{len(original[1])} 个文件）。'})
     except (OSError, ValueError) as error:
         raise ValueError(f'启动前备份失败，游戏未启动：{error}') from error
 
@@ -220,12 +242,23 @@ def _intent(root):
     if selected.parent != root/'save-backups' or not NAME.fullmatch(selected.name):
         raise ValueError('恢复来源不属于本安装备份，已停止处理。')
     transfer.plain_path(selected)
-    if (parent/'install.json').exists():
-        published, _ = _json(parent/'install.json')
-        if any(published.get(key) != item for key, item in value.items() if key != 'state'):
-            raise ValueError('恢复锁与意图文件不一致，已保留现场。')
+    manifest_error = None
+    manifest = transfer.plain_path(parent/'install.json')
+    if manifest.exists():
+        try:
+            published, _ = _json(manifest)
+        except (OSError, ValueError) as error:
+            manifest_error = error
+        else:
+            if any(published.get(key) != item for key, item in value.items() if key != 'state'):
+                raise ValueError('恢复锁与意图文件不一致，已保留现场。')
     dest, stage, backup = (paths[key] for key in ('destination', 'stage', 'backup'))
     old_live = _matches(dest, value['original']) if dest.exists() else False
+    if manifest_error is not None:
+        # A torn duplicate manifest may only authorize cancelling an untouched original.
+        if old_live and not backup.exists():
+            return value, raw, 'cancel'
+        raise ValueError('恢复意图文件不可读，且不能证明原存档未移动；已保留现场。') from manifest_error
     installed = _matches(dest, value['expected']) if dest.exists() else False
     old_saved = _matches(backup, value['original']) if backup.exists() else False
     staged = _matches(stage, value['expected']) if stage.exists() else False
@@ -283,10 +316,13 @@ def restore(root, name, fingerprint, *, confirmed=False):
         raise ValueError('请先确认恢复；当前存档会先自动备份。')
     with transfer.installation_guard(root):
         _restore_ready(root)
+        auxiliary = _restore_auxiliary(root)
         chosen = _backup(root, name)
         if chosen['fingerprint'] != fingerprint:
             raise ValueError('所选备份记录已改变，请刷新列表后重新确认。')
         dest = transfer.plain_path(root/'data/user/savedata')
+        if not dest.is_dir():
+            raise ValueError('当前无缝版 savedata 存档目录不存在或不是目录，未恢复；请保留备份和现有文件。')
         original = transfer.snapshot(dest)
         token = uuid.uuid4().hex
         created = datetime.now().astimezone()
@@ -300,6 +336,8 @@ def restore(root, name, fingerprint, *, confirmed=False):
         with transfer.import_lock(root, intent=intent) as descriptor:
             transfer.copy_verified(chosen['_folder']/'savedata', stage, chosen['_snapshot'])
             _restore_ready(root, own_import_lock=True)
+            if _restore_auxiliary(root) != auxiliary:
+                raise ValueError('复制期间联机辅助记录发生变化，未替换存档。')
             if transfer.snapshot(dest) != original:
                 raise ValueError('复制期间当前存档发生变化，未替换。')
             parent.mkdir(parents=True)
@@ -310,11 +348,7 @@ def restore(root, name, fingerprint, *, confirmed=False):
                 raise transfer.ImportRecoveryError(
                     f'存档恢复未完成，已阻止启动。恢复前存档：{parent/"savedata"}；'
                     f'原位置：{dest}。请在存档页处理未完成恢复。原因：{error}') from error
-        try:
-            _prune(root)
-        except (OSError, ValueError) as error:
-            result['message'] += f' 旧备份清理未完成，额外备份已保留：{error}'
-        return result
+        return _prune_after_success(root, result)
 
 
 def resume(root, fingerprint, *, confirmed=False):
@@ -326,16 +360,14 @@ def resume(root, fingerprint, *, confirmed=False):
         intent, raw, action = _intent(root)
         if hashlib.sha256(raw).hexdigest() != fingerprint:
             raise ValueError('恢复记录已改变，请刷新状态后重新确认。')
+        if action in ('finish', 'complete'):
+            _restore_auxiliary(root)
         result = _finish(root, intent, action)
         lock = transfer.plain_path(root/'.save-import.lock')
         if lock.read_bytes() != raw:
             raise ValueError('恢复锁在处理期间发生变化，已保留启动拦截。')
         lock.unlink()
-        try:
-            _prune(root)
-        except (OSError, ValueError) as error:
-            result['message'] += f' 旧备份清理未完成，额外备份已保留：{error}'
-        return result
+        return _prune_after_success(root, result)
 
 
 def overview(root):
@@ -348,6 +380,8 @@ def overview(root):
             with transfer.installation_guard(root):
                 _restore_ready(root, own_import_lock=True)
                 intent, raw, action = _intent(root)
+                if action in ('finish', 'complete'):
+                    _restore_auxiliary(root)
                 pending.update(can_resume=True, fingerprint=hashlib.sha256(raw).hexdigest(), action=action,
                                message=(('继续完成上次恢复' if action in ('finish', 'complete') else '取消上次恢复，保持或找回原存档') +
                                         f'。原存档位置：{intent["destination"]}；恢复前备份位置：{intent["backup"]}。'))
