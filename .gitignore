@@ -34,3 +34,5 @@ update-settings.json
 /.update-transaction.json
 /save-conversion-backups/
 /.savedata-conversion-*/
+/.save-transfer.guard
+/.savedata-restore-*/

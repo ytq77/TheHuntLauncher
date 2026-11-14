@@ -64,13 +64,13 @@ function Safe-Relative([string]$name) {
         'conversion-jobs','update-backups','world-recovery','save-proof','home-save-proof','diagnostics',
         'guest-items','own-world','shared-progress','__pycache__','.git','.build','shadnet-state','game-state','backups')
     $privateFiles = @('shadnet.cfg','.server.lock','profile.json','account.clixml','settings-snapshot.json',
-        'launcher-state.json','last-exit.json','save-transfer-result.json','.save-import.lock',
+        'launcher-state.json','last-exit.json','save-transfer-result.json','.save-import.lock','.save-transfer.guard',
         'bbport.ini','input.ini','mods.json','patches.json','.env','features.json','server-admin.json',
         'conversion-current.json','.save-conversion.lock','.save-conversion-pending.json',
         'update-settings.json','desktop-settings.json','.update.lock','.update-transaction.json',
         'insight-fix.json','online-data.json')
     foreach ($part in $name.Split('/')) {
-        if ($part -in $privateParts -or $part -match '^\.savedata-(import|conversion)-') { throw 'Private state found in update package' }
+        if ($part -in $privateParts -or $part -match '^\.savedata-(import|restore|conversion)-') { throw 'Private state found in update package' }
         if ($part -in @('.env.example','shadnet.cfg.example')) { continue }
         foreach ($private in $privateFiles) {
             if ($part -ieq $private -or $part.StartsWith($private+'.',[StringComparison]::OrdinalIgnoreCase)) { throw 'Private configuration found in update package' }

@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import subprocess
+import threading
 import uuid
 import offline_aux
 import offline_save
@@ -20,6 +21,7 @@ import trophy_sync
 ROOT = Path(__file__).resolve().parent
 REPARSE_POINT = 0x400
 AUXILIARY = ('own-world', 'guest-items', 'shared-progress')
+_guard_state = threading.local()
 
 
 class ImportRecoveryError(ValueError):
@@ -88,13 +90,87 @@ def game_running():
     return any(row and row[0].casefold() == "bb-probe.exe" for row in rows)
 
 
-def require_stopped():
+def require_stopped(action='导入'):
     try:
         running = game_running()
     except (OSError, subprocess.SubprocessError):
-        raise ValueError("无法确认游戏是否已退出，已停止导入。") from None
+        raise ValueError(f"无法确认游戏是否已退出，已停止{action}。") from None
     if running:
-        raise ValueError("检测到游戏仍在运行，请正常退出普通版和无缝版后再导入。")
+        raise ValueError(f"检测到游戏仍在运行，请正常退出普通版和无缝版后再{action}。")
+
+
+@contextmanager
+def installation_guard(root=None):
+    """Serialize this installation's sessions/transfers, not other installations."""
+    root = plain_path(ROOT if root is None else Path(root)).resolve()
+    key = os.path.normcase(str(root))
+    held = getattr(_guard_state, 'held', None)
+    if held is None:
+        held = _guard_state.held = set()
+    if key in held:
+        yield
+        return
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        name = 'Local\\TheHuntSaveTransfer-' + hashlib.sha256(key.encode('utf-8')).hexdigest()
+        handle = kernel.CreateMutexW(None, False, name)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        result = kernel.WaitForSingleObject(handle, 0)
+        if result not in (0, 0x80):
+            kernel.CloseHandle(handle)
+            raise ValueError('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。')
+        def close():
+            try:
+                kernel.ReleaseMutex(handle)
+            finally:
+                kernel.CloseHandle(handle)
+    else:
+        import fcntl
+        descriptor = os.open(plain_path(root/'.save-transfer.guard'), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(descriptor)
+            raise ValueError('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。') from None
+        def close():
+            os.close(descriptor)
+    held.add(key)
+    try:
+        yield
+    finally:
+        held.remove(key)
+        close()
+
+
+def write_lock_intent(descriptor, payload):
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    remaining = memoryview(payload)
+    while remaining:
+        count = os.write(descriptor, remaining)
+        if count <= 0:
+            raise OSError('无法写入存档事务记录。')
+        remaining = remaining[count:]
+    os.ftruncate(descriptor, len(payload))
+    os.fsync(descriptor)
+
+
+def publish_intent(descriptor, folder, intent):
+    """Persist the exact recovery locations before the first live-save rename."""
+    payload = json.dumps(intent, ensure_ascii=False, indent=2).encode('utf-8')
+    with plain_path(folder/'install.json').open('xb') as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    write_lock_intent(descriptor, payload)
 
 
 def source_path(install):
@@ -220,7 +296,7 @@ def inspect(install):
 
 
 @contextmanager
-def import_lock(root=None):
+def _import_lock(root=None, *, intent=None):
     path = plain_path((ROOT if root is None else Path(root)) / ".save-import.lock")
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o600)
@@ -228,8 +304,9 @@ def import_lock(root=None):
         raise ValueError("已有存档导入操作或遗留导入锁，请确认没有导入任务后再处理。") from None
     recovery_required = False
     try:
-        os.write(descriptor, str(os.getpid()).encode("ascii"))
-        os.fsync(descriptor)
+        payload = (json.dumps(intent, ensure_ascii=False, indent=2).encode('utf-8')
+                   if intent is not None else str(os.getpid()).encode('ascii'))
+        write_lock_intent(descriptor, payload)
         yield descriptor
     except (ImportRecoveryError, KeyboardInterrupt, SystemExit):
         recovery_required = True
@@ -238,6 +315,13 @@ def import_lock(root=None):
         os.close(descriptor)
         if not recovery_required:
             path.unlink()
+
+
+@contextmanager
+def import_lock(root=None, *, intent=None):
+    with installation_guard(root):
+        with _import_lock(root, intent=intent) as descriptor:
+            yield descriptor
 
 
 def apply(install, expected_source=None):
@@ -279,15 +363,7 @@ def apply(install, expected_source=None):
         }
         # Publish the full intent before the first rename. If the worker stops
         # abruptly, the existing startup blocker now points to exact backups.
-        payload = json.dumps(intent, ensure_ascii=False, indent=2).encode('utf-8')
-        with (backup_parent/'install.json').open('xb') as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        os.write(descriptor, payload)
-        os.ftruncate(descriptor, len(payload))
-        os.fsync(descriptor)
+        publish_intent(descriptor, backup_parent, intent)
         try:
             if old_destination is not None:
                 backup = backup_parent / 'savedata'

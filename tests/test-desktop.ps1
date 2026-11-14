@@ -102,9 +102,22 @@ try {
     $controls['scale_boss_hp'].Text='301'; $rejected=$false
     try { Invoke-Private $desktop 'SaveFeatures' } catch { $rejected=$true }
     Assert ($rejected -and [IO.File]::ReadAllText((Join-Path $fixture 'features.json')) -ceq $before) 'Invalid feature value was written'
+    $backupParser=New-Object Web.Script.Serialization.JavaScriptSerializer
+    $backupView=$backupParser.DeserializeObject('{"backups":[{"id":"launch-20261115-010203-abcdef12","kind":"launch","time":"2026-11-15T01:02:03+08:00","file_count":2,"total_bytes":4096,"fingerprint":"fixture"}],"warnings":[],"pending":null}')
+    Invoke-Private $desktop 'ShowSaveBackups' @($backupView); Invoke-Private $desktop 'SetBusy'
+    Assert ($window.FindName('SaveBackupsPanel') -is [Windows.Controls.Border]) 'Save backup block is not independently movable'
+    Assert ($window.FindName('SaveBackupList').Items.Count -eq 1) 'Backup list did not render the real view model'
+    Assert ($window.FindName('SaveBackupList').SelectedItem.Content -like ('*2*'+(4096).ToString('N0')+'*')) 'Backup list omitted file count or size'
+    Assert ($window.FindName('RestoreSaveBackup').IsEnabled) 'A verified backup cannot be selected for restore'
+    $backupView['pending']=$backupParser.DeserializeObject('{"can_resume":false,"message":"fixture unknown transaction"}')
+    Invoke-Private $desktop 'ShowSaveBackups' @($backupView); Invoke-Private $desktop 'SetBusy'
+    Assert (-not $window.FindName('RestoreSaveBackup').IsEnabled -and -not $window.FindName('ResumeSaveRestore').IsEnabled) 'Unknown transaction allowed a destructive action'
+    $backupView['pending']=$backupParser.DeserializeObject('{"can_resume":true,"message":"fixture verified transaction","fingerprint":"fixture"}')
+    Invoke-Private $desktop 'ShowSaveBackups' @($backupView); Invoke-Private $desktop 'SetBusy'
+    Assert ($window.FindName('ResumeSaveRestore').IsEnabled -and -not $window.FindName('RestoreSaveBackup').IsEnabled) 'Verified interrupted restore guard is incorrect'
     $desktop.GetType().GetField('operation',$flags).SetValue($desktop,$true)
     Invoke-Private $desktop 'SetBusy'
-    foreach($name in @('Launch','SaveSettings','RefreshSaves','ImportSaves','UseLocalServer','SaveFeatures','AdminCreate','ConversionStartReplace','PublicVerify','PublicForget')) { Assert (-not $window.FindName($name).IsEnabled) ('Busy gate failed: '+$name) }
+    foreach($name in @('Launch','SaveSettings','RefreshSaves','ImportSaves','UseLocalServer','SaveFeatures','AdminCreate','ConversionStartReplace','PublicVerify','PublicForget','SaveBackupList','RefreshSaveBackups','RestoreSaveBackup','ResumeSaveRestore')) { Assert (-not $window.FindName($name).IsEnabled) ('Busy gate failed: '+$name) }
     Assert (-not $desktop.CanUpdate()) 'Updates permitted during operation'
     $closing=New-Object ComponentModel.CancelEventArgs
     # Closing is tested through the actual event while a task is active.

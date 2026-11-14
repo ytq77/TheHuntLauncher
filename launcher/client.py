@@ -13,6 +13,7 @@ import threading
 import uuid
 import time
 import world_recovery
+import save_backups
 import trophy_sync
 import relay_auth
 from trophy_notices import TrophyNotices
@@ -21,7 +22,8 @@ from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
 from save_transfer import (copy_verified, import_lock, import_auxiliary_snapshot,
-                           require_stopped, snapshot, content_inventory, source_path, validate_savedata)
+                           require_stopped, snapshot, content_inventory, source_path, validate_savedata,
+                           installation_guard)
 
 ROOT = Path(__file__).resolve().parent
 EBOOT_SHA256 = "d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9"
@@ -304,7 +306,8 @@ def main():
     if (ROOT / ".save-conversion.lock").exists():
         raise ValueError("转换测试尚未结束，请先在存档页处理测试状态。")
     if (ROOT / ".save-import.lock").exists():
-        raise ValueError("存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。")
+        raise ValueError(save_backups.interrupted_message(ROOT) or
+                         "存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。")
     for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
                          ("NOTICE.txt", "github.com/Classmg22/BBSC"),
                          ("SUPPORTERS.txt", "BBSC SUPPORTERS")):
@@ -334,22 +337,26 @@ def main():
 
 
 def run_session(profile, name, password, bridge, public_events=None):
-    prepare(profile)
-    if public_events is not None:
-        public_events.flush()  # data/ exists now; write the startup connection record.
-    if bridge and not bridge.account.wait_connected(30):
-        raise ValueError('初始化期间公共账号连接已断开，请重新启动。')
-    recovery_env = world_recovery.begin(ROOT)
-    token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
-    try:
-        seal = world_recovery.quit_seal(token)
-    except OSError:
-        # The first mapping attempt may fail transiently. Never launch without it.
-        seal = world_recovery.quit_seal(token)
-    try:
-        return run_game(profile, name, password, bridge, recovery_env, seal)
-    finally:
-        best_effort('quit mapping close', seal.close)
+    with installation_guard(ROOT):
+        prepare(profile)
+        if public_events is not None:
+            public_events.flush()  # data/ exists now; write the startup connection record.
+        if bridge and not bridge.account.wait_connected(30):
+            raise ValueError('初始化期间公共账号连接已断开，请重新启动。')
+        require_stopped('启动备份')
+        backup = save_backups.launch_backup(ROOT)
+        state('preparing', backup['message'])
+        recovery_env = world_recovery.begin(ROOT)
+        token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
+        try:
+            seal = world_recovery.quit_seal(token)
+        except OSError:
+            # The first mapping attempt may fail transiently. Never launch without it.
+            seal = world_recovery.quit_seal(token)
+        try:
+            return run_game(profile, name, password, bridge, recovery_env, seal)
+        finally:
+            best_effort('quit mapping close', seal.close)
 
 
 def run_game(profile, name, password, bridge, recovery_env, seal):

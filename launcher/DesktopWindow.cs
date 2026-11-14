@@ -32,7 +32,7 @@ public sealed class DesktopWindow
     readonly Dictionary<string,string> conversions = new Dictionary<string,string> {
         {"ConversionNew","create"},{"ConversionBaseline","baseline"},{"ConversionInspect","inspect"},{"ConversionConvert","convert"},
         {"ConversionVerify","verify"},{"ConversionExport","export"},{"ConversionStartExport","start-export"},{"ConversionStartReplace","start-replace"}};
-    Dictionary<string,object> catalog, savedFeatures, inspection, conversionJob;
+    Dictionary<string,object> catalog, savedFeatures, inspection, conversionJob, pendingSaveRestore;
     Process worker;
     bool operation, featuresDirty, closed;
     Task<bool> trophyRead;
@@ -85,7 +85,7 @@ public sealed class DesktopWindow
         if(File.Exists(PathAt("BUILD-INFO.json"))) version=Str(ReadJson(PathAt("BUILD-INFO.json")),"version");
         foreach(string n in new [] {"Home","Settings","Feature","Server","Save","Trophy"}) {
             string page=n;
-            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Trophy") await RefreshTrophies(); };
+            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
         }
         Click("HomeTrophies",delegate { Page("Trophy"); RefreshInBackground(); });
         AsyncClick("RefreshTrophies",async delegate { await RefreshTrophies(); });
@@ -114,7 +114,11 @@ public sealed class DesktopWindow
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
         Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
         Click("OpenLogs",delegate { OpenFolder(Directory.Exists(PathAt(@"data\user")) ? PathAt(@"data\user"):root); });
-        Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有导入备份。首次替换现有无缝存档时会自动创建。"; });
+        Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有存档备份。启动前备份、恢复前备份和导入备份都保存在此目录。"; });
+        AsyncClick("RefreshSaveBackups",RefreshSaveBackups);
+        AsyncClick("RestoreSaveBackup",RestoreSaveBackup);
+        AsyncClick("ResumeSaveRestore",ResumeSaveRestore);
+        Get<ComboBox>("SaveBackupList").SelectionChanged+=delegate { SetBusy(); };
         AsyncClick("RefreshSaves",delegate { return Transfer(false); });
         AsyncClick("ImportSaves",async delegate {
             if(inspection==null) throw new InvalidOperationException("请先读取普通版存档信息。");
@@ -233,6 +237,10 @@ public sealed class DesktopWindow
     void SetBusy() {
         foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
+        Get<Button>("RefreshSaveBackups").IsEnabled=!Busy;
+        Get<ComboBox>("SaveBackupList").IsEnabled=!Busy;
+        Get<Button>("RestoreSaveBackup").IsEnabled=!Busy && pendingSaveRestore==null && Get<ComboBox>("SaveBackupList").SelectedItem!=null;
+        Get<Button>("ResumeSaveRestore").IsEnabled=!Busy && Flag(pendingSaveRestore,"can_resume");
         Get<Button>("CopyWorldRecoveryEvidence").IsEnabled=!Busy && !String.IsNullOrEmpty(recoveryDigest);
         foreach(var p in conversions) Get<Button>(p.Key).IsEnabled=!Busy && (p.Value=="create" || p.Value.StartsWith("start-") || Str(conversionJob,"next")==p.Value);
         foreach(string n in new [] {"ConversionSameRole","ConversionClearSlots","ConversionConfirmed"}) Get<CheckBox>(n).IsEnabled=!Busy;
@@ -311,7 +319,11 @@ public sealed class DesktopWindow
     async Task Launch() {
         RequireIdle();
         if(featuresDirty) { Page("Feature"); throw new InvalidOperationException("请先保存功能页中的变更，再启动游戏。"); }
-        foreach(string n in new [] {".save-conversion.lock",".save-import.lock"}) if(File.Exists(PathAt(n))) throw new InvalidOperationException("存档操作正在进行或上次未完整结束，请先检查存档页和备份。");
+        if(File.Exists(PathAt(".save-import.lock"))) {
+            Page("Save"); await RefreshSaveBackups();
+            throw new InvalidOperationException(Str(pendingSaveRestore,"message").Length>0 ? Str(pendingSaveRestore,"message"):"存档导入或恢复尚未结束，请保留备份并处理存档页记录。");
+        }
+        foreach(string n in new [] {".save-conversion.lock",".save-conversion-pending.json"}) if(File.Exists(PathAt(n))) throw new InvalidOperationException("存档转换正在进行或上次未完整结束，请先检查转换页和备份。");
         SaveProfile(); operation=true; SetBusy(); Exception failure=null;
         try {
             bool fresh=await RefreshTrophies(true); trophies.Begin(fresh); DrawTrophies();
@@ -412,6 +424,58 @@ public sealed class DesktopWindow
             }
             if(changed) RefreshInBackground();
         } catch(IOException) {} catch(ArgumentException) {} catch(KeyNotFoundException) {} catch(InvalidCastException) {} catch(FormatException) {}
+    }
+    void ShowSaveBackups(Dictionary<string,object> result) {
+        var list=Get<ComboBox>("SaveBackupList"); string selected="";
+        var previous=list.SelectedItem as ComboBoxItem;
+        if(previous!=null) selected=Str(previous.Tag as Dictionary<string,object>,"id");
+        list.Items.Clear();
+        foreach(Dictionary<string,object> row in (System.Collections.IEnumerable)result["backups"]) {
+            DateTimeOffset time; string stamp=Str(row,"time");
+            if(DateTimeOffset.TryParse(stamp,out time)) stamp=time.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+            var item=new ComboBoxItem { Content=stamp+" · "+(Str(row,"kind")=="pre-restore"?"恢复前":"启动前")+" · "+Str(row,"file_count")+" 个文件 · "+Convert.ToInt64(row["total_bytes"]).ToString("N0")+" 字节", Tag=row };
+            list.Items.Add(item); if(Str(row,"id")==selected) list.SelectedItem=item;
+        }
+        if(list.SelectedIndex<0 && list.Items.Count>0) list.SelectedIndex=0;
+        pendingSaveRestore=result["pending"] as Dictionary<string,object>;
+        var warnings=((System.Collections.IEnumerable)result["warnings"]).Cast<object>().Select(x=>Convert.ToString(x)).ToArray();
+        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有启动/恢复前备份。存档非空时，启动游戏前会自动创建。":"已校验 "+list.Items.Count+" 份备份；只替换 savedata，不修改奖杯或联机辅助记录。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
+        Get<TextBlock>("PendingSaveRestore").Text=Str(pendingSaveRestore,"message");
+    }
+    async Task RefreshSaveBackups() {
+        RequireIdle(); operation=true; SetBusy(); Get<TextBlock>("SaveBackupStatus").Text="正在读取并校验备份…";
+        try { ShowSaveBackups(await Request("save_backups.py",Map("action","list"),"")); }
+        catch(Exception e) { Get<TextBlock>("SaveBackupStatus").Text=e.Message; throw; }
+        finally { operation=false; SetBusy(); }
+    }
+    async Task RestoreSaveBackup() {
+        RequireIdle(); var selected=Get<ComboBox>("SaveBackupList").SelectedItem as ComboBoxItem;
+        if(selected==null) throw new InvalidOperationException("请先选择已校验的备份。");
+        var row=selected.Tag as Dictionary<string,object>;
+        if(!Confirm("恢复到："+Convert.ToString(selected.Content)+"\n\n当前存档会先自动备份。只恢复无缝版 savedata；奖杯和联机辅助记录不变。\n\n确认恢复？","恢复存档")) return;
+        await ApplySaveBackup(Map("action","restore","id",Str(row,"id"),"fingerprint",Str(row,"fingerprint"),"confirmed",true));
+    }
+    async Task ResumeSaveRestore() {
+        RequireIdle(); if(!Flag(pendingSaveRestore,"can_resume")) throw new InvalidOperationException("这不是可安全处理的恢复事务，请保留现场。");
+        if(!Confirm(Str(pendingSaveRestore,"message")+"\n\n只处理这次已验证的恢复事务；未知状态不会覆盖进度。确认继续？","处理未完成恢复")) return;
+        await ApplySaveBackup(Map("action","resume","fingerprint",Str(pendingSaveRestore,"fingerprint"),"confirmed",true));
+    }
+    async Task ApplySaveBackup(Dictionary<string,object> request) {
+        operation=true; SetBusy(); Get<TextBlock>("SaveBackupStatus").Text="正在校验并处理存档恢复，请等待完成…";
+        Dictionary<string,object> completed=null; Exception failure=null;
+        try {
+            try {
+                completed=await Request("save_backups.py",request,"");
+                ShowSaveBackups(await Request("save_backups.py",Map("action","list"),""));
+                Get<TextBlock>("SaveBackupStatus").Text=Str(completed,"message")+"\n"+Get<TextBlock>("SaveBackupStatus").Text;
+                return;
+            } catch(Exception e) { failure=e; }
+            string message=failure.Message;
+            if(completed!=null) message=Str(completed,"message")+"\n备份列表刷新失败："+message;
+            else { try { ShowSaveBackups(await Request("save_backups.py",Map("action","list"),"")); } catch(Exception refresh) { message+="\n备份状态读取失败："+refresh.Message; } }
+            Get<TextBlock>("SaveBackupStatus").Text=message; throw new InvalidOperationException(message,failure);
+        }
+        finally { operation=false; SetBusy(); }
     }
     async Task Transfer(bool apply) {
         RequireIdle(); if(!File.Exists(Text("InstallPath"))) throw new InvalidOperationException("请先选择普通版 Bloodborne.exe。");
@@ -591,6 +655,8 @@ public sealed class DesktopWindow
     }
     public void Validate(string capture,string page) {
         foreach(string n in conversions.Keys) Get<Button>(n);
+        Get<Border>("SaveBackupsPanel"); Get<ComboBox>("SaveBackupList");
+        foreach(string n in new [] {"RefreshSaveBackups","RestoreSaveBackup","ResumeSaveRestore"}) Get<Button>(n);
         foreach(string n in new [] {"Launch","SaveSettings","RefreshSaves","ImportSaves","OpenLocalServer","UseLocalServer","AdminRefresh","AdminCreate","AdminVerify","SaveFeatures","HomeTrophies","RefreshTrophies"}) Get<Button>(n);
         Page(page); if(page=="Feature") expanders[0].IsExpanded=true;
         if(String.IsNullOrEmpty(capture)) return;

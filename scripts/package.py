@@ -18,7 +18,7 @@ DIAGNOSTIC_TOOLS = ("launcher/support/Collect-TheHunt-Diagnostics.cmd",
 PRIVATE_PARTS = {".private", "data", "user", "logs", "captures", "save-backups", "save-conversion-backups", "conversion-jobs", "update-backups", "world-recovery", "save-proof", "home-save-proof", "diagnostics", "guest-items", "own-world", "shared-progress", "__pycache__", ".git",
                  ".build", "shadnet-state", "game-state", "backups"}
 PRIVATE_FILES = {"shadnet.cfg", ".server.lock","profile.json", "account.clixml", "settings-snapshot.json", "launcher-state.json",
-                 "last-exit.json", "save-transfer-result.json", ".save-import.lock",
+                 "last-exit.json", "save-transfer-result.json", ".save-import.lock", ".save-transfer.guard",
                  "bbport.ini", "input.ini", "mods.json", "patches.json", ".env", "features.json", "server-admin.json",
                  "conversion-current.json", ".save-conversion.lock", ".save-conversion-pending.json",
                  "update-settings.json", "desktop-settings.json", ".update.lock", ".update-transaction.json",
@@ -36,7 +36,7 @@ def private_path(name, *, source_tree=False):
     if any(part.startswith("summon-record-") for part in parts):
         return True
     if set(parts) & excluded or any(
-            part.startswith((".savedata-import-", ".savedata-conversion-",
+            part.startswith((".savedata-import-", ".savedata-restore-", ".savedata-conversion-",
                              "thehunt-diagnostics-", "thehunt-evidence-")) for part in parts):
         return True
     if re.search(r"(?:^|/)(?:normal|bbsc)/db(?:/|$)", name, re.IGNORECASE):
