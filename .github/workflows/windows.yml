@@ -154,7 +154,7 @@ jobs:
           python scripts/prepare_kit_initialization.py .build/bbsc
           python scripts/prepare_game_hardening.py .build/bbsc
           python scripts/prepare_save_hardening.py .build/bbsc
-          python tests/test_relay_auth_native.py --source .build/bbsc --skip-known-preview22-fixture
+          python tests/test_relay_auth_native.py --source .build/bbsc
           python scripts/prepare_relay_auth.py .build/bbsc
           python tests/test_relay_runner_privacy.py
           python tests/test_quit_text_compat.py

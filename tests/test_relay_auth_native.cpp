@@ -281,7 +281,7 @@ static int wire_driver(const char* host, const char* port) {
     if (inet_pton(AF_INET,host,&address.sin_addr)!=1 || connect(s,reinterpret_cast<sockaddr*>(&address),sizeof(address))) return 11;
     DWORD timeout=300;setsockopt(s,SOL_SOCKET,SO_SNDTIMEO,reinterpret_cast<const char*>(&timeout),sizeof(timeout));
     Bytes frame,proof;const auto deadline=GetTickCount64()+5000;
-    if (!AuthFrame(s,frame,deadline) || !auth_client.Begin(own_id,auth_token,frame,proof) ||
+    if (!AuthFrame(s,frame,deadline) || !auth_client.Begin(own_id,auth_token,frame,proof,true) ||
         !AuthWrite(s,proof) || !AuthFrame(s,frame,deadline) || !auth_client.Ack(frame)) return 12;
     std::cout << "ACK\n" << std::flush;
     std::string command;

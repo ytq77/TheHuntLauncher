@@ -6,7 +6,6 @@ The input tree must already have game/save hardening, before relay-auth prep.
 import argparse
 import hashlib
 import hmac
-import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
@@ -43,6 +42,17 @@ def send(connection, payload):
     for at in range(0, len(raw), 3): connection.sendall(raw[at:at+3])
 
 
+def context4(seq, room, own=17, owner=18):
+    """Independent THX4 roster bytes matching the current authenticated wire."""
+    ids = (own, owner) if room else ()
+    raw = b'THX4' + struct.pack('<QQIIBB', seq, room, own, owner if room else 0,
+                                len(ids)-1 if ids else 0, len(ids))
+    for member, user in enumerate(ids, 1):
+        raw += struct.pack('<IHQB16s', user, member, 100+member, 1,
+                           ('fixture'+str(user)).encode('ascii'))
+    return raw
+
+
 class NativeWireTests(unittest.TestCase):
     def setUp(self):
         if not EXE.is_file() or not HTTP_EXE.is_file() or not (EXE.parent/'relay-auth-wire.dll').is_file():
@@ -60,13 +70,13 @@ class NativeWireTests(unittest.TestCase):
                     connection.settimeout(5)
                     send(connection,b'THC2'+nonce)
                     proof = receive(connection)
-                    expected = b'THA2'+uid+hmac.digest(token,b'TheHunt relay auth v2\0'+nonce+uid,'sha256')
+                    expected = b'THA4'+uid+hmac.digest(token,b'TheHunt relay auth v4 bidirectional visibility\0'+nonce+uid,'sha256')
                     if proof != expected: raise AssertionError('proof or domain mismatch')
-                    ack = sign(b'THO2'+uid)
+                    ack = sign(b'THO4'+uid)
                     if bad_ack: ack = ack[:-1]+bytes([ack[-1]^1])
                     send(connection,ack)
                     if bad_ack: return
-                    send(connection,sign(b'THX2'+struct.pack('<QQIIB',1,9,17,18,1)))
+                    send(connection,sign(context4(1,9)))
                     outgoing = receive(connection)
                     if not hmac.compare_digest(outgoing[-32:],hmac.digest(key,outgoing[:-32],'sha256')):
                         raise AssertionError('client data MAC mismatch')
@@ -74,8 +84,8 @@ class NativeWireTests(unittest.TestCase):
                     if outgoing[:-32] != expected: raise AssertionError('business payload changed')
                     observed.append(outgoing[:12])
                     send(connection,sign(b'THS2'+struct.pack('<QQII',2,9,18,18)+b'SHAD\x27'+struct.pack('<i',100)))
-                    send(connection,sign(b'THX2'+struct.pack('<QQIIB',3,0,17,0,0)))
-                    tampered = bytearray(sign(b'THX2'+struct.pack('<QQIIB',4,99,17,18,1)))
+                    send(connection,sign(context4(3,0)))
+                    tampered = bytearray(sign(context4(4,99)))
                     tampered[12] ^= 1; send(connection,tampered)
             except BaseException as error: errors.append(error)
         thread=threading.Thread(target=server,daemon=True);thread.start()
@@ -115,14 +125,14 @@ class NativeWireTests(unittest.TestCase):
         placement=b'1,18000000,43110000,c2e80000,42800000,c016cbe4,-241109'
         with NativeClient(EXE.parent/'relay-auth-wire.dll') as client:
             self.assertEqual(client.begin(17,token,b'THC2'+nonce),
-                b'THA2'+identity+hmac.digest(token,b'TheHunt relay auth v2\0'+nonce+identity,'sha256'))
-            client.ack(sign(b'THO2'+identity))
-            self.assertEqual(client.receive(sign(b'THX2'+struct.pack('<QQIIB',1,0,17,0,0)))[0],1)
+                b'THA4'+identity+hmac.digest(token,b'TheHunt relay auth v4 bidirectional visibility\0'+nonce+identity,'sha256'))
+            client.ack(sign(b'THO4'+identity))
+            self.assertEqual(client.receive(sign(context4(1,0)))[0],1)
             self.assertEqual(client.receive(pending(2,5,10000,placement))[0],3)
             self.assertEqual(client.receive(pending(3,6,10000,placement))[0],3)
             self.assertEqual(client.receive(pending(4,5,0))[0],4) # Old cancel consumes seq, leaves newer hint.
             self.assertEqual(client.receive(pending(5,6,0))[0],3)
-            self.assertEqual(client.receive(sign(b'THX2'+struct.pack('<QQIIB',6,9,17,18,1)))[0],1)
+            self.assertEqual(client.receive(sign(context4(6,9)))[0],1)
             inner=b'SHAD\x23'+struct.pack('<IBI',17,0,1)
             frame=client.send(inner)
             self.assertEqual(frame[:12],b'THD2'+struct.pack('<Q',1))
@@ -234,12 +244,13 @@ def compile_native(source, output, compiler):
     global EXE, HTTP_EXE
     source=source.resolve();output=output.resolve();output.mkdir(parents=True,exist_ok=True)
     target=output/'emulator'
-    for name in ('mod/bbsc_relay.cpp','mod/bbsc_http.cpp','src/core/bloodborne_re_zh_cn.cpp'):
+    for name in ('mod/bbsc_relay.cpp','mod/bbsc_http.cpp','mod/bbsc_channel.cpp',
+                 'mod/bbsc_mod_zh_cn.cpp','src/core/bloodborne_re_zh_cn.cpp'):
         destination=target/name;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(source/'emulator'/name,destination)
     prepare.prepare(output)
     flags=['-std=c++23','-O2','-g','-fms-extensions','-DNOMINMAX','-DWIN32_LEAN_AND_MEAN',
-           '-D_CRT_SECURE_NO_WARNINGS','-DBBSC_MOD','-DFMT_HEADER_ONLY',
+           '-D_CRT_SECURE_NO_WARNINGS','-DBBSC_MOD','-DFMT_HEADER_ONLY','-DBBSC_J4_DIAG_DISABLED',
            '-I'+str(source/'emulator/mod/shim'),'-I'+str(source/'emulator/src'),
            '-I'+str(source/'emulator/src/core'),'-I'+str(ROOT/'.build/bbport/gpu/third_party/xbyak')]
     for name, obj in (('mod/bbsc_relay.cpp','relay.o'),('mod/bbsc_http.cpp','http.o'),('src/core/bloodborne_re_zh_cn.cpp','core.o')):
@@ -265,15 +276,6 @@ if __name__ == '__main__':
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--output',type=Path,default=ROOT/'.build/relay-auth-client')
     parser.add_argument('--compiler',default='clang++')
-    parser.add_argument('--skip-known-preview22-fixture', action='store_true',
-                        help='preview.22 only: explicitly skip four stale native wire fixture tests')
     args=parser.parse_args()
-    if args.skip_known_preview22_fixture:
-        if json.loads((ROOT/'upstream.lock.json').read_text('utf-8'))['version'] != '0.1.0-preview.22':
-            parser.error('The known fixture skip is limited to preview.22; remove or re-evaluate it.')
-        NativeWireTests.__unittest_skip__ = True
-        NativeWireTests.__unittest_skip_why__ = ('preview.22 known test limitation: missing channel fixture inputs '
-                                               'and stale THA2 peer expectations; not product validation')
-    else:
-        compile_native(args.source,args.output,args.compiler)
+    compile_native(args.source,args.output,args.compiler)
     unittest.main(argv=[sys.argv[0]],verbosity=2)

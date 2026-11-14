@@ -34,7 +34,7 @@ __declspec(dllexport) int th_client_begin(void* handle,std::uint64_t user,
        !Input(challenge,challenge_size) || !Output(output,capacity))return -1;
     Bytes proof;
     if(!static_cast<Client*>(handle)->Begin(static_cast<std::uint32_t>(user),{token,token_size},
-                                           {challenge,challenge_size},proof))return -1;
+                                           {challenge,challenge_size},proof,true))return -1;
     return Copy(proof,output);
 }
 __declspec(dllexport) int th_client_ack(void* handle,const std::uint8_t* frame,std::size_t size){
