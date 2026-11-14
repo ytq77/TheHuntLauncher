@@ -484,8 +484,8 @@ class Account:
 
     @property
     def legacy_user(self):
-        # Deliberately distinct from private NP u32 IDs, valid JSON integer.
-        return 7000000000 + self.user
+        # Distinct from the small disposable NP IDs, within native u32 selector bounds.
+        return 3000000000 + self.user
 
 
 def follow(sequence=1):
