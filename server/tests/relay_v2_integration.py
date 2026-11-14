@@ -46,7 +46,7 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 
-AUTH_DOMAIN = b"TheHunt relay auth v2\0"
+AUTH_DOMAIN = b"TheHunt relay auth v4 bidirectional visibility\0"
 KEY_DOMAIN = b"TheHunt relay key v2\0"
 MAX_FRAME = 65536
 NP_HEADER = struct.Struct("<BHIQ")
@@ -246,7 +246,7 @@ def framed(payload):
 def auth_payload(user, token, nonce):
     identity = struct.pack("<Q", user)
     suffix = nonce + identity
-    return (b"THA2" + identity + mac(token, AUTH_DOMAIN + suffix),
+    return (b"THA4" + identity + mac(token, AUTH_DOMAIN + suffix),
             mac(token, KEY_DOMAIN + suffix))
 
 
@@ -362,7 +362,7 @@ class Relay:
             proof = native_proof
         self.write(proof, split=split)
         ack = self.read(self.timeout)
-        require(len(ack) == 44 and ack[:12] == b"THO2" + struct.pack("<Q", account.user),
+        require(len(ack) == 44 and ack[:12] == b"THO4" + struct.pack("<Q", account.user),
                 "invalid relay acknowledgement identity")
         require(hmac.compare_digest(ack[12:], mac(key, ack[:12])), "relay acknowledgement MAC failed")
         if getattr(self, "native", None):
@@ -371,7 +371,7 @@ class Relay:
 
     def accept(self, payload):
         decoded = self.native.invoke("receive", payload) if getattr(self, "native", None) else None
-        require(len(payload) >= 44 and payload[:4] in (b"THX2", b"THS2", b"THP2"),
+        require(len(payload) >= 44 and payload[:4] in (b"THX4", b"THS2", b"THP2"),
                 "unexpected relay server control/data")
         require(hmac.compare_digest(payload[-32:], mac(self.key, payload[:-32])),
                 "relay server MAC failed")
@@ -414,14 +414,30 @@ class Relay:
                     placement[field] == self.pending_placement[field] for field in ("generation", "room", "host", "target")):
                 self.pending_placement = None
             self.placements.append(placement)
-        elif payload[:4] == b"THX2":
-            require(len(payload) == 61, "invalid signed context size")
+        elif payload[:4] == b"THX4":
+            require(len(payload) >= 62, "invalid signed v4 context size")
+            count = payload[29]
+            require(count <= 16 and len(payload) == 62 + 31 * count,
+                    "invalid signed v4 roster size")
             if decoded:
                 require(decoded == (1, payload[12:29]), "native C++ context decode mismatch")
             body = decoded[1] if decoded else payload[12:29]
             room, user, owner, peers = struct.unpack("<QIIB", body)
             require(user == self.user and ((room == 0 and owner == 0 and peers == 0)
                                           or (room > 0 and owner > 0)), "invalid signed context identity")
+            users, members, names = set(), set(), set()
+            for index in range(count):
+                uid, member, joined, visible, raw_name = struct.unpack_from("<IHQB16s", payload, 30 + 31 * index)
+                name = raw_name.split(b"\0", 1)[0]
+                require(uid > 0 and member > 0 and joined > 0 and visible <= 1 and name and
+                        all(0x21 <= byte <= 0x7e for byte in name) and
+                        raw_name[len(name):] == bytes(16 - len(name)), "invalid signed v4 roster member")
+                require(uid not in users and member not in members and raw_name not in names,
+                        "duplicate signed v4 roster identity")
+                users.add(uid); members.add(member); names.add(raw_name)
+            require((room == 0 and count == 0) or
+                    (room > 0 and count == peers + 1 and self.user in users),
+                    "signed v4 roster disagrees with context")
             self.room, self.owner, self.peers = room, owner, peers
             self.contexts += 1
             if room:
@@ -1143,7 +1159,7 @@ class Suite:
         for inner in attacks:
             self.rejected_packet(guest, guest.relay.packet(inner))
             self.replace_relay(guest)
-        control = signed(guest.relay.key, b"THX2", 1,
+        control = signed(guest.relay.key, b"THX4", 1,
                          struct.pack("<QIIB", room_a, guest.user, guest.user, 2))
         self.rejected_packet(guest, control)
         self.replace_relay(guest)
@@ -1301,6 +1317,22 @@ def registration_key(args):
 class PacketTests(unittest.TestCase):
     """Offline codec/framing checks; these never claim native integration."""
     @staticmethod
+    def context_frame(key, sequence, core):
+        # Synthetic v4 roster for codec tests only, never injected into live rooms.
+        room, user, owner, peers = struct.unpack("<QIIB", core)
+        users = [] if not room else [user]
+        if room and peers and owner != user:
+            users.append(owner)
+        candidate = 1
+        while room and len(users) < peers + 1:
+            if candidate not in users:
+                users.append(candidate)
+            candidate += 1
+        roster = b"".join(struct.pack("<IHQB16s", uid, index + 1, index + 1, 1,
+                                     str(uid).encode("ascii")) for index, uid in enumerate(users))
+        return signed(key, b"THX4", sequence, core + bytes([len(users)]) + roster)
+
+    @staticmethod
     def pending_peer():
         relay = Relay.__new__(Relay)
         relay.key, relay.user, relay.incoming = b"synthetic", 9, 0
@@ -1340,9 +1372,9 @@ class PacketTests(unittest.TestCase):
         # Independent RFC 4231 HMAC-SHA256 vector, plus exact NUL domain lengths.
         self.assertEqual(mac(b"\x0b" * 20, b"Hi There").hex(),
                          "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
-        self.assertEqual((len(AUTH_DOMAIN), len(KEY_DOMAIN)), (22, 21))
+        self.assertEqual((len(AUTH_DOMAIN), len(KEY_DOMAIN)), (47, 21))
         proof, key = auth_payload(0x12345678, b"synthetic", bytes(32))
-        self.assertEqual(proof[:12], b"THA2\x78\x56\x34\x12\0\0\0\0")
+        self.assertEqual(proof[:12], b"THA4\x78\x56\x34\x12\0\0\0\0")
         self.assertEqual(len(proof), 44)
         self.assertNotEqual(proof[-32:], key)
 
@@ -1350,7 +1382,7 @@ class PacketTests(unittest.TestCase):
         relay = Relay.__new__(Relay)
         relay.key, relay.user, relay.incoming = b"synthetic", 9, 0
         relay.contexts, relay.data = 0, []
-        context = signed(relay.key, b"THX2", 1, struct.pack("<QIIB", 123, 9, 7, 1))
+        context = self.context_frame(relay.key, 1, struct.pack("<QIIB", 123, 9, 7, 1))
         relay.accept(context)
         self.assertEqual((relay.room, relay.owner, relay.peers), (123, 7, 1))
         data = signed(relay.key, b"THS2", 2, struct.pack("<QII", 123, 7, 7) + follow())
@@ -1362,7 +1394,7 @@ class PacketTests(unittest.TestCase):
         wrong_room = signed(relay.key, b"THS2", 3, struct.pack("<QII", 124, 7, 7) + follow())
         with self.assertRaises(Failure):
             relay.accept(wrong_room)
-        relay.accept(signed(relay.key, b"THX2", 4, struct.pack("<QIIB", 0, 9, 0, 0)))
+        relay.accept(self.context_frame(relay.key, 4, struct.pack("<QIIB", 0, 9, 0, 0)))
         self.assertEqual((relay.room, relay.owner, relay.peers), (0, 0, 0))
 
     def test_native_np_framing_notifications_and_eof(self):
@@ -1395,7 +1427,7 @@ class PacketTests(unittest.TestCase):
             relay.challenge()
         account = Account("offlinefixture")
         account.user, account.token = 9, b"synthetic"
-        replies = iter([b"THC2" + bytes(32), b"THO2" + struct.pack("<Q", 9) + bytes(32)])
+        replies = iter([b"THC2" + bytes(32), b"THO4" + struct.pack("<Q", 9) + bytes(32)])
         relay.read = lambda _: next(replies)
         relay.write = lambda *_, **__: None
         with self.assertRaisesRegex(Failure, "acknowledgement MAC"):
@@ -1451,7 +1483,7 @@ class PacketTests(unittest.TestCase):
 
     def test_thp2_shared_sequence_and_local_pending_expiry(self):
         relay = self.pending_peer()
-        context = signed(relay.key, b"THX2", 1, struct.pack("<QIIB", 0, relay.user, 0, 0))
+        context = self.context_frame(relay.key, 1, struct.pack("<QIIB", 0, relay.user, 0, 0))
         pending = signed(relay.key, b"THP2", 2,
                          struct.pack("<QQIII", 5, 123, 7, relay.user, GRANT_TTL_MS) + PLACEMENT.encode())
         # Authenticated context and placement share one stream, including when
@@ -1470,7 +1502,7 @@ class PacketTests(unittest.TestCase):
         expires = relay.pending_placement["expires"]
         self.assertIsNotNone(relay.active_placement(expires - 0.001))
         self.assertIsNone(relay.active_placement(expires))
-        relay.accept(signed(relay.key, b"THX2", 3, struct.pack("<QIIB", 0, relay.user, 0, 0)))
+        relay.accept(self.context_frame(relay.key, 3, struct.pack("<QIIB", 0, relay.user, 0, 0)))
         with self.assertRaises(Failure):
             relay.accept(pending)  # Replay crosses context/control frame types.
         cancel = signed(relay.key, b"THP2", 4, struct.pack("<QQIII", 5, 123, 7, relay.user, 0))
@@ -1556,10 +1588,10 @@ class PacketTests(unittest.TestCase):
         proof, key = auth_payload(user, token, nonce)
         try:
             self.assertEqual(peer.invoke("begin", user, token, b"THC2" + nonce), proof)
-            ack = b"THO2" + struct.pack("<Q", user)
+            ack = b"THO4" + struct.pack("<Q", user)
             peer.invoke("ack", ack + mac(key, ack))
             context = struct.pack("<QIIB", 0, user, 0, 0)
-            self.assertEqual(peer.invoke("receive", signed(key, b"THX2", 1, context)), (1, context))
+            self.assertEqual(peer.invoke("receive", self.context_frame(key, 1, context)), (1, context))
             for sequence, generation, ttl, text in ((2, 5, 10000, PLACEMENT.encode()),
                                                     (3, 6, 10000, PLACEMENT.encode()),
                                                     (4, 5, 0, b""), (5, 6, 0, b"")):
@@ -1567,7 +1599,7 @@ class PacketTests(unittest.TestCase):
                 expected_kind = 4 if (sequence, generation, ttl) == (4, 5, 0) else 3
                 self.assertEqual(peer.invoke("receive", signed(key, b"THP2", sequence, body)), (expected_kind, body))
             context = struct.pack("<QIIB", 123, user, 7, 1)
-            self.assertEqual(peer.invoke("receive", signed(key, b"THX2", 6, context)), (1, context))
+            self.assertEqual(peer.invoke("receive", self.context_frame(key, 6, context)), (1, context))
             inner = life(user)
             self.assertEqual(peer.invoke("send", inner), signed(key, b"THD2", 1, inner))
             self.assertEqual(peer.invoke("send", pvp(1)), signed(key, b"THD2", 2, pvp(1)))
@@ -1576,10 +1608,10 @@ class PacketTests(unittest.TestCase):
             data = signed(key, b"THS2", 7, struct.pack("<QII", 123, 7, 7) + follow())
             self.assertEqual(peer.invoke("receive", data), (2, context + struct.pack("<I", 7) + follow()))
             empty = struct.pack("<QIIB", 0, user, 0, 0)
-            peer.invoke("receive", signed(key, b"THX2", 8, empty))
+            peer.invoke("receive", self.context_frame(key, 8, empty))
             with self.assertRaises(Failure):
                 peer.invoke("send", inner)  # No native room, C++ denies Send.
-            bad = bytearray(signed(key, b"THX2", 9, empty))
+            bad = bytearray(self.context_frame(key, 9, empty))
             bad[-1] ^= 1
             with self.assertRaises(Failure):
                 peer.invoke("receive", bytes(bad))

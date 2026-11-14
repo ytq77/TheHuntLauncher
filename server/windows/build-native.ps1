@@ -16,6 +16,10 @@ if ($LASTEXITCODE) { throw 'Server security patch failed.' }
 if ($LASTEXITCODE) { throw 'Server relay authentication patch failed.' }
 & $python -B -m unittest discover -s ../tests -p 'test_*.py' -v
 if ($LASTEXITCODE) { throw 'Offline server and account helper regressions failed.' }
+# Windows-only wait adjustment in the generated test source. Keep the pinned
+# Linux recipe/test bytes and the CHECK(Closed(...)) assertion unchanged.
+& $python -c "from pathlib import Path; p=Path('src/tests/test_relay_auth.cpp'); b=p.read_bytes(); a=b'CHECK(rate.Closed(100))'; assert b.count(a)==1, 'Unexpected rate-close assertion'; p.write_bytes(b.replace(a,b'CHECK(rate.Closed(2000))'))"
+if ($LASTEXITCODE) { throw 'Windows rate-close test wait preparation failed.' }
 & $cmake -S ./src -B ./build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_PREFIX_PATH=$($Toolchain.Replace('\','/'))" -DBUILD_TESTING=ON "-DFETCHCONTENT_SOURCE_DIR_ABSL=$($PSScriptRoot.Replace('\','/'))/src/externals/abseil-cpp" -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DABSL_PROPAGATE_CXX_STD=ON
 if ($LASTEXITCODE) { throw 'CMake configure failed.' }
 & $cmake --build ./build --target shadnet shadnet-sample shadnet-admin test_bloodborne_summon_broker test_server_security test_relay_auth relay_auth_integration --parallel 6

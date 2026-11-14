@@ -11,11 +11,13 @@ from package import ROOT, check_public, digest, private_path
 BBSC_GENERATED = (
     "emulator/mod/bbsc_launch_zh_cn.cpp", "emulator/mod/bbsc_mod_zh_cn.cpp",
     "emulator/mod/bbsc_slot_guard.inc",
+    "emulator/mod/bbsc_join_cause_adapter.inc",
     "emulator/mod/bbsc_relay_auth.h", "emulator/mod/bbsc_relay_auth_transport.inc", "emulator/mod/bbsc_visibility_wire.h",
     "emulator/mod/bbsc_relay_auth_http.h", "emulator/mod/bbsc_j4_diag.inc",
     "emulator/mod/bbsc_summon_cleanup.h", "emulator/mod/bbsc_summon_cleanup.inc",
     *("emulator/src/core/" + name for name in (
         "bbsc_active_save.inc", "bbsc_relay_auth_core.inc", "bbsc_relay_auth_guard.h",
+        "bbsc_death_ui.inc", "bbsc_join_cause.inc", "bbsc_retained_join.inc", "bbsc_wipe_respawn.inc",
         "bbsc_banner_diagnostics.inc", "bbsc_blank_menu.inc", "bbsc_coop_effect_restore.inc",
         "bbsc_empty_host_cancel_policy.h", "bbsc_empty_host_cancel.inc", "bbsc_guest_return.inc",
         "bbsc_home_save_proof.inc", "bbsc_insight_refund.inc", "bbsc_kit_fast_prepare.inc",
