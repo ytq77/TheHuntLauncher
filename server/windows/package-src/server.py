@@ -224,10 +224,17 @@ def account(mode):
             response = {}
         if result.returncode or not isinstance(response, dict) or response.get("ok") is not True:
             raise RuntimeError("账号操作未得到成功确认，请核对账号列表和服务状态，勿重复注册。")
-    print(f"{mode} 账号 {name} 已创建并通过登录验证。")
+    message = f"{mode} 账号 {name} 已创建并通过登录验证。"
+    encoding = sys.stdout.encoding or "utf-8"
+    print(message.encode(encoding, errors="backslashreplace").decode(encoding))
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     ensure_not_updating()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("start", "account", "configure"), nargs="?")
