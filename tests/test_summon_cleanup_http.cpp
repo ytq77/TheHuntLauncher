@@ -10,7 +10,7 @@
 #include <cassert>
 #include <iostream>
 #include <set>
-static std::mutex fake_mutex;
+static std::mutex fake_mutex,store_mutex;
 static std::map<int,std::string> fake_responses;
 static std::deque<CleanupEvent> fake_events;
 static std::set<int> fake_notified;
@@ -49,7 +49,7 @@ static int PS4_SYSV_ABI NativeSend(int request,const void* data,u64 length){
 static int PS4_SYSV_ABI NativeStatus(int request,int* status){
     std::scoped_lock lock(fake_mutex);
     if(!fake_responses.contains(request)) return CleanupInvalid;
-    if(!response_ready) return CleanupAgain;
+    if(!response_ready && !fake_notified.contains(request)) return CleanupAgain;
     if(fake_notified.insert(request).second) fake_events.push_back({1,2,request,reinterpret_cast<void*>(std::uintptr_t(request))});
     *status=200;return 0;
 }
@@ -81,8 +81,8 @@ int main(int argc,char** argv) {
     original_create_request=&NativeCreate;original_send=&NativeSend;original_delete=&NativeDelete;
     original_status=&NativeStatus;original_length=&NativeLength;original_read_data=&NativeRead;original_wait=&NativeWait;
     TheHuntSummon::Backend backend;
-    backend.load=[&](auto& s){return store.Load(s);};backend.persist=[&](const auto& s){return store.Persist(s);};
-    backend.erase=[&]{return store.Erase();};
+    backend.load=[&](auto& s){std::scoped_lock l(store_mutex);return store.Load(s);};backend.persist=[&](const auto& s){std::scoped_lock l(store_mutex);return store.Persist(s);};
+    backend.erase=[&]{std::scoped_lock l(store_mutex);return store.Erase();};
     backend.remove=[&](const auto& s){
         if(s.session=="new-process") {++current_deleted;return true;}
         assert(s.session=="previous-process");++removed;
@@ -116,8 +116,8 @@ int main(int argc,char** argv) {
     assert(CleanupGetLength(first,&kind,&length)==0 && kind==1 && length==3);
     assert(ReadData(first,data,4)==3 && std::string(data,3)=="ok!");
     {std::scoped_lock guard(fake_mutex);assert(fake_responses[first]==body && fake_responses[reused]==body);}
-    assert(store.Load(loaded)==1 && loaded.session=="new-process");
-    CleanupEvent events[4]{};
+    {std::scoped_lock l(store_mutex);assert(store.Load(loaded)==1 && loaded.session=="new-process");}
+    CleanupEvent events[4]{};Wait([&]{int r=0;return CleanupGetStatus(reused,&r)==0;});
     assert(CleanupWait(nullptr,events,4,0)==2 && events[0].id==first && events[1].id==reused);
     assert(events[0].events==1 && events[0].detail==2 && events[0].user==reinterpret_cast<void*>(std::uintptr_t(first)));
     assert(DeleteRequest(first)==0 && DeleteRequest(reused)==0);
