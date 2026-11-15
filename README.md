@@ -6,11 +6,11 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.23) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.24) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.23**，基于 **BBport 1.9.7**。本版新增启动前自动备份存档与存档页一键恢复；备份经校验后保留最近 10 份，恢复中断时会阻止启动并给出处理入口。只备份 savedata，不包含奖杯和联机辅助记录。[使用文档](https://thehunt.iytq.top/)。详见[发布说明](docs/releases/v0.1.0-preview.23.md)与[验收表](docs/validation-current.md)。
+当前版本为 **0.1.0-preview.24**，基于 **BBport 1.9.7**。本版默认取消跨图入房后的额外重载，只读一次图并直接落到房主身边；功能页「跨图入房后再读一次图」默认关闭，灯光异常时可打开恢复旧行为。本版只新增启动器功能开关，不改原生代码；原有自动备份与一键恢复继续保留。[使用文档](https://thehunt.iytq.top/)。详见[发布说明](docs/releases/v0.1.0-preview.24.md)与[验收表](docs/validation-current.md)。
 
 ## 功能
 
@@ -32,9 +32,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.23-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.23.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.23.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.24-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.24.zip`，无需安装客户端引擎 |
+| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.24.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。
