@@ -414,6 +414,56 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(snapshot["features"]["scale_boss_hp"], 60)
         self.assertNotIn("test-pass", json.dumps(snapshot))
 
+    def test_warp_join_reload_overrides_parent_mod_and_settings_defaults(self):
+        (self.root / "mod").mkdir()
+        (self.root / "mod/mod.json").write_text(json.dumps({"settings": [{
+            "env": "SHADPS4_BBSC_WARP_JOIN", "default": True}]}))
+        settings_env, baseline_snapshot = sync_settings(self.root, self.profile, self.settings)
+        settings_env["SHADPS4_BBSC_WARP_JOIN"] = "1"
+        preferences = self.root / "features.json"
+        legacy = {"shared_progress": False, "scale_boss_hp": 60, "invasions": False}
+        cases = (None, legacy, *(dict(legacy, warp_join_reload=value)
+                                for value in (True, False, True, False)))
+        for values in cases:
+            with self.subTest(values=values):
+                if values is not None:
+                    preferences.write_text(json.dumps({"schema": 1, "values": values}))
+                before = preferences.read_bytes() if preferences.exists() else None
+                expected = False if values is None else values.get("warp_join_reload", False)
+                snapshot = dict(baseline_snapshot)
+                inherited = "0" if expected else "1"
+                with patch.dict(os.environ, {"SHADPS4_BBSC_WARP_JOIN": inherited}):
+                    actual, network = client.build_environment(
+                        self.profile, "test-user", "test-pass", settings_env, snapshot)
+                    self.assertEqual(os.environ["SHADPS4_BBSC_WARP_JOIN"], inherited)
+                self.assertEqual(actual["SHADPS4_BBSC_WARP_JOIN"], str(int(expected)))
+                self.assertIs(snapshot["features"]["warp_join_reload"], expected)
+                self.assertEqual(network, NETWORK)
+                self.assertEqual(actual["BBSC_RELAY"], NETWORK["relay"])
+                self.assertEqual(actual["SHADPS4_BBSC_WARP_TOGETHER"], "1")
+                self.assertNotIn("test-pass", json.dumps(snapshot))
+                if values is not None:
+                    for key, value in legacy.items():
+                        self.assertEqual(snapshot["features"][key], value)
+                    self.assertEqual(preferences.read_bytes(), before)
+                else:
+                    self.assertFalse(preferences.exists())
+
+    def test_warp_join_reload_bad_preference_blocks_environment_without_rewrite(self):
+        (self.root / "mod").mkdir()
+        (self.root / "mod/mod.json").write_text('{"settings":[]}')
+        settings_env, baseline_snapshot = sync_settings(self.root, self.profile, self.settings)
+        preferences = self.root / "features.json"
+        for value in (0, 1, "0", "false", None, [], {}):
+            with self.subTest(value=value):
+                preferences.write_text(json.dumps({"schema": 1, "values": {"warp_join_reload": value}}))
+                before = preferences.read_bytes()
+                snapshot = dict(baseline_snapshot)
+                with self.assertRaisesRegex(ValueError, "跨图入房后再读一次图"):
+                    client.build_environment(self.profile, "test-user", "test-pass", settings_env, snapshot)
+                self.assertNotIn("features", snapshot)
+                self.assertEqual(preferences.read_bytes(), before)
+
     def test_wrong_game_stops_before_creating_data(self):
         (self.game / "eboot.bin").write_bytes(b"wrong")
         with self.assertRaises(ValueError):

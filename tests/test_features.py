@@ -31,6 +31,51 @@ class GameplayFeatures(unittest.TestCase):
         self.assertEqual(env["BBSC_SCALE_BOSS_HP"], "100")
         self.assertFalse((self.root / "features.json").exists())
 
+    def test_warp_join_reload_catalog_matches_reviewed_default(self):
+        settings = feature_settings.catalog(self.root)
+        matches = [item for item in settings if item["id"] == "warp_join_reload"]
+        self.assertEqual(matches, [{
+            "id": "warp_join_reload",
+            "description": "旧的补救办法：跨图入房后再完整读一次图，用来避免灯光忽明忽暗。关闭时只读一次图，然后直接移到房主身边。如果入房后灯光不正常，可以打开。",
+            "type": "bool", "default": False, "env": "SHADPS4_BBSC_WARP_JOIN",
+            "category": "合作与探索", "title": "跨图入房后再读一次图",
+            "scope": "本机，下次启动生效", "editable": True,
+        }])
+        self.assertEqual(sum(item.get("env") == "SHADPS4_BBSC_WARP_JOIN" for item in settings), 1)
+        env, values = feature_settings.environment(self.root)
+        self.assertIs(values["warp_join_reload"], False)
+        self.assertEqual(env["SHADPS4_BBSC_WARP_JOIN"], "0")
+        self.assertFalse((self.root / "features.json").exists())
+
+    def test_warp_join_reload_legacy_preferences_and_repeated_toggles(self):
+        legacy = {"shared_progress": True, "scale_boss_hp": 60, "invasions": False}
+        for preference in (legacy, *(dict(legacy, warp_join_reload=value)
+                                     for value in (True, False, True, False))):
+            with self.subTest(preference=preference):
+                self.write(preference)
+                before = (self.root / "features.json").read_bytes()
+                resolved = feature_settings.validate(self.root, preference)
+                env, values = feature_settings.environment(self.root)
+                expected = preference.get("warp_join_reload", False)
+                self.assertIs(resolved["warp_join_reload"], expected)
+                self.assertEqual(values, resolved)
+                self.assertEqual(env["SHADPS4_BBSC_WARP_JOIN"], str(int(expected)))
+                for key, value in legacy.items():
+                    self.assertEqual(values[key], value)
+                self.assertEqual((self.root / "features.json").read_bytes(), before)
+
+    def test_warp_join_reload_rejects_non_boolean_without_rewriting_preferences(self):
+        for value in (0, 1, "0", "false", None, [], {}):
+            with self.subTest(value=value):
+                preference = {"warp_join_reload": value}
+                with self.assertRaisesRegex(ValueError, "跨图入房后再读一次图"):
+                    feature_settings.validate(self.root, preference)
+                self.write(preference)
+                before = (self.root / "features.json").read_bytes()
+                with self.assertRaisesRegex(ValueError, "跨图入房后再读一次图"):
+                    feature_settings.environment(self.root)
+                self.assertEqual((self.root / "features.json").read_bytes(), before)
+
     def test_saved_preferences_change_only_catalogued_environment(self):
         self.write({"shared_progress": True, "discord": True, "scale_boss_hp": 60,
                     "scale_damage": 0, "invasions": False})

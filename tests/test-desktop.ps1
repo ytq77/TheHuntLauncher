@@ -92,13 +92,36 @@ try {
     $window.WindowStartupLocation='Manual'; $window.Left=-10000; $window.Top=-10000
     $window.ShowInTaskbar=$false; $window.ShowActivated=$false; $window.Show()
     $controls=$desktop.GetType().GetField('featureControls',$flags).GetValue($desktop)
-    Assert ($controls.Count -eq 31) 'Feature catalogue incomplete'
+    Assert ($controls.Count -eq 32) 'Feature catalogue incomplete'
+    Assert ($controls['warp_join_reload'] -is [Windows.Controls.CheckBox] -and $controls['warp_join_reload'].IsEnabled -and $controls['warp_join_reload'].IsChecked -eq $false) 'Cross-map second reload must default off and remain editable'
+    Assert ($controls['warp_join_reload'].Content -ceq '跨图入房后再读一次图') 'Cross-map reload option title changed'
+    $legacyFeatures=New-Object 'Collections.Generic.Dictionary[string,object]'
+    $legacyFeatures['scale_boss_hp']=60; $legacyFeatures['invasions']=$false
+    $resolvedFeatures=Invoke-Private $desktop 'ValidateFeatures' @($legacyFeatures)
+    Assert ($resolvedFeatures['warp_join_reload'] -eq $false -and $resolvedFeatures['scale_boss_hp'] -eq 60 -and $resolvedFeatures['invasions'] -eq $false) 'Legacy preferences did not retain values and default the new option off'
     Assert (-not $controls['hooks'].IsEnabled -and -not $controls['shared_progress'].IsChecked) 'Feature recommendations/required gates changed'
     $controls['scale_boss_hp'].Text='60'; $controls['invasions'].IsChecked=$false
     Invoke-Private $desktop 'SaveFeatures'
     $saved=Get-Content -LiteralPath (Join-Path $fixture 'features.json') -Raw | ConvertFrom-Json
     Assert ($saved.values.scale_boss_hp -eq 60 -and -not $saved.values.invasions) 'Native feature persistence failed'
+    foreach($enabled in @($true,$false,$true,$false)) {
+        $controls['warp_join_reload'].IsChecked=$enabled
+        Invoke-Private $desktop 'SaveFeatures'
+        $saved=Get-Content -LiteralPath (Join-Path $fixture 'features.json') -Raw | ConvertFrom-Json
+        Assert ($saved.values.warp_join_reload -is [bool] -and $saved.values.warp_join_reload -eq $enabled) 'Cross-map reload toggle did not persist as a boolean'
+        Assert ($saved.values.scale_boss_hp -eq 60 -and $saved.values.invasions -eq $false) 'Cross-map reload toggle changed existing preferences'
+        $reloadedFeatures=New-Object DesktopWindow($fixture)
+        try {
+            $reloadedControls=$reloadedFeatures.GetType().GetField('featureControls',$flags).GetValue($reloadedFeatures)
+            Assert ($reloadedControls.Count -eq 32 -and $reloadedControls['warp_join_reload'].IsChecked -eq $enabled) 'Cross-map reload preference was lost on a fresh WPF read'
+            Assert ($reloadedControls['scale_boss_hp'].Text -eq '60' -and $reloadedControls['invasions'].IsChecked -eq $false) 'Fresh WPF read lost existing preferences'
+        } finally { $reloadedFeatures.Window.Close() }
+    }
     $before=[IO.File]::ReadAllText((Join-Path $fixture 'features.json'))
+    $invalidFeatures=New-Object 'Collections.Generic.Dictionary[string,object]'
+    $invalidFeatures['warp_join_reload']='false'; $rejected=$false
+    try { Invoke-Private $desktop 'ValidateFeatures' @($invalidFeatures) } catch { $rejected=$true }
+    Assert ($rejected -and [IO.File]::ReadAllText((Join-Path $fixture 'features.json')) -ceq $before) 'Non-boolean cross-map reload value was accepted or rewritten'
     $controls['scale_boss_hp'].Text='301'; $rejected=$false
     try { Invoke-Private $desktop 'SaveFeatures' } catch { $rejected=$true }
     Assert ($rejected -and [IO.File]::ReadAllText((Join-Path $fixture 'features.json')) -ceq $before) 'Invalid feature value was written'

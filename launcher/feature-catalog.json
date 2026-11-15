@@ -43,6 +43,17 @@
       "editable": true
     },
     {
+      "id": "warp_join_reload",
+      "description": "旧的补救办法：跨图入房后再完整读一次图，用来避免灯光忽明忽暗。关闭时只读一次图，然后直接移到房主身边。如果入房后灯光不正常，可以打开。",
+      "type": "bool",
+      "default": false,
+      "env": "SHADPS4_BBSC_WARP_JOIN",
+      "category": "合作与探索",
+      "title": "跨图入房后再读一次图",
+      "scope": "本机，下次启动生效",
+      "editable": true
+    },
+    {
       "id": "warp_together",
       "description": "房主通过提灯传送时，应召者跟随前往。",
       "type": "bool",
