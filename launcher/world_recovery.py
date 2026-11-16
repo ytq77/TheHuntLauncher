@@ -5,6 +5,7 @@ import mmap
 import os
 from pathlib import Path
 import re
+import stat
 import struct
 import sys
 import time
@@ -15,7 +16,7 @@ import offline_save
 import save_proof
 import home_save_proof
 from save_transfer import (plain_path, require_stopped, import_lock, snapshot, content_inventory,
-                           copy_verified, installation_guard)
+                           copy_verified, installation_guard, OperationUnavailable)
 
 HEADER = struct.Struct('<4sIQ32sIIIQ')
 ROW = struct.Struct('<II125s125s')
@@ -76,11 +77,87 @@ def json_file(path, value):
     atomic(path, json.dumps(value, ensure_ascii=False, indent=2).encode('utf-8'))
 
 
+class EvidenceChangedError(OperationUnavailable):
+    """The read was incomplete or changed, not a save-content verdict."""
+
+
+class ReviewRequired(ValueError):
+    """A completed check found a save/world condition needing a choice."""
+
+
+def require_stable_missing(error):
+    """Keep FileNotFound fallbacks, but never accept a transient read miss."""
+    if not isinstance(error, FileNotFoundError) or not error.filename:
+        raise error
+    path = plain_path(error.filename)
+    for _ in range(2):
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise EvidenceChangedError('读取时文件出现或消失，请重新检查。') from error
+
+
+def exception_chain(error):
+    """Keep implicit fallback context, including an explicit ``from None``."""
+    seen, pending = set(), [error]
+    while pending:
+        item = pending.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        yield item
+        pending.extend((item.__context__, item.__cause__))
+
+
+def require_content_error(error):
+    """Re-raise operational failures before broad content-ValueError handlers."""
+    for cause in exception_chain(error):
+        if isinstance(cause, OperationUnavailable):
+            raise cause
+        if isinstance(cause, FileNotFoundError):
+            require_stable_missing(cause)
+        elif isinstance(cause, OSError):
+            raise cause
+
+
+def entries(folder, pattern='*'):
+    """Path.glob can silently skip inaccessible evidence directories."""
+    folder = plain_path(folder)
+    try:
+        return sorted(path for path in folder.iterdir() if path.match(pattern))
+    except FileNotFoundError as error:
+        require_stable_missing(error)
+        return []
+
+
+def primary_identities(root):
+    """Exactly the read-only nonzero-primary check used by normal begin()."""
+    _, saves = layout(root)
+    result = {}
+    for slot in range(10):
+        path = plain_path(saves/f'userdata{slot:04}')
+        try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                raise OperationUnavailable('角色路径不是普通文件，请检查目录设置。')
+            raw = stable(path)
+        except FileNotFoundError as error:
+            require_stable_missing(error)
+            continue
+        if any(raw):
+            try:
+                result[str(slot)] = identity(raw)
+            except (ValueError, IndexError) as error:
+                require_content_error(error)
+                raise ReviewRequired(f'角色槽位 {slot+1} 的主档未通过当前启动器检查：{error}；不代表进度永久丢失。') from error
+    return result
+
+
 def stable(path):
     path = plain_path(path)
     first = path.read_bytes()
     if path.read_bytes() != first:
-        raise ValueError('存档正在写入，稍后重新核对。')
+        raise EvidenceChangedError('存档正在写入，稍后重新核对。')
     return first
 
 
@@ -126,7 +203,8 @@ def read_request(root, path, *, enroll=True):
     journal = plain_path(Path(root)/'mod/own-world'/f'own-save-{slot}.bin')
     try:
         raw_journal = stable(journal)
-    except FileNotFoundError:
+    except FileNotFoundError as error:
+        require_stable_missing(error)
         job = folder/'jobs'/f'{token}-{slot}-{seq}'
         state = json.loads(stable(job/'job.json'))
         if state.get('state') not in ('primary-ready', 'verified', 'complete'):
@@ -365,7 +443,7 @@ def later_run_exited_cleanly(request, token, observed_exit):
     latest = None
     try:
         runs = plain_path(request['folder']/'runs')
-        for path in runs.glob('*.json'):
+        for path in entries(runs, '*.json'):
             if not re.fullmatch(r'[0-9a-f]{32}', path.stem):
                 continue
             run = json.loads(stable(path))
@@ -382,7 +460,8 @@ def later_run_exited_cleanly(request, token, observed_exit):
                 latest = run
             elif started == latest['started_ns']:
                 return False
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
+        require_content_error(error)
         return False
     if latest is None or (token is not None and token != latest['token']):
         return False
@@ -410,7 +489,7 @@ def complete_stopped(request, *, can_write, compare_only=False, current_token=No
             require_stopped()
             actual = read_request(root, request['path'], enroll=False)
             if actual['request_sha256'] != request['request_sha256']:
-                raise ValueError('恢复请求在核对前发生变化，已保留原记录。')
+                raise EvidenceChangedError('恢复请求在核对前发生变化，已保留原记录。')
             request = actual
             check_journal_location(request)
             current, status = compare_generations(request)
@@ -465,7 +544,7 @@ def _complete_stopped(request, *, can_write):
             # A quit receipt is finalized only after the process has ended. Never
             # use an earlier running-process save snapshot for this write.
             if sha(current) != value['files'][name]['before']:
-                raise ValueError('退出后的存档又发生变化，未写入。')
+                raise EvidenceChangedError('退出后的存档又发生变化，未写入。')
         else:
             bank_now, bank_before = offline_aux.flag_bank(current), offline_aux.flag_bank(before)
             if current[bank_now:bank_now+150001] != before[bank_before:bank_before+150001]:
@@ -510,7 +589,8 @@ def compare_generations(request):
     for name in (f'userdata{slot:04}', f'backup{slot:04}'):
         try:
             raw = stable(request['saves']/name)
-        except FileNotFoundError:
+        except FileNotFoundError as error:
+            require_stable_missing(error)
             status[name] = 'missing'
             continue
         current[name] = raw
@@ -555,11 +635,12 @@ def check_stopped_without_replay(request, *, current=None, later_progress=False)
             raise ValueError('存档代次不完整。')
         identities = {identity(raw) for raw in current.values()}
     except (OSError, ValueError) as error:
+        require_content_error(error)
         raise ValueError('无法核对主存档和游戏备份，请保留两代存档与恢复记录。') from error
     if identities != {request['identity']}:
         raise ValueError('主存档或游戏备份与本次恢复的角色不一致，请保留两代存档与恢复记录。')
     if any(stable(request['saves']/name) != raw for name, raw in current.items()):
-        raise ValueError('核对期间存档发生变化，已保留原记录。')
+        raise EvidenceChangedError('核对期间存档发生变化，已保留原记录。')
     value = prepare(request, current=current)
     if finish(request, value, proof='both save generations verified without replay', current=current):
         return 'verified'
@@ -588,7 +669,7 @@ def mark_waiting(request, job):
 def poll(root, token):
     folder, _ = layout(root)
     failure = None
-    for path in sorted((folder/'requests').glob('*.bin')):
+    for path in entries(folder/'requests', '*.bin'):
         try:
             poll_request(root, folder, token, path)
         except Exception as error:
@@ -692,20 +773,21 @@ def confirm_complete(root, path, *, write=True, running_token=None):
 
 def pending_journals(root):
     folder = plain_path(Path(root)/'mod/own-world')
-    return set(folder.glob('own-save-*.bin')) | set(folder.glob('own-save-*.bin.awaiting-save'))
+    return set(entries(folder, 'own-save-*.bin')) | set(entries(folder, 'own-save-*.bin.awaiting-save'))
 
 
 def unmatched_jobs(folder, requested, *, supersede=False):
     pattern = re.compile(r'([0-9a-f]{32})-([0-9])-([1-9][0-9]*)')
-    jobs = sorted(plain_path(folder/'jobs').glob('*'))
+    jobs = entries(folder/'jobs')
     newest = {}
     if supersede:
         evidence = set(requested)
         for job in jobs:
             try:
-                if plain_path(job).is_dir():
+                if stat.S_ISDIR(plain_path(job).stat().st_mode):
                     evidence.add(job.name)
-            except (OSError, ValueError):
+            except (OSError, ValueError) as error:
+                require_content_error(error)
                 continue
         for job_id in evidence:
             if match := pattern.fullmatch(job_id):
@@ -727,13 +809,14 @@ def unmatched_jobs(folder, requested, *, supersede=False):
                     value.get('request_identity') == [token, slot, seq]):
                 try:
                     attempted = next(plain_path(job/'attempts').iterdir(), None) is not None
-                except FileNotFoundError:
+                except FileNotFoundError as error:
+                    require_stable_missing(error)
                     attempted = False
                 if not attempted:
                     json_file(manifest, dict(value, state='superseded', superseded_by=later))
                     continue
-        except (OSError, ValueError, AttributeError):
-            pass  # Unreadable evidence is still a blocker.
+        except (OSError, ValueError, AttributeError) as error:
+            require_content_error(error)  # Only stable content/absence is a blocker.
         yield job.name, slot
 
 
@@ -751,7 +834,7 @@ def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_f
     waiting = set()
     requested = set()
     failure = None
-    for path in sorted((folder/'requests').glob('*.bin')):
+    for path in entries(folder/'requests', '*.bin'):
         try:
             packet = stable(path)
             seq, run_token, slot, mode, count, _ = request_header(packet)
@@ -814,20 +897,15 @@ def begin(root):
 def _begin(root):
     require_stopped()
     if (layout(root)[0]/'review-required.json').exists():
-        raise ValueError('世界恢复记录正在核查，请打开「世界恢复复核」查看标记来源。')
+        raise ReviewRequired('世界恢复记录正在核查，请打开「世界恢复复核」查看标记来源。')
     try:
         finalize(root, None)
     except (OSError, ValueError, KeyError, TypeError) as error:
-        raise ValueError(f'{error} 请打开「世界恢复复核」查看角色和证据。') from error
+        require_content_error(error)
+        raise ReviewRequired(f'{error} 世界恢复复核尚未结案，请在存档页选择本机处理方式。') from error
     folder, saves = layout(root)
     token = uuid.uuid4().hex
-    identities = {}
-    for slot in range(10):
-        path = saves/f'userdata{slot:04}'
-        if path.is_file():
-            raw = stable(path)
-            if any(raw):
-                identities[str(slot)] = identity(raw)
+    identities = primary_identities(root)
     json_file(folder/'runs'/f'{token}.json', {'schema': 1, 'token': token,
               'root': str(plain_path(root)), 'identities': identities, 'started_ns': time.time_ns()})
     env = {'THEHUNT_WORLD_RECOVERY_V2': '1', 'THEHUNT_WORLD_RECOVERY_DIR': str(folder),
@@ -862,12 +940,13 @@ def review_items(root):
             value = json.loads(stable(marker))
             item['origin'] = {key: value[key][:300] for key in ('origin', 'reason', 'source')
                               if isinstance(value.get(key), str)}
-        except (OSError, ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError) as error:
+            require_content_error(error)
             item['origin'] = {'reason': '标记不可读或格式未知。'}
         items.append(item)
     journals = pending_journals(root)
     requested = set()
-    for path in sorted(plain_path(folder/'requests').glob('*.bin')):
+    for path in entries(folder/'requests', '*.bin'):
         item = {'state': 'review-required', 'kind': 'request', 'file': path.name}
         try:
             data = stable(path)
@@ -901,6 +980,7 @@ def review_items(root):
             else:
                 item['reason'] = '现有证据不足以安全启动原档；请保留原档并核对证据副本。'
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            require_content_error(error)
             item['reason'] = str(error)
             if 'slot' in item and 'generations' not in item:
                 item['generations'] = unverified_generations(saves, item['slot'])
@@ -925,9 +1005,11 @@ def unverified_generations(saves, slot):
     for name in (f'userdata{slot:04}', f'backup{slot:04}'):
         try:
             result[name] = {'state': 'unverified', 'sha256': sha(stable(saves/name))}
-        except FileNotFoundError:
+        except FileNotFoundError as error:
+            require_stable_missing(error)
             result[name] = {'state': 'missing', 'sha256': None}
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
+            require_content_error(error)
             result[name] = {'state': 'unreadable', 'sha256': None}
     return result
 
@@ -963,7 +1045,7 @@ def review(root):
     items = review_items(root)
     require_stopped()
     if evidence_inventory(root) != before:
-        raise ValueError('复核期间证据发生变化，请重新读取。')
+        raise EvidenceChangedError('复核期间证据发生变化，请重新读取。')
     return {'ok': True, 'items': items, 'digest': evidence_plan(before) if items else None}
 
 
@@ -974,7 +1056,7 @@ def export_evidence(root, expected):
         require_stopped()
         inventory = evidence_inventory(root)
         if not isinstance(expected, str) or expected != evidence_plan(inventory):
-            raise ValueError('复核后来源文件发生变化，请重新读取并确认。')
+            raise EvidenceChangedError('复核后来源文件发生变化，请重新读取并确认。')
         items = review_items(root)
         if not items:
             raise ValueError('当前没有需要保留的复核项目。')
@@ -991,7 +1073,7 @@ def export_evidence(root, expected):
         })
         require_stopped()
         if evidence_inventory(root) != inventory:
-            raise ValueError('复制期间原始证据发生变化，未发布复核副本。')
+            raise EvidenceChangedError('复制期间原始证据发生变化，未发布复核副本。')
         stage.rename(target)
         return {'ok': True, 'path': str(target)}
 

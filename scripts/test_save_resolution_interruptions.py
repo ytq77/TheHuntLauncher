@@ -6,6 +6,7 @@ observed/paused; parsing, plans, copies, publication, mutexes and renames are re
 """
 from contextlib import redirect_stdout
 from copy import deepcopy
+from datetime import datetime, timezone
 import argparse
 import hashlib
 import io
@@ -20,7 +21,7 @@ import tempfile
 import time
 import traceback
 
-ACTIONS = ('accept-bound', 'accept-all', 'restore-all', 'restore-case', 'use-current', 'preserve')
+ACTIONS = ('accept-bound', 'accept-all', 'restore-all', 'restore-case', 'use-current', 'preserve', 'abandon')
 TREES = {'savedata': 'data/user/savedata', 'world-recovery': 'data/user/world-recovery',
          'own-world': 'mod/own-world', 'guest-items': 'mod/guest-items',
          'shared-progress': 'mod/shared-progress'}
@@ -81,6 +82,13 @@ def actual(root, case):
 def independent_states(intent):
     """Derive legal prefixes from the explicit fixed-tree move contract."""
     action = intent['action']
+    if action == 'abandon':
+        state = {'live': deepcopy(intent['before']['trees']), 'stage': dict.fromkeys(TREES),
+                 'retired': dict.fromkeys(TREES), 'retired_gate': None, 'gate': intent['before']['gate']}
+        final = deepcopy(state)
+        raw = canonical(intent['new_gate'])
+        final['gate'] = {'bytes': len(raw), 'sha256': sha(raw)}
+        return [state, final]
     if action == 'accept-bound':
         retire = intent['bound']['paths']
     else:
@@ -146,15 +154,27 @@ def load_modules(freeze, root=None):
 
 def worker(args):
     root = args.root.resolve()
-    s, _ = load_modules(args.freeze, root)
+    s, fixture = load_modules(args.freeze, root)
     if args.probe:
         import client
         import conversion_jobs as conversion
         client.ROOT = conversion.ROOT = s.transfer.ROOT = root
-        probes = {'backup.restore': lambda: s.backups.restore(root, 'unused', 'unused', confirmed=True),
-                  'import.apply': lambda: s.transfer.apply('unused synthetic ordinary path'),
+        ordinary = root/'synthetic-probe-ordinary'
+        fixture.create(ordinary, marker=False)
+        (ordinary/'data/user').rename(ordinary/'user')
+        for name in ('Bloodborne.exe','bbport.ini','eboot.bin'):
+            (ordinary/name).write_bytes(b'synthetic never executed')
+        backup = json.loads((root/'synthetic-probe-backup.json').read_bytes())
+        profile = {'install': str(ordinary), 'game': str(ordinary), 'graphics_source': str(ordinary/'bbport.ini')}
+        def forbidden_game(*args, **kwargs):
+            raise AssertionError('A guarded entry reached the external game boundary')
+        client.run_game = forbidden_game  # External boundary only; prepare remains real.
+        os.environ['APPDATA'] = str(root/'synthetic-empty-appdata')
+        probes = {'backup.restore': lambda: s.backups.restore(root, backup['id'], backup['fingerprint'], confirmed=True),
+                  'import.apply': lambda: s.transfer.apply(ordinary),
+                  'world.copy-evidence': lambda: s.world.export_evidence(root, s.world.evidence_plan(s.world.evidence_inventory(root))),
                   'conversion.dispatch': lambda: conversion.dispatch({'action': 'create'}),
-                  'client.run_session': lambda: client.run_session({}, '', '', None),
+                  'client.run_session': lambda: client.run_session(profile, '', '', None),
                   'world.begin': lambda: s.world.begin(root),
                   'world.finalize': lambda: s.world.finalize(root, None)}
         results = {}
@@ -163,7 +183,8 @@ def worker(args):
                 with redirect_stdout(io.StringIO()):
                     call()
             except (ValueError, OSError) as error:
-                results[name] = {'blocked': True, 'type': type(error).__name__, 'error': str(error)}
+                results[name] = {'blocked': isinstance(error, (s.ResolutionRequired, client.SaveResolutionRequired)),
+                                 'type': type(error).__name__, 'error': str(error)}
             else:
                 results[name] = {'blocked': False}
         print(json.dumps(results, ensure_ascii=False), flush=True)
@@ -205,6 +226,7 @@ class Runner:
         self.s, self.fx = load_modules(self.freeze)
         self.completed = []
         self.current = {}
+        self.invocations = []
 
     def command(self, root, trace, pause=-1, hit=None, probe=False):
         command = [sys.executable, '-B', str(Path(__file__).resolve()), '--worker', '--freeze', str(self.freeze),
@@ -215,13 +237,51 @@ class Runner:
             command.append('--probe')
         return command
 
-    def cli(self, root, request, directory, label, expected=True):
+    def process_start(self, process, command, root, directory, label, method):
+        row = {'pid': process.pid, 'argv': command, 'fixture': str(root), 'label': label,
+               'started_utc': datetime.now(timezone.utc).isoformat(), 'method': method,
+               'source_manifest_sha256': sha(canonical(self.source_hashes))}
+        save(directory/(label+'-process-start.json'), row)
+        self.invocations.append(row)
+        save(self.evidence/'process-ledger.json', self.invocations)
+        return row
+
+    def process_end(self, row, process, directory, label, stdout_path, stderr_path):
+        assert type(process.returncode) is int, 'Missing integer subprocess exit status'
+        row.update(ended_utc=datetime.now(timezone.utc).isoformat(), exit_code=process.returncode,
+                   stdout=file_content(stdout_path), stderr=file_content(stderr_path))
+        save(directory/(label+'-process-end.json'), row)
+        save(self.evidence/'process-ledger.json', self.invocations)
+
+    def invoke(self, root, command, directory, label, request=None):
         directory.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(self.command(root, directory / (label + '-trace.jsonl')),
-            input=json.dumps(request), capture_output=True, text=True, encoding='utf-8', timeout=60,
-            env=dict(os.environ, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1'))
-        (directory / (label + '-stdout.json')).write_text(result.stdout, encoding='utf-8')
-        (directory / (label + '-stderr.log')).write_text(result.stderr, encoding='utf-8')
+        out, err = directory/(label+'-stdout.json'), directory/(label+'-stderr.log')
+        # Both streams go directly to owned files, never sequential pipe reads.
+        failure, row = None, None
+        with out.open('wb') as stdout, err.open('wb') as stderr:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE if request is not None else subprocess.DEVNULL,
+                stdout=stdout, stderr=stderr, text=True, encoding='utf-8',
+                env=dict(os.environ, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1'))
+            try:
+                row = self.process_start(process, command, root, directory, label, 'bounded real JSON/CLI child')
+                process.communicate(json.dumps(request) if request is not None else None, timeout=60)
+            except BaseException as error:
+                failure = error
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=10)
+        if row is not None:
+            if failure is not None:
+                row['failure'] = repr(failure)
+            self.process_end(row, process, directory, label, out, err)
+        if failure is not None:
+            raise failure
+        return subprocess.CompletedProcess(command, process.returncode,
+                                           out.read_text(encoding='utf-8'), err.read_text(encoding='utf-8'))
+
+    def cli(self, root, request, directory, label, expected=True):
+        result = self.invoke(root, self.command(root, directory/(label+'-trace.jsonl')), directory, label, request)
         value = json.loads(result.stdout)
         assert value['ok'] is expected and result.returncode == (0 if expected else 1), (label, value, result.returncode)
         return value
@@ -238,6 +298,9 @@ class Runner:
     def fixture(self, action):
         root = Path(tempfile.mkdtemp(prefix=action + '-', dir=self.fixtures)).resolve()
         saves = self.fx.create(root, marker=action != 'accept-bound' and action != 'use-current')
+        self.s.backups.launch_backup(root)
+        backup, = self.s.backups._list(root)[0]
+        save(root/'synthetic-probe-backup.json', {key: backup[key] for key in ('id','fingerprint')})
         selection = None
         if action == 'accept-bound':
             self.fx.request(root, job=True)
@@ -267,6 +330,16 @@ class Runner:
                 marker = root / TREES['world-recovery'] / 'review-required.json'
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_bytes(b'new synthetic current world context')
+        if action == 'abandon':
+            self.fx.make_pending(root)
+            (saves/'newer-during-pending').write_bytes(b'current progress after interrupted choice')
+            pending = self.s.pending(root)
+            assert pending['can_abandon'] and not pending['can_resume'], pending
+            request = {'action': 'abandon', 'digest': pending['abandon_digest'], 'confirmed': True}
+            before = content(root)
+            sentinels = {p: (root/p).read_bytes() for p in ('profile.json', 'data/user/trophies.log')}
+            cases = {p.name for p in (root/'save-backups/recovery-choice').iterdir() if p.is_dir()}
+            return root, request, before, sentinels, cases, set()
         plan = self.s.plan(root, **self.selection_args(selection))
         assert action in [row['id'] for row in plan['options']], (action, plan)
         request = {'action': 'apply', 'digest': plan['digest'], 'option_id': action, 'confirmed': True,
@@ -286,6 +359,12 @@ class Runner:
         states = independent_states(intent)
         assert actual(root, case) == states[-1], 'Final fixed tree/gate state differs from the chosen contract'
         assert not (root / '.save-import.lock').exists(), 'Completed choice retained lock'
+        if intent['action'] == 'abandon':
+            assert (case/'retired/completed-lock').read_bytes() == intent_raw
+            assert file_content(case/'original/control/import-lock') == intent['previous_lock']
+            assert content(root)['trees'] == before['trees']
+            assert result['can_launch'] is False and result['needs_review']
+
         for path, raw in sentinels.items():
             assert (root / path).read_bytes() == raw, path
         for name in ('manifest.json', 'intent.json', 'receipt.json'):
@@ -338,10 +417,20 @@ class Runner:
         root, request, before, sentinels, old_cases, old_listed = self.fixture(action)
         self.current = {'action': action, 'point': name, 'index': index, 'fixture': str(root)}
         hit, trace = directory / 'hit.json', directory / 'apply-trace.jsonl'
-        process = subprocess.Popen(self.command(root, trace, index, hit), stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-            env=dict(os.environ, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1'))
+        command = self.command(root, trace, index, hit)
+        stdout_path, stderr_path = directory/'killed-stdout.log', directory/'killed-stderr.log'
+        stdout_file, stderr_file = stdout_path.open('wb'), stderr_path.open('wb')
         try:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                stdout=stdout_file, stderr=stderr_file, text=True, encoding='utf-8',
+                env=dict(os.environ, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1'))
+        except BaseException:
+            stdout_file.close(); stderr_file.close()
+            raise
+        row = None
+        try:
+            row = self.process_start(process, command, root, directory, 'kill-worker',
+                                     'TerminateProcess at annotated boundary; not power loss')
             process.stdin.write(json.dumps(request))
             process.stdin.close()
             process.stdin = None
@@ -353,18 +442,22 @@ class Runner:
             observed = json.loads(hit.read_text(encoding='utf-8'))
             normalize = lambda point: re.sub(r'(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])', '<transaction>', point)
             assert observed['index'] == index and normalize(observed['name']) == normalize(name), (observed, checkpoint)
-            if name in ('before:preserve', 'after:lock'):
+            if name in ('before:preserve', 'after:lock', 'before:abandon-preserve', 'after:abandon-lock'):
                 second = self.cli(root, {'action': 'plan'}, directory, 'concurrent-second-A', expected=False)
                 assert '另一个游戏会话或存档操作' in second['error']
+            save(directory/'process.json', {'pid': process.pid, 'argv': self.command(root, trace, index, hit),
+                'observed': observed, 'method': 'TerminateProcess at annotated boundary; not power loss'})
             process.terminate()  # TerminateProcess, no Python exception/context unwinding.
             stdout, stderr = process.communicate(timeout=10)
-            assert process.returncode != 0, 'OS termination did not interrupt the worker'
-            (directory / 'killed-stdout.log').write_text(stdout, encoding='utf-8')
-            (directory / 'killed-stderr.log').write_text(stderr, encoding='utf-8')
+            assert type(process.returncode) is int and process.returncode != 0, 'OS termination did not interrupt the worker'
+            save(directory/'process-exit.json', {'pid': process.pid, 'exit_code': process.returncode})
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate(timeout=10)
+            stdout_file.close(); stderr_file.close()
+            if row is not None:
+                self.process_end(row, process, directory, 'kill-worker', stdout_path, stderr_path)
         case_root = root / 'save-backups/recovery-choice'
         new_cases = [p for p in case_root.iterdir() if p.name not in old_cases]
         assert len(new_cases) == 1, new_cases
@@ -374,7 +467,14 @@ class Runner:
             'retired': case_content(interrupted_case, 'retired'), 'lock': file_content(root / '.save-import.lock')})
         lock = root / '.save-import.lock'
         published = lock.exists()
-        if published:
+        new_active = published and json.loads(lock.read_bytes()).get('transaction') == interrupted_case.name
+        if action == 'abandon' and published and not new_active:
+            assert content(root) == before, 'Pre-handoff abandonment changed current five trees/gate'
+            plan = self.cli(root, {'action':'plan'}, directory, 'fresh-abandon-plan')
+            assert plan['pending']['can_abandon']
+            result = self.cli(root, {'action':'abandon','digest':plan['pending']['abandon_digest'],'confirmed':True}, directory,'fresh-abandon')
+            assert result['case_id'] != interrupted_case.name
+        elif new_active:
             intent_raw = lock.read_bytes()
             intent = json.loads(intent_raw)
             assert (interrupted_case / 'intent.json').read_bytes() == intent_raw
@@ -386,10 +486,9 @@ class Runner:
             assert plan['pending']['fingerprint'] == sha(intent_raw)
             # Probe all other actual entry points after the dead A relinquishes
             # the OS mutex but its immutable on-disk intent must still block.
-            if name == 'after:lock':
-                probe = subprocess.run(self.command(root, directory / 'probe-trace.jsonl', probe=True),
-                    capture_output=True, text=True, encoding='utf-8', timeout=60,
-                    env=dict(os.environ, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1'))
+            if name in ('after:lock', 'after:abandon-lock'):
+                probe = self.invoke(root, self.command(root, directory/'probe-trace.jsonl', probe=True),
+                                    directory, 'entry-probes')
                 (directory / 'dead-A-blockers.json').write_text(probe.stdout, encoding='utf-8')
                 assert probe.returncode == 0, probe.stderr
                 assert all(row['blocked'] for row in json.loads(probe.stdout).values())
@@ -398,7 +497,7 @@ class Runner:
             result = self.cli(root, {'action': 'resume', 'fingerprint': sha(intent_raw), 'confirmed': True},
                               directory, 'resume')
             assert result['case_id'] == interrupted_case.name
-        elif name == 'after:unlock':
+        elif name in ('after:unlock', 'after:abandon-unlock'):
             intent_raw = (interrupted_case / 'intent.json').read_bytes()
             result = self.cli(root, {'action': 'resume', 'fingerprint': sha(intent_raw), 'confirmed': True},
                               directory, 'already-completed')
@@ -406,7 +505,10 @@ class Runner:
         else:
             assert content(root) == before, 'Pre-publication interruption changed live trees/gate'
             for tree, value in case_content(interrupted_case)['trees'].items():
-                assert value is None or value == before['trees'][tree], ('Partial preservation corruption', tree)
+                if value is not None:
+                    assert before['trees'][tree] is not None
+                    assert set(value['directories']) <= set(before['trees'][tree]['directories'])
+                    assert all(before['trees'][tree]['files'].get(n) == v for n,v in value['files'].items()), ('Partial preservation corruption',tree)
             assert {row['id'] for row in self.s.list_cases(root)['backups']} == old_listed
             plan = self.cli(root, {'action': 'plan', **{k: v for k, v in request.items() if k.startswith('selection_')}},
                             directory, 'fresh-plan')
@@ -417,7 +519,8 @@ class Runner:
             assert interrupted_case.name not in {row['id'] for row in self.s.list_cases(root)['backups']}
         summary = self.validate_complete(root, before, sentinels, result, directory)
         completed = {'action': action, 'checkpoint': checkpoint, 'os_terminated': True,
-                     'lock_published_at_interruption': published, 'case_id': result['case_id'],
+                     'lock_published_at_interruption': published, 'new_intent_active': new_active,
+                     'worker_pid': process.pid, 'worker_exit_code': process.returncode, 'case_id': result['case_id'],
                      'intent_sha256': summary['intent_sha256']}
         save(directory / 'result.json', completed)
         self.completed.append(completed)
@@ -451,7 +554,8 @@ class Runner:
                       'required_boundaries': sum(map(len, matrix.values())), 'terminated_passed': len(self.completed),
                       'source_worktree_changed_during_run': changed,
                       'source_frozen': True, 'failures': 0, 'game_started': False,
-                      'real_tasklist_and_mutex': os.name == 'nt'}
+                      'real_tasklist_and_mutex': os.name == 'nt',
+                      'recorded_child_processes': len(self.invocations)}
             save(self.evidence / 'RESULT.json', result)
             print(json.dumps(result), flush=True)
             return 0

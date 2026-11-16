@@ -125,6 +125,7 @@ public sealed class DesktopWindow
         AsyncClick("ResumeSaveRestore",ResumeSaveRestore);
         AsyncClick("RefreshSaveResolution",RefreshSaveResolution);
         AsyncClick("ResumeSaveResolution",ResumeSaveResolution);
+        AsyncClick("AbandonSaveResolution",AbandonSaveResolution);
         Click("CancelSaveResolution",delegate { if(resolutionApplying) { Say("选择已开始处理，不能当作取消；请等待结果，再检查能否继续原事务。"); return; } InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="这次选择已取消；存档没有因此改变。重新检查后才能选择。"; SetBusy(); });
         Get<ComboBox>("SaveBackupList").SelectionChanged+=delegate { if(!drawingBackups) InvalidateResolution(); ShowSelectedBackup(); SetBusy(); };
         Get<TextBox>("InstallPath").TextChanged+=delegate { InvalidateResolution(); };
@@ -256,6 +257,7 @@ public sealed class DesktopWindow
         Get<Button>("RefreshSaveResolution").IsEnabled=!Busy;
         Get<Button>("CancelSaveResolution").IsEnabled=!resolutionApplying;
         Get<Button>("ResumeSaveResolution").IsEnabled=!Busy && Flag(pendingResolution,"can_resume");
+        Get<Button>("AbandonSaveResolution").IsEnabled=!Busy && Flag(pendingResolution,"can_abandon");
         Get<StackPanel>("SaveResolutionOptions").IsEnabled=!Busy && resolutionPlan!=null;
         Get<Button>("CopyWorldRecoveryEvidence").IsEnabled=!Busy && !String.IsNullOrEmpty(recoveryDigest);
         foreach(var p in conversions) Get<Button>(p.Key).IsEnabled=!Busy && (p.Value=="create" || p.Value.StartsWith("start-") || Str(conversionJob,"next")==p.Value);
@@ -483,6 +485,7 @@ public sealed class DesktopWindow
         ++resolutionGeneration; resolutionPlan=null; pendingResolution=null;
         Get<StackPanel>("SaveResolutionOptions").Children.Clear();
         Get<Button>("ResumeSaveResolution").IsEnabled=false;
+        Get<Button>("AbandonSaveResolution").IsEnabled=false;
     }
     Dictionary<string,object> ResolutionRequest(Dictionary<string,object> selection) {
         var request=Map("action","plan");
@@ -496,14 +499,15 @@ public sealed class DesktopWindow
         if(generation!=resolutionGeneration || closed || currentPage!="Save") return;
         resolutionPlan=plan; pendingResolution=plan.ContainsKey("pending") ? plan["pending"] as Dictionary<string,object>:null;
         resolutionNeeded=Flag(plan,"needed");
-        Get<Border>("SaveResolutionPanel").Visibility=Flag(plan,"needed") ? Visibility.Visible:Visibility.Collapsed;
+        Get<Border>("SaveResolutionPanel").Visibility=Flag(plan,"show_choices") ? Visibility.Visible:Visibility.Collapsed;
         Get<TextBlock>("SaveResolutionSummary").Text=Str(plan,"summary");
         Get<TextBlock>("SaveResolutionCharacters").Text=CharacterSummary(plan);
-        Get<TextBlock>("SaveResolutionPending").Text=Str(pendingResolution,"message");
+        Get<TextBlock>("SaveResolutionPending").Text=Str(pendingResolution,"message")+"\n"+Str(pendingResolution,"abandon_message");
         Get<Button>("ResumeSaveResolution").Visibility=pendingResolution!=null ? Visibility.Visible:Visibility.Collapsed;
+        Get<Button>("AbandonSaveResolution").Visibility=pendingResolution!=null ? Visibility.Visible:Visibility.Collapsed;
         Get<TextBlock>("SaveResolutionStatus").Text=String.Join("\n",Warnings(plan));
         var panel=Get<StackPanel>("SaveResolutionOptions"); panel.Children.Clear();
-        if(pendingResolution==null && Flag(plan,"needed")) foreach(var option in Rows(plan,"options").OrderByDescending(row=>Flag(row,"recommended"))) {
+        if(pendingResolution==null && Flag(plan,"show_choices")) foreach(var option in Rows(plan,"options").OrderByDescending(row=>Flag(row,"recommended"))) {
             var captured=option;
             string id=Str(option,"id");
             bool known=new [] {"accept-bound","accept-all","restore-all","restore-case","use-current","preserve"}.Contains(id);
@@ -514,7 +518,7 @@ public sealed class DesktopWindow
             panel.Children.Add(Block(Str(option,"description")+(known ? "":"（此启动器不支持这个选项，请先更新。）"),12));
         }
         SetBusy();
-        if(Flag(plan,"needed")) { Window.UpdateLayout(); Get<Border>("SaveResolutionPanel").BringIntoView(); }
+        if(Flag(plan,"show_choices")) { Window.UpdateLayout(); Get<Border>("SaveResolutionPanel").BringIntoView(); }
     }
     async Task LoadSaveResolution(Dictionary<string,object> selection,int generation) {
         try { ShowSaveResolution(await Request("save_resolution.py",ResolutionRequest(selection),""),generation); }
@@ -526,6 +530,7 @@ public sealed class DesktopWindow
                 Get<TextBlock>("SaveResolutionSummary").Text="本次检查未完成；没有据此判定存档损坏。";
                 Get<TextBlock>("SaveResolutionCharacters").Text=""; Get<TextBlock>("SaveResolutionPending").Text="";
                 Get<Button>("ResumeSaveResolution").Visibility=Visibility.Collapsed;
+                Get<Button>("AbandonSaveResolution").Visibility=Visibility.Collapsed;
                 Get<TextBlock>("SaveResolutionStatus").Text=e.Message+"\n请按上方原因处理后重新检查；不会自动更换存档。";
             }
             throw;
@@ -554,7 +559,7 @@ public sealed class DesktopWindow
             Say(Str(result,"message"));
         } catch(Exception e) {
             InvalidateResolution(); Get<Border>("SaveResolutionPanel").Visibility=Visibility.Visible;
-            Get<TextBlock>("SaveResolutionStatus").Text=completed!=null ? Str(completed,"message")+"\n处理已完成，但刷新状态失败："+e.Message+"\n请重新检查；不会重复执行已完成的选择。":"这次处理没有确认完成："+e.Message+"\n不自动回退；请重新检查，上次选择未完成时只继续原事务。";
+            Get<TextBlock>("SaveResolutionStatus").Text=completed!=null ? Str(completed,"message")+"\n处理已完成，但刷新状态失败："+e.Message+"\n请重新检查；不会重复执行已完成的选择。":"这次处理没有确认完成："+e.Message+"\n不自动回退；请重新检查，可继续原选择，或完整另存当前现场后明确放弃上次选择。";
             throw;
         } finally { resolutionApplying=false; operation=false; SetBusy(); }
         if(launch) await Launch();
@@ -568,7 +573,7 @@ public sealed class DesktopWindow
     }
     async Task ResumeSaveResolution() {
         RequireIdle(); var pending=pendingResolution; int generation=resolutionGeneration;
-        if(!Flag(pending,"can_resume")) throw new InvalidOperationException("无法证明原事务可继续，请保留现场并重新检查。");
+        if(!Flag(pending,"can_resume")) throw new InvalidOperationException("无法证明原事务可继续，请重新检查能否完整另存当前现场后放弃上次选择。");
         operation=true; resolutionApplying=true; SetBusy(); bool launch=false; Dictionary<string,object> completed=null;
         try {
             if(!Confirm(Str(pending,"message")+"\n\n只继续上次已经确认的选择，不会自动回退或改选其它存档。确认继续？","继续上次的选择")) { InvalidateResolution(); return; }
@@ -581,6 +586,28 @@ public sealed class DesktopWindow
         } catch(Exception e) { InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text=completed!=null ? Str(completed,"message")+"\n续办已完成，但刷新状态失败："+e.Message+"\n请重新检查，不会重复执行。":"续办尚未确认完成："+e.Message+"\n不会自动回退。请重新检查。"; throw; }
         finally { resolutionApplying=false; operation=false; SetBusy(); }
         if(launch) await Launch();
+    }
+    async Task AbandonSaveResolution() {
+        RequireIdle(); var pending=pendingResolution; int generation=resolutionGeneration;
+        if(!Flag(pending,"can_abandon")) throw new InvalidOperationException(Str(pending,"abandon_message"));
+        operation=true; resolutionApplying=true; SetBusy(); Dictionary<string,object> completed=null;
+        try {
+            string description=Str(pending,"abandon_message")+"\n\n"+CharacterSummary(pending)+
+                "\n\n不会自动恢复上次目标。完整保全成功后才放弃原选择，然后重新检查当前版本。确认继续？";
+            if(!Confirm(description,"完整另存当前现场并放弃上次选择")) { InvalidateResolution(); return; }
+            if(generation!=resolutionGeneration || pendingResolution!=pending || currentPage!="Save" || closed)
+                throw new InvalidOperationException("确认期间现场或页面已变化，请重新检查。");
+            InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="正在完整另存当前现场；尚未报告保全成功…";
+            var result=await Request("save_resolution.py",Map("action","abandon","digest",Str(pending,"abandon_digest"),"confirmed",true),""); completed=result;
+            await LoadSaveBackups(); await LoadSaveResolution(null,resolutionGeneration);
+            Get<TextBlock>("SaveResolutionStatus").Text=Str(result,"message")+"\n"+Get<TextBlock>("SaveResolutionStatus").Text;
+            Say(Str(result,"message"));
+        } catch(Exception e) {
+            InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text=completed!=null ?
+                Str(completed,"message")+"\n刷新未完成，请重新检查："+e.Message :
+                "尚未确认放弃完成："+e.Message+"\n请重新检查；不会自动回退、删除原件或启动游戏。";
+            throw;
+        } finally { resolutionApplying=false; operation=false; SetBusy(); }
     }
     void ShowSelectedBackup() {
         var item=Get<ComboBox>("SaveBackupList").SelectedItem as ComboBoxItem;
@@ -615,7 +642,7 @@ public sealed class DesktopWindow
         } finally { drawingBackups=false; }
         pendingSaveRestore=result["pending"] as Dictionary<string,object>;
         var warnings=((System.Collections.IEnumerable)result["warnings"]).Cast<object>().Select(x=>Convert.ToString(x)).ToArray();
-        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已读取 "+list.Items.Count+" 份备份。普通备份只替换 savedata；处理前的存档按专用事务换回联机记录，不代表可直接启动。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
+        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已读取 "+list.Items.Count+" 份备份。正常恢复普通备份只替换 savedata；异常处理页的整套恢复还会停止旧联机待补记录。处理前存档按专用事务换回联机记录，不代表可直接启动。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
         Get<TextBlock>("PendingSaveRestore").Text=Str(pendingSaveRestore,"message");
         ShowSelectedBackup();
     }

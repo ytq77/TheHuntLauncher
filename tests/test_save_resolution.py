@@ -141,7 +141,7 @@ class ResolutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '变化'):
             s.apply(self.root, plan['digest'], 'restore-all', confirmed=True, **selection)
 
-    def test_unused_primary_with_nonzero_backup_is_not_clean_or_restore_source(self):
+    def test_unused_primary_with_nonzero_backup_can_start_but_is_not_restore_source(self):
         (self.root/'data/user/world-recovery/review-required.json').unlink()
         (self.root/s.GATE).write_bytes(b'gate requires a real clean check')
         for backup_raw in (b'unsupported backup', fixture.RAW):
@@ -154,7 +154,7 @@ class ResolutionTests(unittest.TestCase):
                 self.assertFalse(report['valid'])
                 self.assertGreater(report['readable_generations'], 0)
                 plan = s.plan(self.root)
-                self.assertNotIn('use-current', [o['id'] for o in plan['options']])
+                self.assertIn('use-current', [o['id'] for o in plan['options']])
                 self.assertNotIn('accept-all', [o['id'] for o in plan['options']])
                 self.choose('preserve')
                 self.assertTrue(s.list_cases(self.root)['backups'])

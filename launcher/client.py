@@ -39,10 +39,10 @@ class SaveResolutionRequired(ValueError):
 
 
 def require_save_resolution_clear():
-    from save_resolution import require_launch_clear
+    from save_resolution import require_launch_clear, ResolutionRequired
     try:
         require_launch_clear(ROOT)
-    except ValueError as error:
+    except ResolutionRequired as error:
         state('save-resolution-needed', str(error))
         raise SaveResolutionRequired(str(error)) from error
 
@@ -352,6 +352,7 @@ def main():
 
 
 def run_session(profile, name, password, bridge, public_events=None):
+    from save_resolution import ResolutionRequired
     with installation_guard(ROOT):
         require_save_resolution_clear()
         prepare(profile)
@@ -364,7 +365,7 @@ def run_session(profile, name, password, bridge, public_events=None):
         state('preparing', backup['message'])
         try:
             recovery_env = world_recovery.begin(ROOT)
-        except (OSError, ValueError, KeyError, TypeError) as error:
+        except (world_recovery.ReviewRequired, ResolutionRequired) as error:
             state('save-resolution-needed', str(error))
             raise SaveResolutionRequired(str(error)) from error
         token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
@@ -506,5 +507,6 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as error:
         report_failure('launcher startup', error)
-        state("save-resolution-needed" if isinstance(error, SaveResolutionRequired) else "error", str(error))
+        from save_resolution import error_message
+        state("save-resolution-needed" if isinstance(error, SaveResolutionRequired) else "error", error_message(error))
         sys.exit(1)

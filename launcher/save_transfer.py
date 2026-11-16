@@ -24,6 +24,10 @@ AUXILIARY = ('own-world', 'guest-items', 'shared-progress')
 _guard_state = threading.local()
 
 
+class OperationUnavailable(ValueError):
+    """An operational/path/process guard, never evidence of corrupt saves."""
+
+
 class ImportRecoveryError(ValueError):
     """An incomplete rollback must keep the launch-blocking import lock."""
 
@@ -37,7 +41,7 @@ def plain_path(path):
         except FileNotFoundError:
             continue
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & REPARSE_POINT:
-            raise ValueError("存档路径包含符号链接或目录联接，已停止导入。")
+            raise OperationUnavailable("存档路径包含符号链接或目录联接，已停止导入。")
     return path
 
 
@@ -94,9 +98,9 @@ def require_stopped(action='导入'):
     try:
         running = game_running()
     except (OSError, subprocess.SubprocessError):
-        raise ValueError(f"无法确认游戏是否已退出，已停止{action}。") from None
+        raise OperationUnavailable(f"无法确认游戏是否已退出，已停止{action}。") from None
     if running:
-        raise ValueError(f"检测到游戏仍在运行，请正常退出普通版和无缝版后再{action}。")
+        raise OperationUnavailable(f"检测到游戏仍在运行，请正常退出普通版和无缝版后再{action}。")
 
 
 @contextmanager
@@ -127,7 +131,7 @@ def installation_guard(root=None):
         result = kernel.WaitForSingleObject(handle, 0)
         if result not in (0, 0x80):
             kernel.CloseHandle(handle)
-            raise ValueError('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。')
+            raise OperationUnavailable('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。')
         def close():
             try:
                 kernel.ReleaseMutex(handle)
@@ -140,7 +144,7 @@ def installation_guard(root=None):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             os.close(descriptor)
-            raise ValueError('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。') from None
+            raise OperationUnavailable('已有另一个游戏会话或存档操作正在使用本安装，请等待结束。') from None
         def close():
             os.close(descriptor)
     held.add(key)
@@ -320,6 +324,10 @@ def _import_lock(root=None, *, intent=None):
 @contextmanager
 def import_lock(root=None, *, intent=None):
     with installation_guard(root):
+        # Runtime import avoids S -> W/B -> T module initialization cycles.
+        # No ordinary persistent lock or ordinary-source read may precede this.
+        from save_resolution import require_launch_clear
+        require_launch_clear(ROOT if root is None else Path(root))
         with _import_lock(root, intent=intent) as descriptor:
             yield descriptor
 
