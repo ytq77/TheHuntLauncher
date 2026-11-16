@@ -1,6 +1,7 @@
 """Experimental same-role export. Every game run writes only to a job copy."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 import ctypes
 import hashlib
 import json
@@ -10,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 import zipfile
@@ -19,7 +21,8 @@ import offline_aux
 import trophy_sync
 
 from client import EBOOT_SHA256
-from save_transfer import plain_path, overlaps, require_stopped, snapshot, source_path
+from save_transfer import (plain_path, overlaps, require_stopped, snapshot, source_path,
+                           installation_guard)
 from settings_bridge import sync_settings
 
 ROOT = Path(__file__).resolve().parent
@@ -29,6 +32,7 @@ KIT = {4016, 4121, 11201, 4313, 11251}
 ALL_GOODS = ORIGINAL | RINGING | KIT
 OFFLINE_FLOW = 'offline-v1'
 PENDING_INSTALL = '.save-conversion-pending.json'
+_operation_state = threading.local()
 NEXT = {'created': 'baseline', 'baselined': 'inspect', 'inspected': 'convert',
         'converted': 'verify', 'awaiting-confirmation': 'export'}
 MESSAGES = {
@@ -91,6 +95,27 @@ def pid_alive(pid):
 
 @contextmanager
 def operation_lock():
+    root = plain_path(ROOT).resolve()
+    with installation_guard(root):
+        held = getattr(_operation_state, 'held', None)
+        if held is None:
+            held = _operation_state.held = set()
+        key = os.path.normcase(str(root))
+        if key in held:
+            yield
+            return
+        from save_resolution import require_launch_clear
+        require_launch_clear(root)
+        with _conversion_lock():
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
+
+
+@contextmanager
+def _conversion_lock():
     require_stopped()
     path = plain_path(ROOT / '.save-conversion.lock')
     if plain_path(ROOT / '.save-import.lock').exists():
@@ -110,10 +135,18 @@ def operation_lock():
     with stream:
         stream.write(json.dumps({'pid': os.getpid()}))
     try:
-        recover_pending_install()
+        _recover_pending_install()
         yield
     finally:
         path.unlink(missing_ok=True)
+
+
+def serialized_operation(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with operation_lock():
+            return function(*args, **kwargs)
+    return locked
 
 
 def job_path(job_id):
@@ -139,7 +172,12 @@ def save_job(job):
     atomic_json(job_path(job['id']) / 'job.json', job)
 
 
+@serialized_operation
 def recover_pending_install():
+    return _recover_pending_install()
+
+
+def _recover_pending_install():
     marker = plain_path(ROOT / PENDING_INSTALL)
     if not marker.exists():
         return
@@ -193,6 +231,7 @@ def auxiliary_snapshot():
     return result
 
 
+@serialized_operation
 def create_job(profile, same_role, allow_auxiliary=False):
     if same_role is not True:
         raise ValueError('请先确认两份存档对应同一个角色，本次只验证该角色。')
@@ -357,6 +396,7 @@ def play(job, step):
     return process.returncode
 
 
+@serialized_operation
 def run_step(job, step, cleared=False):
     if NEXT.get(job['state']) != step or step not in ('baseline', 'inspect', 'convert', 'verify'):
         raise ValueError('步骤顺序不正确，请按页面提示继续。')
@@ -414,6 +454,7 @@ def run_step(job, step, cleared=False):
     return job
 
 
+@serialized_operation
 def export_job(job, confirmed):
     if job['state'] != 'awaiting-confirmation' or confirmed is not True:
         raise ValueError('请先完成普通版重载，并确认道具、等级、装备和地点均正确。')
@@ -475,6 +516,7 @@ def export_job(job, confirmed):
     return job
 
 
+@serialized_operation
 def begin_offline(profile, same_role, output):
     """Back up, transform and export without starting or injecting a game process."""
     if output not in ('export', 'replace'):
@@ -547,6 +589,7 @@ def begin_offline(profile, same_role, output):
         raise
 
 
+@serialized_operation
 def install_converted_job(job, confirmed):
     """Replace the ordinary directory only after a verified export; retain a full backup."""
     if job['state'] != 'exported' or confirmed is not True or job.get('player_confirmed') is not True:

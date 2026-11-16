@@ -158,6 +158,8 @@ def _no_conversion(root):
 
 
 def _restore_ready(root, *, own_import_lock=False):
+    from save_resolution import require_launch_clear
+    require_launch_clear(root)
     transfer.require_stopped('恢复')
     _no_conversion(root)
     if not own_import_lock and (root/'.save-import.lock').exists():
@@ -171,6 +173,8 @@ def launch_backup(root):
     saves = transfer.plain_path(root/'data/user/savedata')
     try:
         with transfer.installation_guard(root):
+            from save_resolution import require_launch_clear
+            require_launch_clear(root)
             if transfer.plain_path(root/'.save-import.lock').exists():
                 raise ValueError('存档导入或恢复尚未完成，请先在存档页处理对应记录。')
             _no_conversion(root)

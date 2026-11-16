@@ -14,7 +14,8 @@ import offline_aux
 import offline_save
 import save_proof
 import home_save_proof
-from save_transfer import plain_path, require_stopped, import_lock, snapshot, content_inventory, copy_verified
+from save_transfer import (plain_path, require_stopped, import_lock, snapshot, content_inventory,
+                           copy_verified, installation_guard)
 
 HEADER = struct.Struct('<4sIQ32sIIIQ')
 ROW = struct.Struct('<II125s125s')
@@ -737,6 +738,14 @@ def unmatched_jobs(folder, requested, *, supersede=False):
 
 
 def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
+    from save_resolution import require_launch_clear
+    with installation_guard(root):
+        require_launch_clear(root)
+        return _finalize(root, token, quit_sequence=quit_sequence, observed_exit=observed_exit,
+                         exit_record_failure=exit_record_failure)
+
+
+def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
     folder, _ = layout(root)
     results = []
     waiting = set()
@@ -796,6 +805,13 @@ def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_fa
 
 
 def begin(root):
+    from save_resolution import require_launch_clear
+    with installation_guard(root):
+        require_launch_clear(root)
+        return _begin(root)
+
+
+def _begin(root):
     require_stopped()
     if (layout(root)[0]/'review-required.json').exists():
         raise ValueError('世界恢复记录正在核查，请打开「世界恢复复核」查看标记来源。')
@@ -917,6 +933,8 @@ def unverified_generations(saves, slot):
 
 
 def require_review_clear_for_transfer(root):
+    from save_resolution import require_launch_clear
+    require_launch_clear(root)
     # The transfer paths already reject pending own-world journals. Also guard
     # moved/incomplete evidence whose journal is missing, and explicit markers.
     folder, _ = layout(root)

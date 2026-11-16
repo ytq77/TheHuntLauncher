@@ -280,9 +280,10 @@
             <Border x:Name="SaveBackupsPanel" Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="20" Margin="0,0,0,20">
               <StackPanel>
                 <TextBlock Text="启动备份与恢复" FontSize="18" Foreground="#D3D0C5"/>
-                <TextBlock Text="启动前自动备份非空存档，保留最近10份启动/恢复前备份。只处理 savedata，不恢复奖杯和联机辅助记录。"
+                <TextBlock Text="启动前自动备份非空存档，保留最近10份启动/恢复前备份。普通备份只恢复 savedata；处理前的存档另行保全，换回时会成套恢复联机记录，不合并进度。"
                            Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,10,0,12"/>
                 <ComboBox x:Name="SaveBackupList" MinHeight="36" Margin="0,0,0,12"/>
+                <TextBlock x:Name="SelectedSaveBackup" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23" Margin="0,0,0,10"/>
                 <WrapPanel>
                   <Button x:Name="RefreshSaveBackups" Content="刷新备份列表" Margin="0,0,10,10"/>
                   <Button x:Name="RestoreSaveBackup" Content="恢复到这个备份" Margin="0,0,10,10"/>
@@ -317,6 +318,22 @@
               <Button x:Name="CopyWorldRecoveryEvidence" Content="复制复核证据" Margin="0,0,0,10"/>
             </WrapPanel>
             <TextBlock x:Name="WorldRecoverySummary" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23"/>
+            <Border x:Name="SaveResolutionPanel" Visibility="Collapsed" Background="#191A1C" BorderBrush="#8A7045" BorderThickness="1" Padding="20" Margin="0,16,0,0">
+              <StackPanel>
+                <TextBlock Text="处理这个存档异常" FontSize="18" Foreground="#E3BC79"/>
+                <TextBlock x:Name="SaveResolutionSummary" TextWrapping="Wrap" LineHeight="23" Foreground="#D3D0C5" Margin="0,10,0,8"/>
+                <TextBlock x:Name="SaveResolutionCharacters" TextWrapping="Wrap" LineHeight="22" Foreground="#B8B5A9" Margin="0,0,0,8"/>
+                <TextBlock Text="任何选择都不会自动执行。确认后会先完整保全原件并核验，成功后才改变；不同版本的进度不会自动合并。" TextWrapping="Wrap" LineHeight="22" Foreground="#B8B5A9" Margin="0,0,0,12"/>
+                <StackPanel x:Name="SaveResolutionOptions"/>
+                <TextBlock x:Name="SaveResolutionPending" TextWrapping="Wrap" LineHeight="23" Foreground="#E3BC79"/>
+                <Button x:Name="ResumeSaveResolution" Content="继续上次的选择" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,8,0,10"/>
+                <WrapPanel>
+                  <Button x:Name="RefreshSaveResolution" Content="重新检查" Margin="0,0,10,10"/>
+                  <Button x:Name="CancelSaveResolution" Content="先不处理" Margin="0,0,10,10"/>
+                </WrapPanel>
+                <TextBlock x:Name="SaveResolutionStatus" TextWrapping="Wrap" LineHeight="23" Foreground="#B8B5A9"/>
+              </StackPanel>
+            </Border>
           </StackPanel>
         </ScrollViewer>
       </Grid>

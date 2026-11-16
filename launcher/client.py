@@ -34,6 +34,19 @@ PUBLIC_DEGRADED_S = 120
 PUBLIC_ALREADY_IN_S = 180
 
 
+class SaveResolutionRequired(ValueError):
+    """The real startup requires a local, explicit save choice before play."""
+
+
+def require_save_resolution_clear():
+    from save_resolution import require_launch_clear
+    try:
+        require_launch_clear(ROOT)
+    except ValueError as error:
+        state('save-resolution-needed', str(error))
+        raise SaveResolutionRequired(str(error)) from error
+
+
 def state(phase, message):
     path = ROOT / "launcher-state.json"
     payload = {"phase": phase, "message": message}
@@ -301,6 +314,8 @@ def build_environment(profile, name, password, settings_env, snapshot):
 
 
 def main():
+    with installation_guard(ROOT):
+        require_save_resolution_clear()
     if (ROOT / ".save-conversion-pending.json").exists():
         raise ValueError("存在未完成的原版存档替换，请先在转换页核对恢复记录和备份。")
     if (ROOT / ".save-conversion.lock").exists():
@@ -338,6 +353,7 @@ def main():
 
 def run_session(profile, name, password, bridge, public_events=None):
     with installation_guard(ROOT):
+        require_save_resolution_clear()
         prepare(profile)
         if public_events is not None:
             public_events.flush()  # data/ exists now; write the startup connection record.
@@ -346,7 +362,11 @@ def run_session(profile, name, password, bridge, public_events=None):
         require_stopped('启动备份')
         backup = save_backups.launch_backup(ROOT)
         state('preparing', backup['message'])
-        recovery_env = world_recovery.begin(ROOT)
+        try:
+            recovery_env = world_recovery.begin(ROOT)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            state('save-resolution-needed', str(error))
+            raise SaveResolutionRequired(str(error)) from error
         token = recovery_env['THEHUNT_WORLD_RECOVERY_TOKEN']
         try:
             seal = world_recovery.quit_seal(token)
@@ -486,5 +506,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as error:
         report_failure('launcher startup', error)
-        state("error", str(error))
+        state("save-resolution-needed" if isinstance(error, SaveResolutionRequired) else "error", str(error))
         sys.exit(1)

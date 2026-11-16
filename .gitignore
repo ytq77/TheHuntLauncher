@@ -18,6 +18,7 @@ __pycache__/
 /save-transfer-result.json
 /save-backups/
 /.save-import.lock
+/.save-import.lock.*.tmp
 /.savedata-import-*/
 /TheHunt.ico
 /.vs/
