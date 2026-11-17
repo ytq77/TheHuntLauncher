@@ -314,6 +314,8 @@
               <Button x:Name="ImportSaves" Content="从普通版导入" Background="#7D2837" Foreground="#F4EBDF"
                       BorderBrush="#A24B55" FontWeight="SemiBold" Margin="0,0,10,10"/>
               <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
+              <Button x:Name="PickSaveFolder" Content="手动选择存档文件夹" Margin="0,0,10,10"/>
+              <Button x:Name="ClearSaveFolder" Content="清除手动来源，自动查找" Margin="0,0,10,10"/>
               <Button x:Name="OpenSaveBackups" Content="打开备份目录" Margin="0,0,0,10"/>
               <Button x:Name="CopyWorldRecoveryEvidence" Content="复制复核证据" Margin="0,0,0,10"/>
             </WrapPanel>

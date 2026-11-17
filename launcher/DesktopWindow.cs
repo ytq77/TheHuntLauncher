@@ -128,8 +128,10 @@ public sealed class DesktopWindow
         AsyncClick("AbandonSaveResolution",AbandonSaveResolution);
         Click("CancelSaveResolution",delegate { if(resolutionApplying) { Say("选择已开始处理，不能当作取消；请等待结果，再检查能否继续原事务。"); return; } InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="这次选择已取消；存档没有因此改变。重新检查后才能选择。"; SetBusy(); });
         Get<ComboBox>("SaveBackupList").SelectionChanged+=delegate { if(!drawingBackups) InvalidateResolution(); ShowSelectedBackup(); SetBusy(); };
-        Get<TextBox>("InstallPath").TextChanged+=delegate { InvalidateResolution(); };
+        Get<TextBox>("InstallPath").TextChanged+=delegate { inspection=null; InvalidateResolution(); SetBusy(); };
         AsyncClick("RefreshSaves",delegate { return Transfer(false); });
+        AsyncClick("PickSaveFolder",PickSaveFolder);
+        AsyncClick("ClearSaveFolder",ClearOrdinarySource);
         AsyncClick("ImportSaves",async delegate {
             if(inspection==null) throw new InvalidOperationException("请先读取普通版存档信息。");
             if(Confirm("将普通版全部角色进度导入无缝版。\n\n来源："+Str(inspection,"source")+"\n目标："+Str(inspection,"destination")+"\n\n现有无缝存档及已完成的辅助记录会备份、隔离，再整体替换。未完成的世界恢复或共享进度会阻止导入。普通版保持原样。继续？","导入存档")) await Transfer(true);
@@ -188,7 +190,8 @@ public sealed class DesktopWindow
         return Map("install",Path.GetDirectoryName(Text("InstallPath")),"game",Path.GetDirectoryName(Text("GamePath")),"graphics_source",Text("GraphicsPath"));
     }
     void SaveProfile() {
-        var profile=Profile();
+        var profile=ProfileForExplicitSave();
+        foreach(var pair in Profile()) profile[pair.Key]=pair.Value;
         foreach(string n in new [] {"Shadnet","Webapi","Community","Relay","Account"}) if(Text(n).Length==0) throw new InvalidOperationException("请填写完整的联机地址与账号。");
         string path=PathAt(@".private\account.clixml"), password=Get<PasswordBox>("Password").Password;
         if(password.Length==0 && (!File.Exists(path) || DesktopCredentials.Read(path)[0]!=Text("Account"))) throw new InvalidOperationException("首次使用或更换账号时需要填写密码。");
@@ -197,6 +200,14 @@ public sealed class DesktopWindow
         profile["public_online"]=Get<CheckBox>("PublicOnline").IsChecked==true;
         if((bool)profile["public_online"]) SavePublic();
         WriteJson(PathAt("profile.json"),profile); Summary();
+    }
+    Dictionary<string,object> ProfileForExplicitSave() {
+        if(!File.Exists(PathAt("profile.json"))) return Map();
+        // IO failures are deliberately outside the JSON-only recovery boundary.
+        string text=File.ReadAllText(PathAt("profile.json"),Encoding.UTF8);
+        try { return json.Deserialize<Dictionary<string,object>>(text) ?? Map(); }
+        catch(ArgumentException) { return Map(); }
+        catch(InvalidOperationException) { return Map(); }
     }
     string[] PublicCredential() {
         string name=Text("PublicAccount"), password=Get<PasswordBox>("PublicPassword").Password, path=PathAt(@".private\public-online.clixml");
@@ -254,6 +265,8 @@ public sealed class DesktopWindow
     void SetBusy() {
         foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
+        Get<Button>("PickSaveFolder").IsEnabled=!Busy;
+        Get<Button>("ClearSaveFolder").IsEnabled=!Busy;
         Get<Button>("RefreshSaveBackups").IsEnabled=!Busy;
         Get<ComboBox>("SaveBackupList").IsEnabled=!Busy;
         var selected=Get<ComboBox>("SaveBackupList").SelectedItem as ComboBoxItem;
@@ -345,6 +358,15 @@ public sealed class DesktopWindow
     }
     async Task Launch() {
         RequireIdle();
+        if(!Directory.Exists(PathAt("data"))) {
+            operation=true; SetBusy();
+            try {
+                var source=await InspectOrdinarySource(null);
+                if(Flag(source,"exists")) {
+                    if(!Confirm("首次启动将复制以下普通版存档：\n"+Str(source,"source_label")+"\n"+Str(source,"source")+"\n\n普通版原件不会被修改。确认从此来源开始？","确认首次导入来源")) return;
+                } else if(!Confirm(Str(source,"missing_message")+"\n\n继续会进入空存档；之后可以在存档页导入。是否继续？","没有找到普通版存档")) return;
+            } finally { operation=false; SetBusy(); }
+        }
         if(featuresDirty) { Page("Feature"); throw new InvalidOperationException("请先保存功能页中的变更，再启动游戏。"); }
         if(File.Exists(PathAt(".save-import.lock")) || File.Exists(PathAt(@"data\user\save-resolution-review.json"))) {
             Page("Save"); await RefreshSaveBackups();
@@ -726,6 +748,69 @@ public sealed class DesktopWindow
         }
         finally { operation=false; SetBusy(); }
     }
+    void SaveOrdinarySource(string source) {
+        var profile=File.Exists(PathAt("profile.json")) ? ReadJson(PathAt("profile.json")):Map();
+        if(source.Length==0) profile.Remove("ordinary_savedata"); else profile["ordinary_savedata"]=source;
+        WriteJson(PathAt("profile.json"),profile);
+        inspection=null; InvalidateResolution(); SetBusy();
+        Get<TextBlock>("SourceSavePath").Text=source.Length==0 ? "已清除手动来源，使用自动查找。":source;
+    }
+    async Task<Dictionary<string,object>> InspectOrdinarySource(string manual,bool preview=false) {
+        string install=Text("InstallPath");
+        string result=PathAt("save-transfer-result.json"); if(File.Exists(result)) File.Delete(result);
+        string arguments="--source-only --install "+Quote(String.IsNullOrWhiteSpace(install) ? "":Path.GetDirectoryName(install))+" --result "+Quote(result);
+        if(manual!=null) arguments+=" --manual-source "+Quote(manual);
+        if(preview) arguments+=" --preview-source";
+        using(var process=Process.Start(Python("save_transfer.py",arguments))) {
+            var output=process.StandardOutput.ReadToEndAsync(); var errors=process.StandardError.ReadToEndAsync();
+            await Task.Run(()=>process.WaitForExit()); await Task.WhenAll(output,errors);
+            var value=ReadJson(result);
+            if(process.ExitCode!=0 || !Flag(value,"ok")) throw new InvalidOperationException(Str(value,"error"));
+            return value;
+        }
+    }
+    async Task PickSaveFolder() {
+        RequireIdle();
+        if(!File.Exists(Text("InstallPath"))) throw new InvalidOperationException("请先在‘游戏与联机’选择存在的普通版 Bloodborne.exe，再手动选择存档文件夹。");
+        var assembly=System.Reflection.Assembly.Load("System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089");
+        var type=assembly.GetType("System.Windows.Forms.FolderBrowserDialog",true);
+        string selected;
+        using(var dialog=(IDisposable)Activator.CreateInstance(type)) {
+            type.GetProperty("Description").SetValue(dialog,"选择 user、savedata 或 SPRJ0005 存档文件夹",null);
+            type.GetProperty("ShowNewFolderButton").SetValue(dialog,false,null);
+            if(Convert.ToInt32(type.GetMethod("ShowDialog",Type.EmptyTypes).Invoke(dialog,null))!=1) return;
+            selected=(string)type.GetProperty("SelectedPath").GetValue(dialog,null);
+        }
+        await SetOrdinarySource(selected);
+    }
+    async Task SetOrdinarySource(string selected) {
+        RequireIdle(); operation=true; SetBusy();
+        try {
+            var value=await InspectOrdinarySource(selected,true);
+            if(!Flag(value,"exists")) throw new InvalidOperationException(Str(value,"missing_message"));
+            SaveOrdinarySource(Str(value,"source"));
+            if(!Directory.Exists(PathAt("data"))) { ShowOrdinaryPreview(value); return; }
+        } finally { operation=false; SetBusy(); }
+        await Transfer(false);
+    }
+    void ShowOrdinaryPreview(Dictionary<string,object> value) {
+        inspection=null; InvalidateResolution();
+        Get<TextBlock>("SourceSavePath").Text=Str(value,"source");
+        Get<TextBlock>("SaveSummary").Text=Str(value,"source_label")+"\n"+OrdinaryCharacters(value)+"\n首次启动会复制此来源；尚未初始化，当前没有改动存档。";
+    }
+    async Task ClearOrdinarySource() {
+        RequireIdle(); SaveOrdinarySource("");
+        if(Directory.Exists(PathAt("data"))) { await Transfer(false); return; }
+        operation=true; SetBusy();
+        try {
+            var value=await InspectOrdinarySource(null,true);
+            if(Flag(value,"exists")) ShowOrdinaryPreview(value);
+            else { Get<TextBlock>("SourceSavePath").Text=Str(value,"source"); Get<TextBlock>("SaveSummary").Text=Str(value,"missing_message"); }
+        } finally { operation=false; SetBusy(); }
+    }
+    static string OrdinaryCharacters(Dictionary<string,object> value) {
+        return String.Join("\n",Rows(value,"characters").Select(row=>"角色："+Str(row,"name")+" · 槽位 "+Str(row,"slot")).ToArray());
+    }
     async Task Transfer(bool apply) {
         RequireIdle(); if(!File.Exists(Text("InstallPath"))) throw new InvalidOperationException("请先选择普通版 Bloodborne.exe。");
         InvalidateResolution();
@@ -740,7 +825,7 @@ public sealed class DesktopWindow
                 var value=ReadJson(result); if(!Flag(value,"ok") || p.ExitCode!=0) throw new InvalidOperationException(Str(value,"error"));
                 Get<TextBlock>("SourceSavePath").Text=Str(value,"source"); Get<TextBlock>("DestinationSavePath").Text=Str(value,"destination");
                 if(apply) { Get<TextBlock>("SaveSummary").Text="导入完成。\n"+Str(value,"notice")+"\n备份："+Str(value,"backup"); await RefreshTrophies(); }
-                else { inspection=value; Get<TextBlock>("SaveSummary").Text=Str(value,"file_count")+" 个文件 · 最近保存："+Str(value,"latest_write"); }
+                else { inspection=value; Get<TextBlock>("SaveSummary").Text=Str(value,"source_label")+"\n"+Str(value,"file_count")+" 个文件 · 最近保存："+Str(value,"latest_write")+"\n"+OrdinaryCharacters(value); }
             }
         } catch(Exception e) { Get<TextBlock>("SaveSummary").Text=e.Message; throw; }
         finally { operation=false; SetBusy(); }

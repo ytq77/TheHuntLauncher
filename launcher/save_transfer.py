@@ -177,36 +177,143 @@ def publish_intent(descriptor, folder, intent):
     write_lock_intent(descriptor, payload)
 
 
-def _source_user_dir(install, settings_path):
-    # Explicit input; operational failures propagate for recovery callers.
-    settings = Path(settings_path)
-    config = json.loads(settings.read_text(encoding="utf-8-sig")) if settings.exists() else {}
-    if not isinstance(config, dict):
-        raise ValueError("普通版设置文件格式不正确。")
-    user_dir = config.get("user_dir") or install / "user"
-    if not Path(user_dir).is_absolute():
-        raise ValueError("普通版存档目录必须是绝对路径。")
-    return Path(user_dir)
-
-
-def resolve_source_path(install, settings_path):
-    """Resolve a readonly ordinary source without ROOT/environment or error masking."""
-    install = plain_path(install)
-    if not (install / "Bloodborne.exe").is_file():
-        raise ValueError("找不到普通版 Bloodborne.exe，请先选择正确的普通版程序。")
-    return plain_path(_source_user_dir(install, plain_path(settings_path)) / "savedata")
-
-
-def source_path(install):
-    install = plain_path(install)
-    if not (install / "Bloodborne.exe").is_file():
-        raise ValueError("找不到普通版 Bloodborne.exe，请先选择正确的普通版程序。")
-    settings = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
+def character_name(raw, role=None):
+    """Decode Bloodborne's UTF-16BE display name; never change identity bytes."""
+    role = offline_save.parse(raw) if role is None else role
     try:
-        user_dir = _source_user_dir(install, settings)
-    except (OSError, TypeError, json.JSONDecodeError):
-        raise ValueError("无法读取普通版存档目录设置。") from None
-    return plain_path(user_dir / "savedata")
+        return raw[role.username:role.username+32].decode('utf-16-be').split(chr(0), 1)[0]
+    except UnicodeError:
+        return '姓名未识别'
+
+
+def _source_io(error, kind, label, path):
+    # Keep the actual OSError instance/type for A's temporary-error classifier.
+    error.source_kind = kind
+    error.source_label = label
+    error.source_path = str(path)
+    return error
+
+
+def source_error_message(error):
+    kind = getattr(error, 'source_kind', None)
+    label = getattr(error, 'source_label', '读取普通版安装位置')
+    path = getattr(error, 'source_path', getattr(error, 'filename', None) or '路径未知')
+    if kind == 'manual':
+        prefix = '无法读取手动选择的存档位置'
+    elif kind == 'default':
+        prefix = '无法读取所选 Bloodborne.exe 旁边的默认存档位置'
+    elif kind == 'bbport':
+        prefix = '无法读取普通版存档目录设置（bbport）'
+    else:
+        prefix = '无法读取普通版存档位置'
+    return f'{prefix}：{path}。{label}。可以在存档页重新选择；请检查权限或稍后重试。原因：{error}'
+
+
+def _savedata_path_spelling(folder):
+    """Compute the exact target before IO, so an ancestor error names it too."""
+    folder = Path(os.path.abspath(folder))
+    if folder.name.casefold() == 'savedata':
+        return folder
+    if folder.name.casefold() == 'sprj0005':
+        if (folder.parent.name.casefold() != 'cusa00207' or
+                folder.parent.parent.name != '1' or
+                folder.parent.parent.parent.name.casefold() != 'savedata'):
+            raise ValueError(f'所选 SPRJ0005 不在 savedata/1/CUSA00207 下：{folder}。请重新选择 user、savedata 或正确的 SPRJ0005 文件夹。')
+        return folder.parent.parent.parent
+    return folder / 'savedata'
+
+
+def normalize_savedata_path(folder):
+    """Accept three visible levels and enforce the existing path guard."""
+    return plain_path(_savedata_path_spelling(folder))
+
+
+def manual_source_setting(root):
+    profile = plain_path(Path(root) / 'profile.json')
+    try:
+        config = json.loads(profile.read_text(encoding='utf-8-sig'))
+    except FileNotFoundError:
+        return ''
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError(f'本启动器设置文件读不出：{profile}。请在设置页重新填写并保存；未改动存档。') from error
+    if not isinstance(config, dict):
+        raise ValueError(f'本启动器设置文件格式不正确：{profile}。')
+    value = config.get('ordinary_savedata', '')
+    if not isinstance(value, str):
+        raise ValueError(f'本启动器手动存档路径格式不正确：{profile}。请在存档页清除后重新选择。')
+    return value.strip()
+
+
+def source_details(install, *, root=None, settings_path=None, manual_path=None):
+    """Single readonly import-source policy, with all state passed explicitly."""
+    install = plain_path(install)
+    if not (install / "Bloodborne.exe").is_file():
+        raise ValueError(f"找不到普通版 Bloodborne.exe：{install / 'Bloodborne.exe'}，请先选择正确的普通版程序。")
+    if manual_path is None:
+        try:
+            manual_path = manual_source_setting(root) if root is not None else ''
+        except OSError as error:
+            raise _source_io(error, 'manual', '读取本启动器的手动来源设置',
+                             Path(root) / 'profile.json')
+    if not isinstance(manual_path, str):
+        raise ValueError('手动存档路径必须是明确的文件夹路径。')
+    if manual_path.strip():
+        selected, kind = manual_path.strip(), 'manual'
+        label = '按手动选择的存档位置查找'
+    else:
+        settings = plain_path(Path(settings_path) if settings_path is not None else
+                              Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json")
+        try:
+            config = json.loads(settings.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            config = {}
+        except OSError as error:
+            raise _source_io(error, 'bbport', '读取 bbport 设置里的存档位置', settings)
+        if not isinstance(config, dict):
+            raise ValueError(f"普通版设置文件格式不正确：{settings}。可以在存档页手动选择存档文件夹。")
+        selected = config.get('user_dir')
+        if selected:
+            if not isinstance(selected, str):
+                raise ValueError(f"普通版存档目录设置格式不正确：{settings}。可以在存档页手动选择存档文件夹。")
+            kind, label = 'bbport', '按 bbport 设置里的存档位置查找'
+        else:
+            selected = str(install / 'user')
+            kind, label = 'default', '按所选 Bloodborne.exe 旁边的默认位置查找'
+    if not Path(selected).is_absolute():
+        raise ValueError(f"普通版存档目录必须是绝对路径（{label}）：{selected}。请在存档页重新选择。")
+    source = _savedata_path_spelling(selected)
+    try:
+        source = normalize_savedata_path(selected)
+        info = source.stat()
+    except FileNotFoundError:
+        exists = False
+    except OSError as error:
+        raise _source_io(error, kind, label, source)
+    else:
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError(f'{label}：{source}，不是文件夹。请在存档页手动选择存档文件夹。')
+        exists = True
+    missing = (f'没有找到普通版存档（查找位置：{source}）。{label}：{source}，没有找到。'
+               '可以在存档页手动选择存档文件夹；现在进游戏会是空存档，以后可以在存档页导入。')
+    return {'source': str(source), 'source_kind': kind, 'source_label': label,
+            'exists': exists, 'missing_message': missing}
+
+
+def resolve_source_path(install, settings_path, manual_path=None):
+    """Explicit source resolver, independent of ROOT and launcher profile."""
+    return Path(source_details(install, settings_path=settings_path, manual_path=manual_path)['source'])
+
+
+def source_path(install, *, root=None, manual_path=None):
+    # Callers supplying their installation root opt into its manual import source.
+    # Conversion exports keep their existing automatic ordinary destination.
+    try:
+        return Path(source_details(install, root=root, manual_path=manual_path)['source'])
+    except OSError as error:
+        raise ValueError(source_error_message(error)) from error
+    except (TypeError, json.JSONDecodeError) as error:
+        settings = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
+        raise ValueError(f"无法读取普通版存档目录设置（bbport）：{settings}。请在存档页手动选择存档文件夹。原因：{error}") from error
 
 
 def snapshot(folder):
@@ -314,8 +421,19 @@ def inspect_source(source):
     if not valid:
         raise ValueError("未找到有效的非空 Bloodborne userdata 存档，已停止导入。")
     latest = max(details[3] for details in files.values())
+    characters = []
+    for slot in range(10):
+        path = source / '1/CUSA00207/SPRJ0005' / f'userdata{slot:04}'
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if not any(raw):
+            continue
+        role = offline_save.parse(raw)
+        name = character_name(raw, role)
+        characters.append({'slot': slot + 1, 'name': name})
     return {
-        "source": str(source), "file_count": len(files),
+        "source": str(source), "characters": characters, "file_count": len(files),
         "total_bytes": sum(item[2] for item in files.values()),
         "latest_write": datetime.fromtimestamp(latest / 1e9).strftime("%Y-%m-%d %H:%M:%S"),
     }, inventory
@@ -339,10 +457,13 @@ def install_prepared_savedata(stage, destination, expected):
 def inspect(install):
     if (ROOT / ".save-conversion.lock").exists():
         raise ValueError("转换测试正在进行，请先等待转换操作完成。")
-    source = source_path(install)
+    details = source_details(install, root=ROOT)
+    source = Path(details['source'])
     destination = plain_path(ROOT / "data/user/savedata")
     if overlaps(source, destination):
         raise ValueError("普通版与无缝版的存档路径相同或互相包含，已停止导入。")
+    if not details['exists']:
+        raise ValueError(details['missing_message'])
     if not destination.parent.is_dir():
         raise ValueError("无缝版尚未初始化，请先启动一次；首次启动会自动导入普通版存档。")
     if (ROOT/'.save-conversion-pending.json').exists():
@@ -356,6 +477,8 @@ def inspect(install):
         "ok": True, "source": str(source), "destination": str(destination),
         "file_count": source_info["file_count"], "total_bytes": source_info["total_bytes"],
         "latest_write": source_info["latest_write"],
+        "characters": source_info["characters"],
+        "source_kind": details["source_kind"], "source_label": details["source_label"],
         "backup": None, "error": None,
         "notice": "将替换无缝版全部角色和进度；不会合并。旧存档及已完成的联机辅助记录会一起备份、隔离。",
     }, inventory
@@ -493,6 +616,9 @@ def main(argv=None):
     parser.add_argument("--result", required=True)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--expected-source")
+    parser.add_argument("--source-only", action="store_true")
+    parser.add_argument("--preview-source", action="store_true")
+    parser.add_argument("--manual-source")
     args = parser.parse_args(argv)
     info = {"ok": False, "source": None, "destination": str(ROOT / "data/user/savedata"),
             "file_count": 0, "total_bytes": 0, "latest_write": None, "backup": None, "error": None}
@@ -504,13 +630,29 @@ def main(argv=None):
         if overlaps(result, protected):
             return 1
     try:
-        source = source_path(args.install)
+        details = source_details(args.install, root=ROOT, manual_path=args.manual_source)
+        source = Path(details['source'])
         info["source"] = str(source)
+        info.update({key: details[key] for key in ('source_kind', 'source_label', 'exists', 'missing_message')})
         if overlaps(result, source):
             return 1
-        info = apply(args.install, args.expected_source) if args.apply else inspect(args.install)[0]
+        if args.source_only:
+            if args.apply:
+                raise ValueError('只读路径检查不能同时执行导入。')
+            if args.preview_source and details['exists']:
+                metadata, _ = inspect_source(source)
+                info.update(metadata)
+                info['notice'] = '只读检查完成；没有导入或改变任何存档。首次启动时才会复制到独立存档。'
+            info['ok'] = True
+        else:
+            if args.preview_source:
+                raise ValueError('来源预览只允许与 --source-only 一起使用。')
+            if args.manual_source is not None:
+                raise ValueError('手动路径须先在本启动器设置中保存，再读取并确认导入。')
+            info = apply(args.install, args.expected_source) if args.apply else inspect(args.install)[0]
     except (OSError, ValueError, KeyError) as error:
-        info["error"] = str(error) if isinstance(error, ValueError) else "无法读取或复制存档文件，请检查路径、权限和磁盘空间。"
+        info["error"] = (str(error) if isinstance(error, ValueError) else source_error_message(error)
+                         if hasattr(error, 'source_kind') else "无法读取或复制存档文件，请检查路径、权限和磁盘空间。")
     result.parent.mkdir(parents=True, exist_ok=True)
     temporary = result.with_name(result.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")

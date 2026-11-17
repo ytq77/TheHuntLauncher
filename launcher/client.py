@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 from settings_bridge import sync_settings
 from feature_settings import environment as feature_environment
 from save_transfer import (copy_verified, import_lock, import_auxiliary_snapshot,
-                           require_stopped, snapshot, content_inventory, source_path, validate_savedata,
+                           require_stopped, snapshot, content_inventory, source_path, source_details, validate_savedata,
                            installation_guard)
 
 ROOT = Path(__file__).resolve().parent
@@ -251,7 +251,11 @@ def _prepare(profile, old_auxiliary=None):
             shutil.copytree(origin, stage / name)
         elif origin.is_file():
             shutil.copy2(origin, stage / name)
-    save_root = source_path(install)
+    source_info = source_details(install, root=ROOT, manual_path=profile.get('ordinary_savedata'))
+    save_root = Path(source_info['source'])
+    if not source_info['exists']:
+        state('preparing', source_info['missing_message'])
+        report_line(source_info['missing_message'])
     trophies = trophy_sync.prepare([save_root.parent / trophy_sync.NAME],
                                    stage / 'user' / trophy_sync.NAME)
     trophy_sync.backup(trophies, stage / 'trophy-import-backup')

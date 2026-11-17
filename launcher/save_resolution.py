@@ -265,10 +265,7 @@ def _readability(folder):
             readable += 1
             identities.append(_sha(raw[role.username:role.username+32]+raw[role.face+4:role.face+239]))
             if not row['name']:
-                try:
-                    row['name'] = raw[role.username:role.username+32].decode('utf-16-le').split('\0')[0]
-                except UnicodeError:
-                    row['name'] = '姓名未识别'
+                row['name'] = transfer.character_name(raw, role)
         if all(identities) and identities[0] != identities[1]:
             row['identity_conflict'] = True
         if (row['primary'], row['backup']) != ('missing', 'missing'):
@@ -531,12 +528,16 @@ def _ordinary_source(root, install):
     if not _exists(install/'Bloodborne.exe'):
         return None, {'status': 'not_found', 'reason': '所选原版程序已找不到，请重新选择。'}
     settings = Path(os.environ['APPDATA'])/'bbport-launcher/settings.json'
-    settings_before = _file(settings)
-    source = transfer.resolve_source_path(install, settings)
+    profile_path = root/'profile.json'
+    profile_before = _file(profile_path)
+    manual = transfer.manual_source_setting(root)
+    settings_before = _file(settings) if not manual else None
+    details = transfer.source_details(install, root=root, settings_path=settings)
+    source = Path(details['source'])
     if transfer.overlaps(source, root):
         raise ValueError('原版来源与当前安装重叠，不能用作重新导入来源。')
     if not _exists(source):
-        return None, {'status': 'missing_savedata', 'reason': '原版存档目录不存在；未证明原有进度损坏。'}
+        return None, {'status': 'missing_savedata', 'reason': details['missing_message'] + '未证明原有进度损坏。'}
     snapshot = transfer.snapshot(source)
     try:
         metadata, inventory = transfer.inspect_source(source)
@@ -547,10 +548,11 @@ def _ordinary_source(root, install):
                       'characters': quality['characters'], 'occupied_roles_known': False}
     quality = _readability(source)
     metadata['characters'] = quality['characters']
-    if transfer.snapshot(source) != snapshot or _file(settings) != settings_before:
+    if (transfer.snapshot(source) != snapshot or _file(profile_path) != profile_before or
+            (not manual and _file(settings) != settings_before)):
         raise world.EvidenceChangedError('原版来源或目录设置发生变化，请重新检查。')
     return {'path': source, 'snapshot': snapshot, 'inventory': backups._inventory(inventory),
-            'metadata': metadata, 'settings': settings_before, 'settings_path': str(settings), 'install': str(install)}, {'status': 'qualified', 'metadata': metadata}
+            'metadata': metadata, 'settings': settings_before, 'settings_path': str(settings), 'profile': profile_before, 'install': str(install)}, {'status': 'qualified', 'metadata': metadata}
 
 
 def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None, ordinary_install=None):

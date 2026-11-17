@@ -29,6 +29,8 @@ class Slice2Tests(unittest.TestCase):
         return s.apply(self.root, choice.get('digest',plan['digest']), action, confirmed=True, **kwargs)
 
     def original(self):
+        # Import source selection now reads the installation's real JSON settings.
+        (self.root/'profile.json').write_text('{}', encoding='utf-8')
         ordinary = self.base/'ordinary'
         ordinary.mkdir(); (ordinary/'Bloodborne.exe').write_bytes(b'not executed')
         shutil.copytree(self.root/'data/user/savedata', ordinary/'user/savedata')
@@ -264,6 +266,7 @@ class Slice2Tests(unittest.TestCase):
             for action in ('preserve','restart'):
                 with self.subTest(mode=mode,action=action):
                     root=self.base/(mode+'-'+action);saves=f.create(root)
+                    (root/'profile.json').write_text('{}', encoding='utf-8')
                     ordinary=self.base/(mode+'-'+action+'-ordinary');ordinary.mkdir()
                     (ordinary/'Bloodborne.exe').write_bytes(b'not executed')
                     source=ordinary/'user/savedata';shutil.copytree(root/'data/user/savedata',source)
