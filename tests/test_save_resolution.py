@@ -261,7 +261,8 @@ class ResolutionTests(unittest.TestCase):
         target = self.root/'safe-synthetic-target'
         target.mkdir()
         link = self.root/'mod/guest-items'
-        command = ['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(target)]
+        command = ['cmd.exe', '/d', '/c', 'mklink', '/J',
+                   str(link).replace('/', chr(92)), str(target).replace('/', chr(92))]
         made = subprocess.run(command, capture_output=True, text=True, encoding='oem')
         self.assertEqual(made.returncode, 0, made.stdout+made.stderr)
         try:

@@ -74,6 +74,18 @@ class RecoveryTests(unittest.TestCase):
         wr.poll(self.root, self.token)
         self.exited()
 
+    def test_entries_rebuild_enumerated_paths_before_comparison(self):
+        folder = self.root/'enumeration'
+        folder.mkdir()
+        for name in ('b.bin', 'a.bin', 'other.txt'):
+            (folder/name).write_bytes(b'synthetic evidence')
+        result = wr.entries(folder, '*.bin')
+        expected = [wr.plain_path(folder)/name for name in ('a.bin', 'b.bin')]
+        self.assertEqual(result, expected)
+        self.assertEqual(set(result), set(expected))
+        self.assertTrue(all(path in {p: True for p in expected} for path in result))
+        self.assertEqual([path.read_bytes() for path in result], [b'synthetic evidence']*2)
+
     def test_superseded_restore_retains_job_directory(self):
         self.request(wr.RESTORE, seq=1)
         wr.poll(self.root, self.token)

@@ -343,7 +343,7 @@ def _list_cases(root):
     rows, warnings = [], []
     if not _exists(base):
         return rows, warnings
-    for child in sorted(base.iterdir()):
+    for child in sorted(base / path.name for path in base.iterdir()):
         if not TOKEN.fullmatch(child.name) or not _exists(child/'receipt.json'):
             continue
         try:
@@ -368,7 +368,7 @@ def _ordinary(root, *, with_status=False):
     base = transfer.plain_path(root/'save-backups')
     rows, warnings, incomplete = [], [], False
     if _exists(base):
-        for child in sorted(base.iterdir()):
+        for child in sorted(base / path.name for path in base.iterdir()):
             if not backups.NAME.fullmatch(child.name) or not _exists(child/'backup.json'):
                 continue
             try:
@@ -1395,7 +1395,8 @@ def _completed_result(root, fingerprint, *, v2_abandon_only=False):
     base = root/'save-backups/recovery-choice'
     if not _exists(base):
         return None
-    for child in base.iterdir():
+    for path in base.iterdir():
+        child = base / path.name
         if not TOKEN.fullmatch(child.name) or not _exists(child/'receipt.json'):
             continue
         intent, raw = _json(child/'intent.json')

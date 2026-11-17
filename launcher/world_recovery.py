@@ -125,7 +125,7 @@ def entries(folder, pattern='*'):
     """Path.glob can silently skip inaccessible evidence directories."""
     folder = plain_path(folder)
     try:
-        return sorted(path for path in folder.iterdir() if path.match(pattern))
+        return sorted(folder / path.name for path in folder.iterdir() if path.match(pattern))
     except FileNotFoundError as error:
         require_stable_missing(error)
         return []
