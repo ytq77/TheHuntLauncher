@@ -207,7 +207,7 @@ def worker(args):
 
 
 class Runner:
-    def __init__(self, evidence):
+    def __init__(self, evidence, *, recovery_exits_only=False):
         self.repo = Path(__file__).resolve().parents[1]
         self.evidence = evidence.resolve()
         self.evidence.mkdir(parents=True, exist_ok=False)
@@ -227,6 +227,7 @@ class Runner:
         self.completed = []
         self.current = {}
         self.invocations = []
+        self.recovery_exits_only = recovery_exits_only
 
     def command(self, root, trace, pause=-1, hit=None, probe=False):
         command = [sys.executable, '-B', str(Path(__file__).resolve()), '--worker', '--freeze', str(self.freeze),
@@ -297,20 +298,22 @@ class Runner:
 
     def fixture(self, action):
         root = Path(tempfile.mkdtemp(prefix=action + '-', dir=self.fixtures)).resolve()
-        saves = self.fx.create(root, marker=action != 'accept-bound' and action != 'use-current')
+        clean_restore = self.recovery_exits_only and action == 'restore-case'
+        saves = self.fx.create(root, marker=action not in ('accept-bound', 'use-current') and not clean_restore)
         self.s.backups.launch_backup(root)
         backup, = self.s.backups._list(root)[0]
         save(root/'synthetic-probe-backup.json', {key: backup[key] for key in ('id','fingerprint')})
         selection = None
         if action == 'accept-bound':
             self.fx.request(root, job=True)
-        elif action == 'use-current':
+        elif action == 'use-current' or clean_restore:
             (root / GATE).write_bytes(b'opaque gate over a clean synthetic branch')
             self.fx.choose(root, 'use-current')
             selection, = self.s.list_cases(root)['backups']
             (saves / 'newer-branch').write_bytes(b'synthetic current branch not merged')
-            self.fx.choose(root, 'restore-case', selection)
-            selection = None
+            if action == 'use-current':
+                self.fx.choose(root, 'restore-case', selection)
+                selection = None
         else:
             if action in ('restore-all', 'restore-case'):
                 self.s.backups.launch_backup(root)
@@ -374,6 +377,25 @@ class Runner:
                    'original': case_content(case), 'retired': case_content(case, 'retired'),
                    'stage': case_content(case, 'stage'), 'intent_sha256': sha(intent_raw),
                    'sentinels': {name: sha(raw) for name, raw in sentinels.items()}}
+        if self.recovery_exits_only and intent['action'] in ('abandon', 'restore-case'):
+            savedata = content(root)['trees']['savedata']
+            plan = self.cli(root, {'action': 'plan'}, directory, 'exit-plan')
+            option = 'use-current' if intent['action'] == 'restore-case' else 'accept-all'
+            assert option in [row['id'] for row in plan['options']], plan
+            exit_result = self.cli(root, {'action': 'apply', 'digest': plan['digest'],
+                'option_id': option, 'confirmed': True,
+                **self.selection_args(plan['selection'])}, directory, 'exit-apply')
+            assert exit_result['can_launch'] is (option == 'use-current')
+            assert not (root/GATE).exists()
+            ready = self.cli(root, {'action': 'plan'}, directory, 'exit-normal-plan')
+            assert not ready['needed'] and ready['pending'] is None, ready
+            assert content(root)['trees']['savedata'] == savedata
+            env = self.s.world.begin(root)
+            assert env['THEHUNT_WORLD_RECOVERY_TOKEN']
+            assert content(root)['trees']['savedata'] == savedata
+            assert case_content(case) == before, 'Exit changed the preserved original'
+            summary['post_completion_exit'] = {'option': option, 'real_world_begin': True,
+                                               'savedata_and_original_unchanged': True}
         if intent['action'] == 'use-current':
             env = self.s.world.begin(root)
             assert env['THEHUNT_WORLD_RECOVERY_TOKEN']
@@ -536,7 +558,8 @@ class Runner:
 
     def run(self, dry_run_only=False):
         try:
-            matrix = {action: self.dry_run(action) for action in ACTIONS}
+            actions = ('abandon', 'restore-case', 'use-current') if self.recovery_exits_only else ACTIONS
+            matrix = {action: self.dry_run(action) for action in actions}
             save(self.evidence / 'checkpoint-matrix.json', matrix)
             if dry_run_only:
                 result = {'all_required_passed': False, 'harness_dry_run_completed': True,
@@ -580,6 +603,8 @@ def main():
     parser.add_argument('--pause', type=int, default=-1)
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--dry-run-only', action='store_true')
+    parser.add_argument('--recovery-exits-only', action='store_true',
+                        help='Only abandonment writes and clean restore/use-current chains, not the full matrix.')
     args = parser.parse_args()
     if args.worker:
         return worker(args)
@@ -587,7 +612,7 @@ def main():
         parser.error('--evidence is required and must not already exist')
     if os.name != 'nt':
         parser.error('This independent runner requires Windows real tasklist/named-mutex behavior.')
-    return Runner(args.evidence).run(args.dry_run_only)
+    return Runner(args.evidence, recovery_exits_only=args.recovery_exits_only).run(args.dry_run_only)
 
 
 if __name__ == '__main__':

@@ -286,10 +286,16 @@ print('fixture ready, production validation passed; no game or process-check stu
         $window.FindName('SaveBackupList').SelectedItem=$clean
         Await-Task (Invoke-Private $desktop 'RestoreSaveBackup'); Choose-Apply $desktop 'restore-case' $true
         Assert (@((Plan $desktop)['options'] | Where-Object { $_['id'] -eq 'use-current' -and $_['recommended'] }).Count -eq 1) 'Clean restored branch has no recommended normal gate exit'
-        $ordinary=Join-Path $fixture 'synthetic-ordinary'; $game=Join-Path $fixture 'synthetic-game'
+        # Keep the synthetic ordinary installation outside ROOT, exactly as the
+        # real prepare guard requires. No game executable in it is ever run.
+        $ordinary=Join-Path $OutputDirectory 'synthetic-ordinary'; $game=Join-Path $OutputDirectory 'synthetic-game'
         [void][IO.Directory]::CreateDirectory($ordinary); [void][IO.Directory]::CreateDirectory($game)
         foreach($name in @('Bloodborne.exe','bbport.ini')) { [IO.File]::WriteAllText((Join-Path $ordinary $name),'synthetic file only',$utf8) }
         [IO.File]::WriteAllText((Join-Path $game 'eboot.bin'),'synthetic file only',$utf8)
+        $mod=Join-Path $fixture 'mod'; [void][IO.Directory]::CreateDirectory($mod)
+        [IO.File]::WriteAllText((Join-Path $mod 'LICENSE.txt'),'GNU GENERAL PUBLIC LICENSE - synthetic notice',$utf8)
+        [IO.File]::WriteAllText((Join-Path $mod 'NOTICE.txt'),'github.com/Classmg22/BBSC - synthetic notice',$utf8)
+        [IO.File]::WriteAllText((Join-Path $mod 'SUPPORTERS.txt'),'BBSC SUPPORTERS - synthetic notice',$utf8)
         $window.FindName('InstallPath').Text=Join-Path $ordinary 'Bloodborne.exe'
         $window.FindName('GraphicsPath').Text=Join-Path $ordinary 'bbport.ini'
         $window.FindName('GamePath').Text=Join-Path $game 'eboot.bin'
@@ -301,9 +307,12 @@ print('fixture ready, production validation passed; no game or process-check stu
         Choose-Apply $desktop 'use-current' $true
         Assert (-not (Test-Path (Join-Path $fixture 'data\user\save-resolution-review.json'))) 'Explicit normal exit retained its gate'
         $state=Get-Content -LiteralPath (Join-Path $fixture 'launcher-state.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        Assert ($state.phase -eq 'error' -and $state.message -like '*署名文件*') 'Normal launch did not reach the real client startup notice barrier'
+        Assert ($state.phase -eq 'error' -and $state.message -like '*bbport.ini*output_res*upscaler*preset*') 'Normal launch did not pass prepare and stop at the intended synthetic settings barrier'
+        Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'save-backups') -Directory -Filter 'launch-*').Count -ge 1) 'Real launch backup after prepare was not created'
+        Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'data\user\world-recovery\runs') -File -Filter '*.json').Count -ge 1) 'Real world.begin after prepare was not reached'
         Assert (-not $desktop.Busy) 'Normal launch barrier retained Busy'
-        $passed.Add('Actual restore of the clean before-switch branch -> persistent gate -> recommended use-current -> native Yes -> real DesktopWindow.Launch and client.main. Intentionally stops at missing synthetic mod notices before profile/network/prepare/game. This is not a game-launch or prepare-chain pass.')
+        [IO.File]::WriteAllText((Join-Path $OutputDirectory 'prepare-chain-state.json'),($state | ConvertTo-Json -Depth 6),$utf8)
+        $passed.Add('Actual clean restore -> persistent gate -> use-current -> native Yes -> DesktopWindow.Launch/client.main -> notice/profile/network checks -> real prepare -> launch backup -> world.begin. Intentionally stops at invalid synthetic bbport.ini in sync_settings, before any game/network child launch. No prepare/process-check success stub; this is not real-game validation.')
         # Stop an independent real backend only after its durable lock is published.
         $marker=Join-Path $fixture 'data\user\world-recovery\review-required.json'
         [void][IO.Directory]::CreateDirectory((Split-Path $marker)); [IO.File]::WriteAllText($marker,'{"reason":"synthetic resume anomaly"}',$utf8)
@@ -355,6 +364,7 @@ raise RuntimeError('Controlled strong-kill boundary was not reached')
         Assert (-not (Test-Path (Join-Path $fixture '.save-import.lock'))) 'Actual native resume did not complete its transaction'
         $passed.Add('Independent production apply with only a checkpoint observer -> external Process.Kill after durable lock -> actual backup refresh/A pending -> native resume Yes -> production resume. Other strong-kill boundaries remain the backend suite responsibility.')
         # Second production pending uses an observer exception, not OS kill.
+        [void][IO.Directory]::CreateDirectory((Split-Path $marker))
         [IO.File]::WriteAllText($marker,'{"reason":"second synthetic pending"}',$utf8)
         $abandonSetup=@'
 import sys,json,os
