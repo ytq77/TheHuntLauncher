@@ -574,7 +574,7 @@ public sealed class DesktopWindow
             }
             if(generation!=resolutionGeneration || resolutionPlan!=plan || currentPage!="Save" || closed) throw new InvalidOperationException("确认期间来源或页面已变化，请重新检查。");
             var selection=plan.ContainsKey("selection") ? plan["selection"] as Dictionary<string,object>:null;
-            var request=ResolutionRequest(selection); request["action"]="apply"; request["digest"]=Str(plan,"digest"); request["option_id"]=Str(option,"id"); request["confirmed"]=true;
+            var request=ResolutionRequest(selection); request["action"]="apply"; request["digest"]=option.ContainsKey("digest") ? Str(option,"digest"):Str(plan,"digest"); request["option_id"]=Str(option,"id"); request["confirmed"]=true;
             if(optionId=="restart") request["restart_confirmed"]=true;
             InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="正在保全并核验原件，完成前不要关闭。尚未报告保全成功…";
             var result=await Request("save_resolution.py",request,""); completed=result;

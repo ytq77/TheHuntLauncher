@@ -584,8 +584,17 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
         if source is not None:
             selection = {key: source[key] for key in ('kind', 'id', 'fingerprint')}
     needed = blocked or contents['gate'] is not None or not startable
-    generations = _generation_sources(root, readable) if needed else {}
-    ordinary, ordinary_status = _ordinary_source(root, ordinary_install) if needed else (None, {'status': 'not_needed'})
+    generations = _generation_sources(root, readable) if not startable else {}
+    ordinary, ordinary_status = None, {'status': 'not_needed'}
+    if not startable:
+        try:
+            ordinary, ordinary_status = _ordinary_source(root, ordinary_install)
+        except (OSError, world.EvidenceChangedError) as error:
+            ordinary_status = {'status': 'temporary_error', 'reason':
+                '原版来源暂时无法读取或稳定核对：' + str(error) + '。可以重试，或重新选择原版程序；尚未改动任何存档。'}
+        except ValueError as error:
+            ordinary_status = {'status': 'error', 'reason':
+                '当前无法核对所选原版来源：' + str(error) + '。可以重试，或重新选择原版程序；不代表原版进度损坏。'}
     show_choices = needed or selection_kind == 'resolution-before'
     bound = _bound_scope(root, items, startable, contents['gate']) if needed else None
     options = []
@@ -623,25 +632,26 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
                 '只替换这个槽的主档，其它角色、该槽备档和联机记录不改。'
                 + ('无法核对当前主档的角色身份；使用此槽通过自洽检查的备份代次。' if generation['identity_relation'] == 'primary_unknown' else '主备身份一致。')
                 + '可能回退该角色最近进度，处理后仍须重新检查联机记录，不会自动启动。' + reversible, recommended))
-        if ordinary is not None:
+        if not startable and ordinary is not None:
             recommended = not options and not incomplete
             options.append(_option('reimport-ordinary', '从原版重新导入' + ('（推荐）' if recommended else ''),
                 '会回到原版存档里的全部角色进度；在无缝里新获得的进度不会合并，待补联机进度作废。'
                 + '原版来源时间：' + str(ordinary['metadata'].get('latest_write', '未知')) + '。角色：'
                 + '、'.join((row['name'] or '未知姓名')+'（槽位 '+str(row['slot']+1)+'）' for row in ordinary['metadata']['characters']) + '。' + reversible, recommended))
-        else:
+        elif not startable:
             options.append(_option('choose-ordinary', '选择原版程序' + ('（推荐）' if not options else ''),
                 ordinary_status.get('reason', '') + '选择后先只读检查原版存档，不会自动覆盖当前存档。', not options))
         options.append(_option('preserve', '先保全原件，暂不改变',
             '完整另存当前存档和联机记录，不更换当前进度。异常仍未处理，这次先不启动。'))
-        names = '、'.join((row['name'] or '未知姓名')+'（槽位 '+str(row['slot']+1)+'）' for row in readable['characters']) or '尚未识别到角色'
-        options.append(_option('restart', '封存后从头开始（不推荐）',
-            '启动器无法确认这份存档还能用。此项不推荐，默认不选，需要再次确认。'
-            '从头开始的新存档不包含以下已识别旧角色（包括当前可读的角色）：'+names+'。'
-            '角色占用范围未完全识别，仍可能有未识别角色；不能认定原件已经损坏。'
-            '执行前会完整保全并校验原件，成功后才清空当前存档现场，原版存档不会改动。'
-            '原件会列在备份列表的“重新开始前封存的原件”中，可原样换回；换回后可能仍需处理。'
-            '如果以后有能读取它的版本，可再处理原件，但不能承诺能救回。'))
+        if not startable:
+            names = '、'.join((row['name'] or '未知姓名')+'（槽位 '+str(row['slot']+1)+'）' for row in readable['characters']) or '尚未识别到角色'
+            options.append(_option('restart', '封存后从头开始（不推荐）',
+                '启动器无法确认这份存档还能用。此项不推荐，默认不选，需要再次确认。'
+                '从头开始的新存档不包含以下已识别旧角色（包括当前可读的角色）：'+names+'。'
+                '角色占用范围未完全识别，仍可能有未识别角色；不能认定原件已经损坏。'
+                '执行前会完整保全并校验原件，成功后才清空当前存档现场，原版存档不会改动。'
+                '原件会列在备份列表的“重新开始前封存的原件”中，可原样换回；换回后可能仍需处理。'
+                '如果以后有能读取它的版本，可再处理原件，但不能承诺能救回。'))
     summary = ('换回后需由您重新选择，不会自动回放旧联机记录。' if contents['gate'] is not None else
                '旧联机记录不能自动安全结案，请选择本机处理方式。' if blocked else
                '当前没有需要此流程处理的异常。')
@@ -664,17 +674,24 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
               'characters': readable['characters'], 'warnings': warnings, 'pending': None, 'selection': selection}
     public['startup_reason_code'] = 'nonzero_primary_blocked' if not startable else 'startup_contract_allowed'
     public['ordinary_source'] = ordinary_status
-    public['restart_eligibility'] = {'eligible': needed, 'recommended': False, 'facts': {'startup_blocked': not startable, 'some_readable_generation': bool(readable['readable_generations']), 'no_qualified_backup_found': source is None and not incomplete and not generations, 'original_definitely_unusable': False}, 'reason': '仅作为用户明确授权的非推荐本机出口；角色范围或可用性未知时不认定损坏。', 'occupied_roles_known': False}
+    public['restart_eligibility'] = {'eligible': not startable, 'recommended': False, 'facts': {'startup_blocked': not startable, 'some_readable_generation': bool(readable['readable_generations']), 'no_qualified_backup_found': source is None and not incomplete and not generations, 'original_definitely_unusable': False}, 'reason': '仅作为用户明确授权的非推荐本机出口；角色范围或可用性未知时不认定损坏。', 'occupied_roles_known': False}
     data = {'ordinary': ordinary, 'generations': generations, 'root': str(root), 'before': before, 'content': contents, 'bound': bound,
             'selection': selection, 'source': source, 'public': public}
     binding = {k: v for k, v in data.items() if k not in ('source', 'ordinary')}
-    if ordinary is not None:
-        binding['ordinary'] = {k: (str(v) if isinstance(v, Path) else v) for k, v in ordinary.items()}
+    # An optional original installation cannot invalidate unrelated local choices.
+    # Only reimport binds that source; the UI sends its option-specific digest.
+    binding['public'] = {k: v for k, v in public.items() if k != 'ordinary_source'}
+    binding['public']['options'] = [row for row in options if row['id'] not in ('reimport-ordinary', 'choose-ordinary')]
     if source is not None:
         binding['source'] = source.get('_original', source.get('_inventory'))
         if source['kind'] != 'resolution-before':
             binding['source_snapshot'] = source['_snapshot']
     public['digest'] = _sha(_bytes(binding))
+    if ordinary is not None:
+        original_binding = {k: (str(v) if isinstance(v, Path) else v) for k, v in ordinary.items()}
+        for row in options:
+            if row['id'] == 'reimport-ordinary':
+                row['digest'] = _sha(_bytes({'plan': public['digest'], 'ordinary': original_binding}))
     return public, data
 
 
@@ -1247,7 +1264,9 @@ def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, sele
     root = _root(root)
     with transfer.installation_guard(root):
         public, plan_data = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
-        if not isinstance(digest, str) or digest != public['digest']:
+        choice = next((row for row in public['options'] if row['id'] == option_id), None)
+        expected_digest = choice.get('digest', public['digest']) if choice is not None else public['digest']
+        if not isinstance(digest, str) or digest != expected_digest:
             raise ValueError('检查后来源或当前存档已变化，请重新检查并确认；尚未更换存档。')
         if option_id not in {row['id'] for row in public['options']}:
             raise ValueError('这个选择不适用于当前存档，请重新检查。')
@@ -1317,7 +1336,9 @@ def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, sele
             _checkpoint('after:stage:generation')
         _checkpoint('after:stage')
         again, _ = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
-        if again['digest'] != digest or _capture(root) != before:
+        again_choice = next((row for row in again['options'] if row['id'] == option_id), None)
+        if (again_choice is None or again_choice.get('digest', again['digest']) != digest or
+                _capture(root) != before):
             raise ValueError('保全期间当前存档或所选来源变化，请重新检查；尚未更换存档。')
         created = datetime.now(timezone.utc).isoformat()
         manifest = {'schema': 1, 'kind': 'resolution-before', 'transaction': token, 'root': str(root),

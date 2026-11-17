@@ -316,6 +316,7 @@ print('fixture ready, production validation passed; no game or process-check stu
         $window.FindName('SaveBackupList').SelectedItem=$clean
         Await-Task (Invoke-Private $desktop 'RestoreSaveBackup'); Choose-Apply $desktop 'restore-case' $true
         Assert (@((Plan $desktop)['options'] | Where-Object { $_['id'] -eq 'use-current' -and $_['recommended'] }).Count -eq 1) 'Clean restored branch has no recommended normal gate exit'
+        Assert (@((Plan $desktop)['options'] | Where-Object { $_['id'] -in @('restart','reimport-ordinary','choose-ordinary') }).Count -eq 0) 'Launchable gate exposed slice2 destructive choices'
         # Keep the synthetic ordinary installation outside ROOT, exactly as the
         # real prepare guard requires. No game executable in it is ever run.
         $ordinary=Join-Path $OutputDirectory 'synthetic-ordinary'; $game=Join-Path $OutputDirectory 'synthetic-game'
@@ -486,6 +487,8 @@ e['bad_target']={k:v[0] for k,v in tree(base).items()};record.write_text(json.du
         Invoke-FixturePython $sliceVerify @($fixture,$sliceOrdinary,$sliceExpected) 'slice2-generation-verify-import-setup'
         $window.FindName('InstallPath').Text=Join-Path $sliceOrdinary 'Bloodborne.exe'
         Await-Task (Invoke-Private $desktop 'RefreshSaveBackups')
+        $sourcePlan=Plan $desktop; $sourceChoice=@($sourcePlan['options'] | Where-Object { $_['id'] -eq 'reimport-ordinary' })[0]
+        Assert ($null -ne $sourceChoice -and $sourceChoice.ContainsKey('digest') -and $sourceChoice['digest'] -ne $sourcePlan['digest']) 'Real reimport lacks independent source binding'
         $oldIds=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' } | ForEach-Object { $_.Tag['id'] })
         $before=Hash-File $slicePrimary
         Choose-Apply $desktop 'reimport-ordinary' $false

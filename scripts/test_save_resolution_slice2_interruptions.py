@@ -129,7 +129,7 @@ class Slice2Runner(base.Runner):
         if action == 'restart':
             assert plan['options'][-1]['id'] == 'restart', plan
             assert not plan['restart_eligibility']['recommended'], plan
-        request = {'action': 'apply', 'digest': plan['digest'], 'option_id': action,
+        request = {'action': 'apply', 'digest': next(row for row in plan['options'] if row['id'] == action).get('digest', plan['digest']), 'option_id': action,
                    'confirmed': True, **self.selection_args(plan['selection']), **kwargs}
         if action == 'restart':
             request['restart_confirmed'] = True
@@ -165,7 +165,12 @@ class Slice2Runner(base.Runner):
                     'content_unchanged': base.inventory(destination/'user/savedata') == ctx['source_before']})
             if label in ('apply','fresh-plan','fresh-apply') and not ctx['moved']:
                 request['ordinary_install'] = str(ctx['ordinary'])
-        return super().cli(root, request, directory, label, expected)
+            if label == 'fresh-apply':
+                request['digest'] = ctx['fresh_reimport_digest']
+        result = super().cli(root, request, directory, label, expected)
+        if ctx and ctx['action'] == 'reimport-ordinary' and label == 'fresh-plan':
+            ctx['fresh_reimport_digest'] = next(row['digest'] for row in result['options'] if row['id'] == 'reimport-ordinary')
+        return result
 
     def validate_complete(self, root, before, sentinels, result, directory):
         ctx = self.context[str(root)]

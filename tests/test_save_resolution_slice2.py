@@ -25,7 +25,8 @@ class Slice2Tests(unittest.TestCase):
 
     def choose(self, action, **kwargs):
         plan = s.plan(self.root, **kwargs)
-        return s.apply(self.root, plan['digest'], action, confirmed=True, **kwargs)
+        choice=next(x for x in plan['options'] if x['id']==action)
+        return s.apply(self.root, choice.get('digest',plan['digest']), action, confirmed=True, **kwargs)
 
     def original(self):
         ordinary = self.base/'ordinary'
@@ -83,7 +84,7 @@ class Slice2Tests(unittest.TestCase):
         kwargs={'ordinary_install':str(ordinary)}
         plan=s.plan(self.root,**kwargs)
         (ordinary/'user/savedata/extra').write_bytes(b'new')
-        with self.assertRaises(ValueError): s.apply(self.root,plan['digest'],'reimport-ordinary',confirmed=True,**kwargs)
+        with self.assertRaises(ValueError): s.apply(self.root,next(x['digest'] for x in plan['options'] if x['id']=='reimport-ordinary'),'reimport-ordinary',confirmed=True,**kwargs)
         self.assertFalse((self.root/'.save-import.lock').exists())
 
     def test_unknown_restart_is_never_recommended_or_called_damage(self):
@@ -137,7 +138,7 @@ class Slice2Tests(unittest.TestCase):
         plan=s.plan(self.root,**kwargs)
         settings=self.base/'appdata/bbport-launcher/settings.json'
         settings.parent.mkdir(parents=True);settings.write_text('{}')
-        with self.assertRaises(ValueError): s.apply(self.root,plan['digest'],'reimport-ordinary',confirmed=True,**kwargs)
+        with self.assertRaises(ValueError): s.apply(self.root,next(x['digest'] for x in plan['options'] if x['id']=='reimport-ordinary'),'reimport-ordinary',confirmed=True,**kwargs)
 
     def test_primary_identity_different_blocks_generation(self):
         # primary remains parseable but backup belongs to another synthetic role.
@@ -246,14 +247,129 @@ class Slice2Tests(unittest.TestCase):
         self.assertEqual(s._capture(self.root),before)
         self.assertFalse((self.root/'.save-import.lock').exists())
 
-    def test_restart_only_when_anomaly_blocks_normal_entry(self):
+    def test_reimport_uses_source_bound_digest_not_generic_digest(self):
+        ordinary=self.original();self.bad();kwargs={'ordinary_install':str(ordinary)}
+        plan=s.plan(self.root,**kwargs)
+        bound=next(x['digest'] for x in plan['options'] if x['id']=='reimport-ordinary')
+        self.assertNotEqual(bound,plan['digest'])
+        before=s._capture(self.root)
+        with self.assertRaises(ValueError):
+            s.apply(self.root,plan['digest'],'reimport-ordinary',confirmed=True,**kwargs)
+        self.assertEqual(s._capture(self.root),before)
+        self.assertFalse((self.root/'save-backups/recovery-choice').exists())
+        self.assertEqual(s.apply(self.root,bound,'reimport-ordinary',confirmed=True,**kwargs)['result'],'reimported-ordinary')
+
+    def test_optional_source_change_or_io_only_rejects_reimport(self):
+        for mode in ('changed','unreadable'):
+            for action in ('preserve','restart'):
+                with self.subTest(mode=mode,action=action):
+                    root=self.base/(mode+'-'+action);saves=f.create(root)
+                    ordinary=self.base/(mode+'-'+action+'-ordinary');ordinary.mkdir()
+                    (ordinary/'Bloodborne.exe').write_bytes(b'not executed')
+                    source=ordinary/'user/savedata';shutil.copytree(root/'data/user/savedata',source)
+                    (saves/'userdata0000').write_bytes(b'unsupported current primary')
+                    kwargs={'ordinary_install':str(ordinary)}
+                    plan=s.plan(root,**kwargs)
+                    bound=next(x['digest'] for x in plan['options'] if x['id']=='reimport-ordinary')
+                    before=s._capture(root);real=s.transfer.snapshot
+                    if mode=='changed': (source/'new-file').write_bytes(b'changed source')
+                    def read(path,*args,**options):
+                        if mode=='unreadable' and Path(path)==source:
+                            raise PermissionError('synthetic original no longer readable')
+                        return real(path,*args,**options)
+                    with patch.object(s.transfer,'snapshot',read):
+                        fresh=s.plan(root,**kwargs)
+                        self.assertEqual(fresh['digest'],plan['digest'])
+                        with self.assertRaises(ValueError):
+                            s.apply(root,bound,'reimport-ordinary',confirmed=True,**kwargs)
+                        self.assertEqual(s._capture(root),before)
+                        self.assertFalse((root/'save-backups/recovery-choice').exists())
+                        result=s.apply(root,plan['digest'],action,confirmed=True,
+                                       restart_confirmed=action=='restart',**kwargs)
+                    self.assertEqual(s._original_content(s._case_path(root,result['case_id'])),s._content(before))
+                    if action=='preserve': self.assertEqual(s._capture(root),before)
+                    else: self.assertEqual(list((root/'data/user/savedata').iterdir()),[])
+
+    def test_optional_source_error_after_preservation_does_not_block_preserve(self):
+        ordinary=self.original();self.bad();kwargs={'ordinary_install':str(ordinary)}
+        plan=s.plan(self.root,**kwargs);before=s._capture(self.root)
+        settings=self.base/'appdata/bbport-launcher/settings.json'
+        fired=[]
+        def observe(point):
+            if point=='after:preserve':
+                settings.parent.mkdir(parents=True,exist_ok=True)
+                settings.write_text('{invalid json',encoding='utf-8');fired.append(point)
+        with patch.object(s,'_checkpoint',observe):
+            result=s.apply(self.root,plan['digest'],'preserve',confirmed=True,**kwargs)
+        self.assertEqual(fired,['after:preserve'])
+        self.assertEqual(s._capture(self.root),before)
+        self.assertEqual(s._original_content(s._case_path(self.root,result['case_id'])),s._content(before))
+
+    def test_startable_gate_and_review_keep_only_slice1_choices(self):
+        marker=self.root/'data/user/world-recovery/review-required.json'
+        gate=self.root/s.GATE
+        for kind in ('review','gate','both'):
+            with self.subTest(kind=kind):
+                marker.unlink(missing_ok=True);gate.unlink(missing_ok=True)
+                if kind in ('review','both'): marker.write_bytes(b'opaque review')
+                if kind in ('gate','both'): gate.write_bytes(b'opaque gate')
+                with patch.object(s,'_generation_sources',side_effect=AssertionError('unneeded generation read')),\
+                        patch.object(s,'_ordinary_source',side_effect=AssertionError('unneeded original read')):
+                    plan=s.plan(self.root,ordinary_install=object())
+                self.assertTrue(plan['startable']);self.assertTrue(plan['needed'])
+                self.assertFalse(plan['restart_eligibility']['eligible'])
+                self.assertEqual(plan['ordinary_source']['status'],'not_needed')
+                ids={x['id'] for x in plan['options']}
+                self.assertFalse(ids & {'restart','reimport-ordinary','choose-ordinary'})
+                self.assertIn('preserve',ids)
+                self.assertIn('use-current' if kind=='gate' else 'accept-all',ids)
+        marker.unlink(missing_ok=True);gate.unlink(missing_ok=True)
         plan=s.plan(self.root)
-        self.assertTrue(plan['startable']);self.assertTrue(plan['needed'])
-        self.assertEqual(plan['options'][-1]['id'],'restart')
-        (self.root/'data/user/world-recovery/review-required.json').unlink()
-        plan=s.plan(self.root)
-        self.assertFalse(plan['needed'])
-        self.assertNotIn('restart',[x['id'] for x in plan['options']])
+        self.assertFalse(plan['needed']);self.assertEqual(plan['options'],[])
+        self.assertFalse(plan['restart_eligibility']['eligible'])
+
+    def test_malformed_optional_original_settings_keep_local_choices(self):
+        ordinary=self.original();self.bad()
+        settings=self.base/'appdata/bbport-launcher/settings.json'
+        settings.parent.mkdir(parents=True);settings.write_text('{invalid json',encoding='utf-8')
+        plan=s.plan(self.root,ordinary_install=str(ordinary))
+        self.assertFalse(plan['startable'])
+        self.assertEqual(plan['ordinary_source']['status'],'error')
+        ids={x['id'] for x in plan['options']}
+        self.assertTrue({'preserve','restart','choose-ordinary'}<=ids)
+        self.assertNotIn('reimport-ordinary',ids)
+        choose=next(x for x in plan['options'] if x['id']=='choose-ordinary')
+        self.assertIn('重新选择',choose['description'])
+        before=s._content(s._capture(self.root))
+        result=s.apply(self.root,plan['digest'],'preserve',confirmed=True,ordinary_install=str(ordinary))
+        self.assertEqual(s._original_content(s._case_path(self.root,result['case_id'])),before)
+        self.assertEqual(s._content(s._capture(self.root)),before)
+
+    def test_optional_original_permission_error_keeps_local_choices(self):
+        ordinary=self.original();self.bad();source=ordinary/'user/savedata'
+        real=s.transfer.snapshot
+        def read(path,*args,**kwargs):
+            if Path(path)==source: raise PermissionError('synthetic original directory access denied')
+            return real(path,*args,**kwargs)
+        before=s._content(s._capture(self.root))
+        with patch.object(s.transfer,'snapshot',read):
+            plan=s.plan(self.root,ordinary_install=str(ordinary))
+            self.assertEqual(plan['ordinary_source']['status'],'temporary_error')
+            self.assertIn('access denied',plan['ordinary_source']['reason'])
+            ids={x['id'] for x in plan['options']}
+            self.assertTrue({'preserve','restart','choose-ordinary'}<=ids)
+            self.assertNotIn('reimport-ordinary',ids)
+            result=s.apply(self.root,plan['digest'],'preserve',confirmed=True,ordinary_install=str(ordinary))
+        self.assertEqual(s._original_content(s._case_path(self.root,result['case_id'])),before)
+        self.assertEqual(s._content(s._capture(self.root)),before)
+
+    def test_optional_original_changed_during_read_is_temporary(self):
+        self.bad()
+        with patch.object(s,'_ordinary_source',side_effect=s.world.EvidenceChangedError('synthetic unstable source')):
+            plan=s.plan(self.root,ordinary_install='synthetic original')
+        self.assertEqual(plan['ordinary_source']['status'],'temporary_error')
+        self.assertIn('unstable source',plan['ordinary_source']['reason'])
+        self.assertTrue({'preserve','restart','choose-ordinary'}<={x['id'] for x in plan['options']})
 
     def test_synthetic_new_progress_survives_switching_back_and_forth(self):
         self.bad(); original=s._content(s._capture(self.root))
