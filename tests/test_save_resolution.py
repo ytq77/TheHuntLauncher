@@ -262,7 +262,7 @@ class ResolutionTests(unittest.TestCase):
         target.mkdir()
         link = self.root/'mod/guest-items'
         command = ['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(target)]
-        made = subprocess.run(command, capture_output=True, text=True)
+        made = subprocess.run(command, capture_output=True, text=True, encoding='oem')
         self.assertEqual(made.returncode, 0, made.stdout+made.stderr)
         try:
             with self.assertRaisesRegex(ValueError, '联接'):

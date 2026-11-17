@@ -50,8 +50,10 @@ def _sha(raw):
 def _control(path):
     """Bounded, stable control bytes and identity from the same read-only handle."""
     path = transfer.plain_path(path)
+    # Windows path.stat and fstat can give ctime different meanings. Only
+    # common fields are compared across APIs; ctime is compared within each.
     identity = lambda value: [value.st_dev, value.st_ino, value.st_size,
-                              value.st_mtime_ns, value.st_ctime_ns]
+                              value.st_mtime_ns]
     before = path.stat()
     if not stat.S_ISREG(before.st_mode):
         raise ValueError('处理记录不是普通文件，当前流程不能安全结束它；不会删除或改名。')
@@ -64,7 +66,9 @@ def _control(path):
         raw = stream.read(MAX_RECORD_BYTES + 1)
         after = os.fstat(stream.fileno())
         current = transfer.plain_path(path).stat()
-    if identity(before) != identity(after) or identity(after) != identity(current) or len(raw) != after.st_size:
+    if (identity(before) != identity(after) or identity(after) != identity(current) or
+            before.st_ctime_ns != current.st_ctime_ns or
+            opened.st_ctime_ns != after.st_ctime_ns or len(raw) != after.st_size):
         raise world.EvidenceChangedError('读取处理记录期间文件变化，请重新检查。')
     if len(raw) > MAX_RECORD_BYTES:
         raise ValueError('处理记录超过本版本的安全大小上限，当前流程不能安全结束它；原记录保留，不会删除或改名。')
@@ -121,19 +125,34 @@ class ResolutionRequired(ValueError):
     """A known A transaction/review gate, not an IO or path failure."""
 
 
-def require_launch_clear(root):
-    """Only the fixed gate/A lock, no live-save reads or old embedded paths."""
+def require_launch_clear(root, *, strict=False):
+    """A-only delegation by default; direct writers use strict active-lock rejection."""
     root = transfer.plain_path(root)
     if _exists(root/GATE):
         raise ResolutionRequired('这份存档需要您重新选择。请在存档页处理；不会自动启动或回退。')
     lock = root/'.save-import.lock'
     if _exists(lock):
         try:
-            value, _ = _json(lock)
-        except (OSError, ValueError):
-            return  # The ordinary, stricter unknown-import-lock guard remains responsible.
+            _, raw = _control(lock)
+        except FileNotFoundError as error:
+            raise world.EvidenceChangedError('读取处理记录时文件消失，请重新检查。') from error
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeError) as error:
+            raise ValueError('存档导入锁或恢复记录格式不受支持，导入或恢复尚未完成；原记录保留，不能安全继续。') from error
+        if not isinstance(value, dict):
+            if type(value) is int and value > 0:
+                if strict:
+                    raise ValueError(backups.IMPORT_LOCK_MESSAGE)
+                return  # A-only check: the ordinary PID lock owner remains responsible.
+            raise ValueError('存档导入锁或恢复记录格式不受支持，导入或恢复尚未完成；原记录保留，不能安全继续。')
         if value.get('operation') == OPERATION:
             raise ResolutionRequired('上次存档选择尚未处理完。请在存档页继续，或完整保全当前进度后放弃上次选择；游戏尚未启动。')
+        if value.get('operation') not in ('import', 'restore'):
+            raise ValueError('存档导入锁或恢复记录格式不受支持，导入或恢复尚未完成；原记录保留，不能安全继续。')
+        if strict:
+            raise ValueError(backups.restore_lock_message(value) if value['operation'] == 'restore'
+                             else backups.IMPORT_LOCK_MESSAGE)
 
 
 def _root(root):
@@ -855,6 +874,8 @@ def _validate_abandon(root, value, manifest):
 def _require_completion(case, intent, raw):
     if intent['action'] == 'abandon':
         witness = case/'retired/completed-lock'
+        if not _exists(witness):
+            raise ValueError('放弃选择尚无活动锁退休证明，不能当成完成或换回来源。')
         if _content_file(_control(witness)[0]) != {'bytes': len(raw), 'sha256': _sha(raw)}:
             raise ValueError('放弃选择尚无活动锁退休证明，不能当成完成或换回来源。')
 

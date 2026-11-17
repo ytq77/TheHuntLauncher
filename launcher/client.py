@@ -41,7 +41,7 @@ class SaveResolutionRequired(ValueError):
 def require_save_resolution_clear():
     from save_resolution import require_launch_clear, ResolutionRequired
     try:
-        require_launch_clear(ROOT)
+        require_launch_clear(ROOT, strict=True)
     except ResolutionRequired as error:
         state('save-resolution-needed', str(error))
         raise SaveResolutionRequired(str(error)) from error
@@ -322,7 +322,7 @@ def main():
         raise ValueError("转换测试尚未结束，请先在存档页处理测试状态。")
     if (ROOT / ".save-import.lock").exists():
         raise ValueError(save_backups.interrupted_message(ROOT) or
-                         "存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。")
+                         save_backups.IMPORT_LOCK_MESSAGE)
     for file, marker in (("LICENSE.txt", "GNU GENERAL PUBLIC LICENSE"),
                          ("NOTICE.txt", "github.com/Classmg22/BBSC"),
                          ("SUPPORTERS.txt", "BBSC SUPPORTERS")):

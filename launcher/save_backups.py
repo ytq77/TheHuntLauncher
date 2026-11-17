@@ -15,6 +15,7 @@ import world_recovery
 ROOT = Path(__file__).resolve().parent
 NAME = re.compile(r'(launch|pre-restore)-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}')
 KEEP = 10
+IMPORT_LOCK_MESSAGE = '存档导入正在进行或上次未完整结束，请检查 save-backups 中的备份后再启动。'
 
 
 def _json(path):
@@ -208,6 +209,14 @@ def launch_backup(root):
         raise ValueError(f'启动前备份失败，游戏未启动：{error}') from error
 
 
+def restore_lock_message(value):
+    """Format an already-read restore intent without opening any paths."""
+    return ('存档恢复正在进行或上次未完整结束，已阻止启动。请在存档页处理“未完成恢复”。'
+            f'原存档位置：{value.get("destination", "记录不可读，请保留现场")}；'
+            f'恢复前备份位置：{value.get("backup", "记录不可读，请保留现场")}；'
+            f'所选备份：{value.get("selected", "记录不可读，请保留现场")}。')
+
+
 def interrupted_message(root):
     """Startup only reads the lock; it never repairs or reads the live saves."""
     try:
@@ -216,10 +225,7 @@ def interrupted_message(root):
         return None
     if value.get('operation') != 'restore':
         return None
-    return ('存档恢复正在进行或上次未完整结束，已阻止启动。请在存档页处理“未完成恢复”。'
-            f'原存档位置：{value.get("destination", "记录不可读，请保留现场")}；'
-            f'恢复前备份位置：{value.get("backup", "记录不可读，请保留现场")}；'
-            f'所选备份：{value.get("selected", "记录不可读，请保留现场")}。')
+    return restore_lock_message(value)
 
 
 def _intent(root):

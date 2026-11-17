@@ -823,7 +823,7 @@ def unmatched_jobs(folder, requested, *, supersede=False):
 def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
     from save_resolution import require_launch_clear
     with installation_guard(root):
-        require_launch_clear(root)
+        require_launch_clear(root, strict=True)
         return _finalize(root, token, quit_sequence=quit_sequence, observed_exit=observed_exit,
                          exit_record_failure=exit_record_failure)
 
@@ -890,7 +890,7 @@ def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_f
 def begin(root):
     from save_resolution import require_launch_clear
     with installation_guard(root):
-        require_launch_clear(root)
+        require_launch_clear(root, strict=True)
         return _begin(root)
 
 
