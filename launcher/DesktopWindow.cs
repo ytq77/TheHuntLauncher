@@ -102,7 +102,7 @@ public sealed class DesktopWindow
             Say(gameActive ? "测试提示已排队，切回游戏查看。":"正在预览奖杯提示。");
         });
         foreach(string name in new [] {"TrophyAll","TrophyEarned","TrophyLocked"}) Get<RadioButton>(name).Click+=delegate { DrawTrophies(); };
-        Click("PickInstall",delegate { if(!Pick("InstallPath","Bloodborne.exe|Bloodborne.exe")) return; string ini=Path.Combine(Path.GetDirectoryName(Text("InstallPath")),"bbport.ini"); if(File.Exists(ini)) Get<TextBox>("GraphicsPath").Text=ini; });
+        Click("PickInstall",delegate { PickOrdinaryInstall(); });
         Click("PickGame",delegate { Pick("GamePath","eboot.bin|eboot.bin"); });
         Click("PickGraphics",delegate { Pick("GraphicsPath","bbport.ini|bbport.ini"); });
         Click("PickAdminIdentity",delegate { Pick("AdminIdentity","所有文件|*.*"); });
@@ -161,6 +161,12 @@ public sealed class DesktopWindow
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
+    bool PickOrdinaryInstall() {
+        if(!Pick("InstallPath","Bloodborne.exe|Bloodborne.exe")) return false;
+        string ini=Path.Combine(Path.GetDirectoryName(Text("InstallPath")),"bbport.ini");
+        if(File.Exists(ini)) Get<TextBox>("GraphicsPath").Text=ini;
+        return true;
+    }
     static bool OpenFolder(string path) { if(!Directory.Exists(path)) return false; Process.Start("explorer.exe",Quote(path)); return true; }
     public static string Quote(string value) {
         var b=new StringBuilder("\""); int slashes=0;
@@ -489,6 +495,8 @@ public sealed class DesktopWindow
     }
     Dictionary<string,object> ResolutionRequest(Dictionary<string,object> selection) {
         var request=Map("action","plan");
+        string install=Text("InstallPath");
+        request["ordinary_install"]=String.IsNullOrWhiteSpace(install) ? "":Path.GetDirectoryName(install);
         if(selection!=null) {
             request["selection_kind"]=Str(selection,"kind"); request["selection_id"]=Str(selection,"id");
             request["selection_fingerprint"]=Str(selection,"fingerprint");
@@ -510,7 +518,7 @@ public sealed class DesktopWindow
         if(pendingResolution==null && Flag(plan,"show_choices")) foreach(var option in Rows(plan,"options").OrderByDescending(row=>Flag(row,"recommended"))) {
             var captured=option;
             string id=Str(option,"id");
-            bool known=new [] {"accept-bound","accept-all","restore-all","restore-case","use-current","preserve"}.Contains(id);
+            bool known=KnownResolutionOption(id);
             var button=new Button {Content=Str(option,"label"),HorizontalAlignment=HorizontalAlignment.Left,
                 Margin=new Thickness(0,0,0,6),IsDefault=false,IsEnabled=known};
             button.Click+=async delegate { try { await ApplySaveResolution(plan,captured,generation); } catch(Exception e) { Error(e.Message); } };
@@ -519,6 +527,10 @@ public sealed class DesktopWindow
         }
         SetBusy();
         if(Flag(plan,"show_choices")) { Window.UpdateLayout(); Get<Border>("SaveResolutionPanel").BringIntoView(); }
+    }
+    static bool KnownResolutionOption(string id) {
+        if(new [] {"accept-bound","accept-all","restore-all","restore-case","use-current","preserve","reimport-ordinary","restart","choose-ordinary"}.Contains(id)) return true;
+        return id.Length==20 && id.StartsWith("restore-generation-",StringComparison.Ordinal) && id[19]>='0' && id[19]<='9';
     }
     async Task LoadSaveResolution(Dictionary<string,object> selection,int generation) {
         try { ShowSaveResolution(await Request("save_resolution.py",ResolutionRequest(selection),""),generation); }
@@ -544,12 +556,26 @@ public sealed class DesktopWindow
     async Task ApplySaveResolution(Dictionary<string,object> plan,Dictionary<string,object> option,int generation) {
         RequireIdle();
         if(generation!=resolutionGeneration || resolutionPlan!=plan || currentPage!="Save") throw new InvalidOperationException("这次选择已失效，请重新检查。");
+        string optionId=Str(option,"id");
+        if(!KnownResolutionOption(optionId)) throw new InvalidOperationException("当前启动器不支持这个选项。");
+        if(optionId=="choose-ordinary") {
+            InvalidateResolution();
+            if(!PickOrdinaryInstall()) { Get<TextBlock>("SaveResolutionStatus").Text="未选择原版程序；没有改动存档。请重新检查。"; return; }
+            Page("Save"); await RefreshSaveResolution(); return;
+        }
         bool launch=false; Dictionary<string,object> completed=null; operation=true; resolutionApplying=true; SetBusy();
         try {
             if(!Confirm(ResolutionConfirmation(plan,option),"确认存档选择")) { InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="已取消，未执行这次选择。请重新检查后再选择。"; return; }
+            if(optionId=="restart") {
+                if(generation!=resolutionGeneration || resolutionPlan!=plan || currentPage!="Save" || closed) throw new InvalidOperationException("确认期间来源或页面已变化，请重新检查。");
+                if(!Confirm("请再次确认：这不是恢复原来的游戏进度。\n\n"+Str(option,"description")+"\n\n确认封存当前存档，并像新安装一样从头开始？","再次确认从头开始")) {
+                    InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="已取消从头开始；没有执行，也没有改动存档。请重新检查。"; return;
+                }
+            }
             if(generation!=resolutionGeneration || resolutionPlan!=plan || currentPage!="Save" || closed) throw new InvalidOperationException("确认期间来源或页面已变化，请重新检查。");
             var selection=plan.ContainsKey("selection") ? plan["selection"] as Dictionary<string,object>:null;
             var request=ResolutionRequest(selection); request["action"]="apply"; request["digest"]=Str(plan,"digest"); request["option_id"]=Str(option,"id"); request["confirmed"]=true;
+            if(optionId=="restart") request["restart_confirmed"]=true;
             InvalidateResolution(); Get<TextBlock>("SaveResolutionStatus").Text="正在保全并核验原件，完成前不要关闭。尚未报告保全成功…";
             var result=await Request("save_resolution.py",request,""); completed=result;
             launch=Str(option,"id")=="use-current" && Flag(result,"can_launch");

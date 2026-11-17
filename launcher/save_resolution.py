@@ -31,11 +31,12 @@ GATE = 'data/user/save-resolution-review.json'
 OPERATION = 'recovery-choice'
 TOKEN = re.compile('[0-9a-f]{32}')
 ACTIONS = {'accept-bound', 'accept-all', 'restore-all', 'restore-case', 'use-current', 'preserve'}
-TEXT_VERSION = 2
-RECORD_VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+TEXT_VERSION = 3
+RECORD_VERSION = 3
+SUPPORTED_VERSIONS = (1, 2, 3)
 ACTIONS_V1 = frozenset(ACTIONS)
-ACTIONS = ACTIONS_V1 | {'abandon'}
+ACTIONS_V2 = ACTIONS_V1 | {'abandon'}
+ACTIONS = ACTIONS_V2 | {'restore-generation', 'reimport-ordinary', 'restart'}
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 
 
@@ -230,7 +231,9 @@ def _readability(folder):
     game = folder/'1/CUSA00207/SPRJ0005'
     rows, readable = [], 0
     for slot in range(10):
-        row = {'slot': slot, 'name': '', 'primary': 'missing', 'backup': 'missing'}
+        row = {'slot': slot, 'name': '', 'primary': 'missing', 'backup': 'missing',
+               'primary_reason_code': 'missing', 'backup_reason_code': 'missing',
+               'primary_category': 'missing', 'backup_category': 'missing'}
         identities = []
         for stem, key in (('userdata', 'primary'), ('backup', 'backup')):
             path = transfer.plain_path(game/f'{stem}{slot:04}')
@@ -240,17 +243,25 @@ def _readability(folder):
             raw = world.stable(path)  # An IO failure is a hard failure, not a bad role.
             if not any(raw) and len(raw) == 0x140000:
                 row[key] = 'unused'
+                row[key+'_reason_code'] = 'zero_generation'
+                row[key+'_category'] = 'unused'
                 identities.append(None)
                 continue
+            phase = 'role'
             try:
                 role = offline_save.parse(raw)
+                phase = 'flags'
                 offline_aux.flag_bank(raw)
             except (ValueError, IndexError) as error:
                 row[key] = 'unreadable'
+                row[key+'_reason_code'] = 'flag_layout_unsupported' if phase == 'flags' else getattr(error, 'reason_code', 'unknown_parser_rejection')
+                row[key+'_category'] = 'unsupported' if phase == 'flags' else getattr(error, 'category', 'unknown')
                 row[key+'_detail'] = '当前版本无法读取：' + str(error)
                 identities.append(None)
                 continue
             row[key] = 'readable'
+            row[key+'_reason_code'] = 'qualified_generation'
+            row[key+'_category'] = 'readable'
             readable += 1
             identities.append(_sha(raw[role.username:role.username+32]+raw[role.face+4:role.face+239]))
             if not row['name']:
@@ -312,15 +323,18 @@ def _case(root, token):
         raise ValueError('这份处理前存档所属操作尚未完整结束，请先继续上次选择。')
     _require_completion(case, intent, intent_raw)
     readable = _readability(case/'original/savedata')
-    if not readable['readable_generations']:
+    sealed_restart = intent['text_version'] == 3 and intent['action'] == 'restart'
+    if not readable['readable_generations'] and not sealed_restart:
         raise ValueError('原件已封存，但没有当前版本能读取的角色，不放入换回列表。')
     bad_generation = any(row[key] == 'unreadable' for row in readable['characters'] for key in ('primary', 'backup'))
     suffix = ('（含读不出的角色）' if not readable['valid'] and bad_generation else
               '（角色列表或身份待核对）' if not readable['valid'] else '（换回后需重新选择）')
-    prefix = ('换回前的存档' if manifest['action'] == 'restore-case' else
+    prefix = ('重新开始前封存的原件（当前无法确认可用）' if sealed_restart else
+              '换回前的存档' if manifest['action'] == 'restore-case' else
               '放弃未完成处理前的存档' if manifest['action'] == 'abandon' else '处理前的存档')
     files = [item for tree in manifest['original']['trees'].values() if tree for item in tree['files'].values()]
-    return {'kind': 'resolution-before', 'id': token, 'time': manifest['created_at'],
+    return {'kind': 'resolution-before', 'entry_kind': 'sealed-restart-original' if sealed_restart else 'resolution-before',
+            'id': token, 'time': manifest['created_at'],
             'label': prefix + suffix, 'characters': readable['characters'], 'readability_note': readable['reason'],
             'fingerprint': _sha(raw+intent_raw+receipt_raw), 'file_count': len(files),
             'total_bytes': sum(item['bytes'] for item in files), '_folder': case,
@@ -473,7 +487,73 @@ def _option(action, label, description, recommended=False):
     return {'id': action, 'label': label, 'description': description, 'recommended': recommended}
 
 
-def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None):
+def _generation_sources(root, readable):
+    # Eligibility is separate from launchability. Unknown native layout is not damage.
+    result = {}
+    for row in readable['characters']:
+        slot = row['slot']
+        primary = root/TREES['savedata']/f'1/CUSA00207/SPRJ0005/userdata{slot:04}'
+        if (row['backup'] != 'readable' or row.get('identity_conflict') or
+                row['primary'] in ('missing', 'unused')):
+            continue
+        raw = world.stable(primary)
+        relation = 'primary_unknown'
+        try:
+            role = offline_save.parse(raw)
+        except (ValueError, IndexError):
+            pass
+        else:
+            # The identity can remain readable when the later flag-bank check
+            # fails. Do not throw away a known mismatch merely because the
+            # whole generation was not qualified for restoration.
+            primary_identity = _sha(raw[role.username:role.username+32]+raw[role.face+4:role.face+239])
+            backup_raw = world.stable(primary.with_name(f'backup{slot:04}'))
+            backup_role = offline_save.parse(backup_raw)
+            backup_identity = _sha(backup_raw[backup_role.username:backup_role.username+32]+backup_raw[backup_role.face+4:backup_role.face+239])
+            if primary_identity != backup_identity:
+                continue
+            relation = 'same'
+        try:
+            world.identity(raw)
+        except (ValueError, IndexError):
+            result[slot] = {'slot': slot, 'relative': f'1/CUSA00207/SPRJ0005/userdata{slot:04}',
+                            'backup_relative': f'1/CUSA00207/SPRJ0005/backup{slot:04}',
+                            'identity_relation': relation}
+    return result
+
+
+def _ordinary_source(root, install):
+    if install is None or install == '':
+        return None, {'status': 'not_selected', 'reason': '尚未选择原版程序。'}
+    if not isinstance(install, str):
+        raise ValueError('原版程序目录必须是明确的路径。')
+    install = transfer.plain_path(Path(install))
+    if not _exists(install/'Bloodborne.exe'):
+        return None, {'status': 'not_found', 'reason': '所选原版程序已找不到，请重新选择。'}
+    settings = Path(os.environ['APPDATA'])/'bbport-launcher/settings.json'
+    settings_before = _file(settings)
+    source = transfer.resolve_source_path(install, settings)
+    if transfer.overlaps(source, root):
+        raise ValueError('原版来源与当前安装重叠，不能用作重新导入来源。')
+    if not _exists(source):
+        return None, {'status': 'missing_savedata', 'reason': '原版存档目录不存在；未证明原有进度损坏。'}
+    snapshot = transfer.snapshot(source)
+    try:
+        metadata, inventory = transfer.inspect_source(source)
+    except ValueError as error:
+        world.require_content_error(error)
+        quality = _readability(source)
+        return None, {'status': 'unqualified_unknown', 'reason': str(error),
+                      'characters': quality['characters'], 'occupied_roles_known': False}
+    quality = _readability(source)
+    metadata['characters'] = quality['characters']
+    if transfer.snapshot(source) != snapshot or _file(settings) != settings_before:
+        raise world.EvidenceChangedError('原版来源或目录设置发生变化，请重新检查。')
+    return {'path': source, 'snapshot': snapshot, 'inventory': backups._inventory(inventory),
+            'metadata': metadata, 'settings': settings_before, 'settings_path': str(settings), 'install': str(install)}, {'status': 'qualified', 'metadata': metadata}
+
+
+def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None, ordinary_install=None):
     _guards(root)
     before = _capture(root)
     contents = _content(before)
@@ -504,6 +584,8 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
         if source is not None:
             selection = {key: source[key] for key in ('kind', 'id', 'fingerprint')}
     needed = blocked or contents['gate'] is not None or not startable
+    generations = _generation_sources(root, readable) if needed else {}
+    ordinary, ordinary_status = _ordinary_source(root, ordinary_install) if needed else (None, {'status': 'not_needed'})
     show_choices = needed or selection_kind == 'resolution-before'
     bound = _bound_scope(root, items, startable, contents['gate']) if needed else None
     options = []
@@ -534,8 +616,32 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
                 f"备份时间：{source['time']}。全部角色采用这份备份的进度，待补联机进度作废。" +
                 _impact(contents['trees']['savedata'], source['_inventory']) +
                 reversible, recommended))
+        for slot, generation in generations.items():
+            recommended = not options and not incomplete
+            options.append(_option('restore-generation-'+str(slot),
+                f'使用角色槽位 {slot+1} 的备份代次' + ('（推荐）' if recommended else ''),
+                '只替换这个槽的主档，其它角色、该槽备档和联机记录不改。'
+                + ('无法核对当前主档的角色身份；使用此槽通过自洽检查的备份代次。' if generation['identity_relation'] == 'primary_unknown' else '主备身份一致。')
+                + '可能回退该角色最近进度，处理后仍须重新检查联机记录，不会自动启动。' + reversible, recommended))
+        if ordinary is not None:
+            recommended = not options and not incomplete
+            options.append(_option('reimport-ordinary', '从原版重新导入' + ('（推荐）' if recommended else ''),
+                '会回到原版存档里的全部角色进度；在无缝里新获得的进度不会合并，待补联机进度作废。'
+                + '原版来源时间：' + str(ordinary['metadata'].get('latest_write', '未知')) + '。角色：'
+                + '、'.join((row['name'] or '未知姓名')+'（槽位 '+str(row['slot']+1)+'）' for row in ordinary['metadata']['characters']) + '。' + reversible, recommended))
+        else:
+            options.append(_option('choose-ordinary', '选择原版程序' + ('（推荐）' if not options else ''),
+                ordinary_status.get('reason', '') + '选择后先只读检查原版存档，不会自动覆盖当前存档。', not options))
         options.append(_option('preserve', '先保全原件，暂不改变',
             '完整另存当前存档和联机记录，不更换当前进度。异常仍未处理，这次先不启动。'))
+        names = '、'.join((row['name'] or '未知姓名')+'（槽位 '+str(row['slot']+1)+'）' for row in readable['characters']) or '尚未识别到角色'
+        options.append(_option('restart', '封存后从头开始（不推荐）',
+            '启动器无法确认这份存档还能用。此项不推荐，默认不选，需要再次确认。'
+            '从头开始的新存档不包含以下已识别旧角色（包括当前可读的角色）：'+names+'。'
+            '角色占用范围未完全识别，仍可能有未识别角色；不能认定原件已经损坏。'
+            '执行前会完整保全并校验原件，成功后才清空当前存档现场，原版存档不会改动。'
+            '原件会列在备份列表的“重新开始前封存的原件”中，可原样换回；换回后可能仍需处理。'
+            '如果以后有能读取它的版本，可再处理原件，但不能承诺能救回。'))
     summary = ('换回后需由您重新选择，不会自动回放旧联机记录。' if contents['gate'] is not None else
                '旧联机记录不能自动安全结案，请选择本机处理方式。' if blocked else
                '当前没有需要此流程处理的异常。')
@@ -556,9 +662,14 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
         raise ValueError('检查期间存档或联机记录发生变化，请重新检查；尚未更换存档。')
     public = {'ok': True, 'needed': needed, 'show_choices': show_choices, 'startable': startable, 'summary': summary, 'options': options,
               'characters': readable['characters'], 'warnings': warnings, 'pending': None, 'selection': selection}
-    data = {'root': str(root), 'before': before, 'content': contents, 'bound': bound,
+    public['startup_reason_code'] = 'nonzero_primary_blocked' if not startable else 'startup_contract_allowed'
+    public['ordinary_source'] = ordinary_status
+    public['restart_eligibility'] = {'eligible': needed, 'recommended': False, 'facts': {'startup_blocked': not startable, 'some_readable_generation': bool(readable['readable_generations']), 'no_qualified_backup_found': source is None and not incomplete and not generations, 'original_definitely_unusable': False}, 'reason': '仅作为用户明确授权的非推荐本机出口；角色范围或可用性未知时不认定损坏。', 'occupied_roles_known': False}
+    data = {'ordinary': ordinary, 'generations': generations, 'root': str(root), 'before': before, 'content': contents, 'bound': bound,
             'selection': selection, 'source': source, 'public': public}
-    binding = {k: v for k, v in data.items() if k != 'source'}
+    binding = {k: v for k, v in data.items() if k not in ('source', 'ordinary')}
+    if ordinary is not None:
+        binding['ordinary'] = {k: (str(v) if isinstance(v, Path) else v) for k, v in ordinary.items()}
     if source is not None:
         binding['source'] = source.get('_original', source.get('_inventory'))
         if source['kind'] != 'resolution-before':
@@ -567,14 +678,14 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
     return public, data
 
 
-def plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None):
+def plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None, ordinary_install=None):
     root = _root(root)
     with transfer.installation_guard(root):
         if _exists(root/'.save-import.lock'):
             return {'ok': True, 'needed': True, 'show_choices': True, 'summary': '上次选择未完成，可继续或先完整保全当前现场后放弃。',
                     'digest': None, 'options': [], 'characters': [], 'warnings': [],
                     'selection': None, 'pending': pending(root)}
-        return _plan(root, selection_kind, selection_id, selection_fingerprint)[0]
+        return _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)[0]
 
 
 def _checkpoint(name):
@@ -627,7 +738,7 @@ def _durable_copy(source, destination, expected):
         _checkpoint('after:copy-fsync:'+destination.parent.name+'/'+destination.name+'/'+Path(target).relative_to(destination).as_posix())
         shutil.copystat(origin, target)
         return target
-    shutil.copytree(source, destination, copy_function=copy_file)
+    transfer.copy_verified(source, destination, expected=expected, copy_function=copy_file)
     if (backups._inventory(transfer.snapshot(destination)) != backups._inventory(expected) or
             transfer.snapshot(source) != expected):
         raise ValueError('保全副本校验失败，当前存档未被替换。')
@@ -673,9 +784,11 @@ def _insert(tree, relative, piece):
 
 def _retire_paths(intent):
     action, before = intent['action'], intent['before']['trees']
+    if action == 'restore-generation':
+        return [['savedata', intent['generation']['relative']]]
     if action == 'accept-bound':
         return intent['bound']['paths']
-    labels = list(TREES) if action in ('restore-all', 'restore-case') else list(TREES)[1:] if action == 'accept-all' else []
+    labels = list(TREES) if action in ('restore-all', 'restore-case', 'reimport-ordinary', 'restart') else list(TREES)[1:] if action == 'accept-all' else []
     return [[name, ''] for name in labels if before[name] is not None]
 
 
@@ -683,7 +796,10 @@ def _steps(intent):
     result = [('retire', name, relative) for name, relative in _retire_paths(intent)]
     if intent['action'] != 'preserve' and intent['before']['gate'] is not None:
         result.append(('retire-gate', '', ''))
-    result.extend(('install', name, '') for name in TREES if intent['target'][name] is not None)
+    if intent['action'] == 'restore-generation':
+        result.append(('install-file', 'savedata', intent['generation']['relative']))
+    else:
+        result.extend(('install', name, '') for name in TREES if intent['target'][name] is not None)
     if intent['new_gate'] is not None:
         result.append(('publish-gate', '', ''))
     return result
@@ -713,6 +829,12 @@ def _states(intent):
             state['retired'][name] = _insert(state['retired'][name], relative, piece)
         elif kind == 'retire-gate':
             state['retired_gate'], state['gate'] = state['gate'], None
+        elif kind == 'install-file':
+            piece = _extract(state['stage'][name], relative)
+            if relative in state['live'][name]['files']:
+                raise ValueError('目标主档尚未退休。')
+            state['live'][name] = _insert(state['live'][name], relative, piece)
+            state['stage'][name] = _remove(state['stage'][name], relative)
         elif kind == 'install':
             if state['live'][name] is not None:
                 raise ValueError('安装目标尚未退休。')
@@ -730,7 +852,7 @@ def _validate_intent(root, value, manifest, manifest_raw):
             token != manifest['transaction'] or action != manifest['action'] or
             value.get('manifest_sha256') != _sha(manifest_raw) or value.get('confirmed') is not True or
             value.get('text_version') not in SUPPORTED_VERSIONS or value.get('before') != manifest['original'] or
-            action not in (ACTIONS_V1 if value.get('text_version') == 1 else ACTIONS)):
+            action not in {1: ACTIONS_V1, 2: ACTIONS_V2, 3: ACTIONS}.get(value.get('text_version'), ())):
         raise ValueError('处理意图和完整保全记录不一致，已保留现场。')
     _validate_content(value['before'])
     _validate_content({'trees': value.get('target'), 'gate': None})
@@ -753,17 +875,34 @@ def _validate_intent(root, value, manifest, manifest_raw):
             raise ValueError('单角色处理路径不属于已绑定异常。')
     elif bound is not None:
         raise ValueError('整套处理不能夹带单角色路径。')
-    if action not in ('restore-all', 'restore-case') and any(v is not None for v in value['target'].values()):
+    generation = value.get('generation')
+    if action == 'restore-generation':
+        if not isinstance(generation, dict) or type(generation.get('slot')) is not int or not 0 <= generation['slot'] < 10:
+            raise ValueError('备份代次槽位无效。')
+        relative = f"1/CUSA00207/SPRJ0005/userdata{generation['slot']:04}"
+        backup_relative = f"1/CUSA00207/SPRJ0005/backup{generation['slot']:04}"
+        source_tree = value['before']['trees']['savedata']
+        expected = {'directories': ['1', '1/CUSA00207', '1/CUSA00207/SPRJ0005'], 'files': {relative: source_tree['files'].get(backup_relative)}}
+        if (generation.get('relative') != relative or generation.get('backup_relative') != backup_relative or
+                generation.get('identity_relation') not in ('same', 'primary_unknown') or
+                relative not in source_tree['files'] or expected['files'][relative] is None or
+                value['target']['savedata'] != expected or any(value['target'][k] is not None for k in list(TREES)[1:])):
+            raise ValueError('备份代次来源或固定路径无效。')
+    elif generation is not None:
+        raise ValueError('此选择不能夹带单槽替换。')
+    if action not in ('restore-all', 'restore-case', 'restore-generation', 'reimport-ordinary', 'restart') and any(v is not None for v in value['target'].values()):
         raise ValueError('此选择不允许替换角色文件。')
-    if action == 'restore-all' and (value['target']['savedata'] is None or any(value['target'][k] is not None for k in list(TREES)[1:])):
+    if action in ('restore-all', 'reimport-ordinary', 'restart') and (value['target']['savedata'] is None or any(value['target'][k] is not None for k in list(TREES)[1:])):
         raise ValueError('普通备份只能作为整套 savedata 来源。')
+    if action == 'restart' and value['target']['savedata'] != {'directories': [], 'files': {}}:
+        raise ValueError('重新开始只允许空存档。')
     gate = value.get('new_gate')
     expected_gate = {'schema': 1, 'root': value['root'], 'transaction': token,
                      'target_digest': _sha(_bytes(value['target'])), 'reason': 'restored-original-needs-review'}
     if action == 'abandon':
         _validate_abandon(root, value, manifest)
         return
-    if gate != (expected_gate if action == 'restore-case' else None):
+    if gate != (expected_gate if action in ('restore-case', 'restore-generation') else None):
         raise ValueError('换回门禁不属于此处理。')
     _states(value)  # Validate all fixed-path transitions before any live operation.
 
@@ -771,6 +910,9 @@ def _validate_intent(root, value, manifest, manifest_raw):
 def _receipt(intent, raw):
     results = {'accept-bound': 'accepted-current-unverified', 'accept-all': 'accepted-current-unverified',
                'restore-all': 'selected-backup', 'restore-case': 'restored-original-needs-review',
+               'restore-generation': 'restored-generation-needs-review',
+               'reimport-ordinary': 'reimported-ordinary',
+               'restart': 'restarted-empty',
                'use-current': 'selected-current', 'preserve': 'preserved-only', 'abandon': 'abandoned-needs-review'}
     return {'schema': 1, 'root': intent['root'], 'transaction': intent['transaction'],
             'action': intent['action'], 'intent_sha256': _sha(raw), 'manifest_sha256': intent['manifest_sha256'],
@@ -856,7 +998,7 @@ def _abandon_plan(root):
 
 
 def _validate_abandon(root, value, manifest):
-    if value['text_version'] != 2:
+    if value['text_version'] not in (2, 3):
         raise ValueError('此版本不支持放弃事务。')
     previous = value.get('previous_lock')
     if previous != manifest.get('previous_lock') or previous is None:
@@ -1032,12 +1174,15 @@ def _result(intent, raw):
                'accept-all': '现有存档文件未改，旧联机待补记录已归档，不再补入。',
                'restore-all': '已采用所选整套备份；旧联机待补记录已归档。',
                'restore-case': '已换回所选完整版本。换回前的版本已另存；请重新选择处理方式，不会自动启动。',
+               'restore-generation': '已替换所选角色的主档，其它角色及备档未改。请重新检查旧联机记录。',
+               'reimport-ordinary': '已从原版重新导入全部角色；原版未改，旧联机待补记录已归档。',
+               'restart': '原件已完整封存并校验；当前为空存档，下次由游戏建立新进度。可在存档页备份列表选择“重新开始前封存的原件”原样换回；当前无法确认原件可用，换回后可能再次出现处理页。',
                'use-current': '原件已保全，已选用当前存档；将继续正常启动检查。',
                'preserve': '原件已完整保全，当前进度没有改变。异常仍未处理，这次先不启动。',
                'abandon': '当前五树和旧处理记录已完整另存，已放弃上次未完成选择。当前进度没有因此改写，请重新检查并选择；不会自动启动。'}[intent['action']]
     return {'ok': True, 'result': receipt['result'], 'case_id': intent['transaction'],
             'message': message + ' 处理前原件不会自动删除。',
-            'needs_review': intent['action'] in ('restore-case', 'preserve', 'abandon'),
+            'needs_review': intent['action'] in ('restore-case', 'restore-generation', 'preserve', 'abandon'),
             'can_launch': intent['action'] == 'use-current'}
 
 
@@ -1058,6 +1203,8 @@ def _run(root, case, intent, raw):
             destination = transfer.plain_path(case/'retired'/name/relative)
         elif kind == 'retire-gate':
             source, destination = transfer.plain_path(root/GATE), transfer.plain_path(case/'retired/gate')
+        elif kind == 'install-file':
+            source, destination = transfer.plain_path(case/'stage'/name/relative), transfer.plain_path(root/TREES[name]/relative)
         elif kind == 'install':
             source, destination = transfer.plain_path(case/'stage'/name), transfer.plain_path(root/TREES[name])
         else:
@@ -1092,22 +1239,36 @@ def _run(root, case, intent, raw):
     return _result(intent, raw)
 
 
-def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, selection_id=None, selection_fingerprint=None):
+def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, selection_id=None, selection_fingerprint=None, ordinary_install=None, restart_confirmed=False):
     if confirmed is not True:
         raise ValueError('请先阅读影响并明确确认这个选择。')
+    if option_id == 'restart' and restart_confirmed is not True:
+        raise ValueError('从头开始必须经过第二次明确确认；当前存档未改。')
     root = _root(root)
     with transfer.installation_guard(root):
-        public, plan_data = _plan(root, selection_kind, selection_id, selection_fingerprint)
+        public, plan_data = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
         if not isinstance(digest, str) or digest != public['digest']:
             raise ValueError('检查后来源或当前存档已变化，请重新检查并确认；尚未更换存档。')
         if option_id not in {row['id'] for row in public['options']}:
             raise ValueError('这个选择不适用于当前存档，请重新检查。')
+        if option_id == 'choose-ordinary':
+            raise ValueError('请先选择原版程序并重新检查；此选项不执行存档事务。')
         before, source = plan_data['before'], plan_data['source']
+        generation = plan_data['generations'].get(int(option_id.rsplit('-', 1)[1])) if option_id.startswith('restore-generation-') else None
+        action = 'restore-generation' if generation is not None else option_id
         target = dict.fromkeys(TREES)
         if option_id == 'restore-all':
             target['savedata'] = source['_inventory']
         elif option_id == 'restore-case':
             target = source['_original']['trees']
+        elif action == 'reimport-ordinary':
+            target['savedata'] = plan_data['ordinary']['inventory']
+        elif action == 'restart':
+            target['savedata'] = {'directories': [], 'files': {}}
+        elif generation is not None:
+            tree = plan_data['content']['trees']['savedata']
+            target['savedata'] = {'directories': ['1', '1/CUSA00207', '1/CUSA00207/SPRJ0005'],
+                                 'files': {generation['relative']: tree['files'][generation['backup_relative']]}}
         total = sum(row[2] for tree in before['trees'].values() if tree for row in tree[1].values())
         total += sum(row['bytes'] for tree in target.values() if tree for row in tree['files'].values())
         required = total + 8 * 1024 * 1024
@@ -1141,25 +1302,40 @@ def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, sele
                     origin = source['_folder']/'original'/name
                     _durable_copy(origin, case/'stage'/name, transfer.snapshot(origin))
                     _checkpoint('after:stage:'+name)
+        elif action == 'reimport-ordinary':
+            origin = plan_data['ordinary']
+            _durable_copy(origin['path'], case/'stage/savedata', origin['snapshot'])
+            transfer.validate_savedata(case/'stage/savedata')
+        elif action == 'restart':
+            (case/'stage/savedata').mkdir()
+        elif generation is not None:
+            destination = case/'stage/savedata'/generation['relative']
+            destination.parent.mkdir(parents=True)
+            origin = root/TREES['savedata']/generation['backup_relative']
+            _checkpoint('before:stage:generation')
+            _write_new(destination, world.stable(origin))
+            _checkpoint('after:stage:generation')
         _checkpoint('after:stage')
-        again, _ = _plan(root, selection_kind, selection_id, selection_fingerprint)
+        again, _ = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
         if again['digest'] != digest or _capture(root) != before:
             raise ValueError('保全期间当前存档或所选来源变化，请重新检查；尚未更换存档。')
         created = datetime.now(timezone.utc).isoformat()
         manifest = {'schema': 1, 'kind': 'resolution-before', 'transaction': token, 'root': str(root),
-                    'action': option_id, 'created_at': created, 'original': plan_data['content'],
+                    'action': action, 'created_at': created, 'original': plan_data['content'],
                     'source_snapshot': before, 'plan_digest': digest}
         manifest_raw = _bytes(manifest)
         _check_record(manifest_raw)
         _write_new(case/'manifest.json', manifest_raw)
         intent = {'schema': 1, 'operation': OPERATION, 'root': str(root), 'transaction': token,
-                  'action': option_id, 'created_at': created, 'manifest_sha256': _sha(manifest_raw),
+                  'action': action, 'created_at': created, 'manifest_sha256': _sha(manifest_raw),
                   'before': plan_data['content'], 'target': target,
                   'bound': plan_data['bound'] if option_id == 'accept-bound' else None,
                   'selection': plan_data['selection'], 'plan_digest': digest, 'confirmed': True,
                   'text_version': RECORD_VERSION, 'choice': next(row for row in public['options'] if row['id'] == option_id),
                   'new_gate': None}
-        if option_id == 'restore-case':
+        if generation is not None:
+            intent['generation'] = generation
+        if action in ('restore-case', 'restore-generation'):
             intent['new_gate'] = {'schema': 1, 'root': str(root), 'transaction': token,
                                   'target_digest': _sha(_bytes(target)), 'reason': 'restored-original-needs-review'}
         _validate_intent(root, intent, manifest, manifest_raw)
@@ -1202,7 +1378,7 @@ def _completed_result(root, fingerprint, *, v2_abandon_only=False):
         intent, raw = _json(child/'intent.json')
         if _sha(raw) != fingerprint:
             continue
-        if v2_abandon_only and (intent.get('text_version') != 2 or intent.get('action') != 'abandon'):
+        if v2_abandon_only and (intent.get('text_version') not in (2, 3) or intent.get('action') != 'abandon'):
             return None  # A v1 receipt never gains a new completion meaning.
         _, manifest, manifest_raw = _load_manifest(root, child.name)
         _validate_intent(root, intent, manifest, manifest_raw)
@@ -1242,13 +1418,13 @@ def dispatch(root, request):
     if not isinstance(request, dict):
         raise ValueError('存档选择请求格式不正确。')
     action = request.get('action')
-    selection = {key: request.get(key) for key in ('selection_kind', 'selection_id', 'selection_fingerprint')}
+    selection = {key: request.get(key) for key in ('selection_kind', 'selection_id', 'selection_fingerprint', 'ordinary_install')}
     if action == 'plan':
         return plan(root, **selection)
     if action == 'list':
         return list_cases(root)
     if action == 'apply':
-        return apply(root, request.get('digest'), request.get('option_id'), confirmed=request.get('confirmed'), **selection)
+        return apply(root, request.get('digest'), request.get('option_id'), confirmed=request.get('confirmed'), restart_confirmed=request.get('restart_confirmed'), **selection)
     if action == 'abandon':
         return abandon(root, request.get('digest'), confirmed=request.get('confirmed'))
     if action == 'resume':

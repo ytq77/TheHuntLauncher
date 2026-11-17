@@ -177,21 +177,36 @@ def publish_intent(descriptor, folder, intent):
     write_lock_intent(descriptor, payload)
 
 
+def _source_user_dir(install, settings_path):
+    # Explicit input; operational failures propagate for recovery callers.
+    settings = Path(settings_path)
+    config = json.loads(settings.read_text(encoding="utf-8-sig")) if settings.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError("普通版设置文件格式不正确。")
+    user_dir = config.get("user_dir") or install / "user"
+    if not Path(user_dir).is_absolute():
+        raise ValueError("普通版存档目录必须是绝对路径。")
+    return Path(user_dir)
+
+
+def resolve_source_path(install, settings_path):
+    """Resolve a readonly ordinary source without ROOT/environment or error masking."""
+    install = plain_path(install)
+    if not (install / "Bloodborne.exe").is_file():
+        raise ValueError("找不到普通版 Bloodborne.exe，请先选择正确的普通版程序。")
+    return plain_path(_source_user_dir(install, plain_path(settings_path)) / "savedata")
+
+
 def source_path(install):
     install = plain_path(install)
     if not (install / "Bloodborne.exe").is_file():
         raise ValueError("找不到普通版 Bloodborne.exe，请先选择正确的普通版程序。")
     settings = Path(os.environ["APPDATA"]) / "bbport-launcher/settings.json"
     try:
-        config = json.loads(settings.read_text(encoding="utf-8-sig")) if settings.exists() else {}
-        if not isinstance(config, dict):
-            raise ValueError("普通版设置文件格式不正确。")
-        user_dir = config.get("user_dir") or install / "user"
-        if not Path(user_dir).is_absolute():
-            raise ValueError("普通版存档目录必须是绝对路径。")
+        user_dir = _source_user_dir(install, settings)
     except (OSError, TypeError, json.JSONDecodeError):
         raise ValueError("无法读取普通版存档目录设置。") from None
-    return plain_path(Path(user_dir) / "savedata")
+    return plain_path(user_dir / "savedata")
 
 
 def snapshot(folder):
@@ -227,12 +242,29 @@ def content_inventory(value):
     return value[0], {name: (row[2], row[-1]) for name, row in value[1].items()}
 
 
-def copy_verified(source, destination, expected=None):
+def copy_verified(source, destination, expected=None, *, copy_function=None):
     source, destination = plain_path(source), plain_path(destination)
     if overlaps(source, destination) or destination.exists():
         raise ValueError('存档副本路径冲突，已停止导入。')
     original = snapshot(source) if expected is None else expected
-    shutil.copytree(source, destination, copy_function=shutil.copy2)
+    if copy_function is None:
+        shutil.copytree(source, destination, copy_function=shutil.copy2)
+    else:
+        # copytree aggregates OSError into shutil.Error. Recovery callers need
+        # the actual IO type (permission/full disk is not corrupt savedata).
+        failures = []
+        def copy_one(src, dst):
+            try:
+                return copy_function(src, dst)
+            except OSError as error:
+                failures.append(error)
+                raise
+        try:
+            shutil.copytree(source, destination, copy_function=copy_one)
+        except shutil.Error as error:
+            if failures:
+                raise failures[0] from error
+            raise
     if content_inventory(snapshot(destination)) != content_inventory(original):
         raise ValueError('存档副本校验失败，原无缝版存档保持不变。')
     if snapshot(source) != original:
@@ -266,6 +298,44 @@ def import_auxiliary_snapshot(root=None):
     return result
 
 
+def inspect_source(source):
+    """Strict readonly source inventory; no installation locks or auxiliary policy.
+
+    Return (metadata, stable snapshot). IO errors remain IO errors. A caller
+    decides whether this source is appropriate and owns its transaction.
+    """
+    source = plain_path(source)
+    inventory = snapshot(source)
+    validate_savedata(source)
+    files = inventory[1]
+    valid = any(re.fullmatch(r"userdata000[0-9]", Path(name).name, re.IGNORECASE)
+                and "SPRJ0005" in (part.upper() for part in Path(name).parts)
+                and details[2] > 0 for name, details in files.items())
+    if not valid:
+        raise ValueError("未找到有效的非空 Bloodborne userdata 存档，已停止导入。")
+    latest = max(details[3] for details in files.values())
+    return {
+        "source": str(source), "file_count": len(files),
+        "total_bytes": sum(item[2] for item in files.values()),
+        "latest_write": datetime.fromtimestamp(latest / 1e9).strftime("%Y-%m-%d %H:%M:%S"),
+    }, inventory
+
+
+def install_prepared_savedata(stage, destination, expected):
+    """Validate then perform one rename. No post-rename work can hide its success.
+
+    Caller owns locks, preservation, intent, rollback and post-install checks.
+    This deliberately does not validate a whole save: a verified prepared tree
+    may be the preserved partial tree offered by the recovery UI.
+    """
+    stage, destination = plain_path(stage), plain_path(destination)
+    if overlaps(stage, destination) or destination.exists():
+        raise ValueError('存档副本路径冲突，已停止导入。')
+    if content_inventory(snapshot(stage)) != content_inventory(expected):
+        raise ValueError('存档副本校验失败，原无缝版存档保持不变。')
+    stage.rename(destination)
+
+
 def inspect(install):
     if (ROOT / ".save-conversion.lock").exists():
         raise ValueError("转换测试正在进行，请先等待转换操作完成。")
@@ -277,23 +347,15 @@ def inspect(install):
         raise ValueError("无缝版尚未初始化，请先启动一次；首次启动会自动导入普通版存档。")
     if (ROOT/'.save-conversion-pending.json').exists():
         raise ValueError('存在未完成的原版存档替换，请先在转换页核对恢复记录。')
-    inventory = snapshot(source)
-    validate_savedata(source)
-    files = inventory[1]
-    valid = any(re.fullmatch(r"userdata000[0-9]", Path(name).name, re.IGNORECASE)
-                and "SPRJ0005" in (part.upper() for part in Path(name).parts)
-                and details[2] > 0 for name, details in files.items())
-    if not valid:
-        raise ValueError("未找到有效的非空 Bloodborne userdata 存档，已停止导入。")
+    source_info, inventory = inspect_source(source)
     if destination.exists():
         # Checking the entire old tree prevents renaming or backing up linked data.
         snapshot(destination)
     import_auxiliary_snapshot()
-    latest = max(details[3] for details in files.values())
     return {
         "ok": True, "source": str(source), "destination": str(destination),
-        "file_count": len(files), "total_bytes": sum(item[2] for item in files.values()),
-        "latest_write": datetime.fromtimestamp(latest / 1e9).strftime("%Y-%m-%d %H:%M:%S"),
+        "file_count": source_info["file_count"], "total_bytes": source_info["total_bytes"],
+        "latest_write": source_info["latest_write"],
         "backup": None, "error": None,
         "notice": "将替换无缝版全部角色和进度；不会合并。旧存档及已完成的联机辅助记录会一起备份、隔离。",
     }, inventory
@@ -386,7 +448,7 @@ def apply(install, expected_source=None):
                 moved.append((old, saved))
                 if snapshot(saved) != value:
                     raise ValueError('辅助记录备份校验失败。')
-            stage.rename(destination)
+            install_prepared_savedata(stage, destination, original)
             installed = True
             if content_inventory(snapshot(destination)) != content_inventory(original):
                 raise ValueError('安装后的存档校验失败。')

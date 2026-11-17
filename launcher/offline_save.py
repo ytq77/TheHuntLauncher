@@ -17,12 +17,15 @@ AREAS = (('inventory', 453, 1984), ('keys', 32201, 64), ('keys_extra', 33229, 64
 
 
 class Unsupported(ValueError):
-    pass
+    def __init__(self, message, reason_code='unsupported_unknown', category='unsupported'):
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.category = category
 
 
-def require(condition, message):
+def require(condition, message, reason_code='unsupported_unknown', category='unsupported'):
     if not condition:
-        raise Unsupported(message)
+        raise Unsupported(message, reason_code, category)
 
 
 def u32(data, offset):
@@ -68,8 +71,8 @@ class Role:
 
 
 def parse(data):
-    require(len(data) == 0x140000, 'Unsupported role size')
-    require(u32(data, 0) == 0x41 and u32(data, 12) == 84, 'Unsupported role header')
+    require(len(data) == 0x140000, 'Unsupported role size', 'role_size_unsupported', 'unsupported')
+    require(u32(data, 0) == 0x41 and u32(data, 12) == 84, 'Unsupported role header', 'role_header_unsupported', 'unsupported')
     # Header declares the live character segment. The remainder of the fixed-size
     # file can contain stale serialized copies, including perfectly valid FACE
     # and inventory records. Never parse or replace those by global matching.
@@ -79,12 +82,12 @@ def parse(data):
             primary_end + u32(data, 40) == u32(data, 44) and
             u32(data, 44) + u32(data, 48) == u32(data, 28) and
             u32(data, 28) == u32(data, 16)+1 and primary_end < len(data),
-            'Inconsistent primary section header')
+            'Inconsistent primary section header', 'section_relations_invalid', 'structure_rejected')
     faces = [p for p in occurrences(data[:primary_end], b'FACE') if p >= 0xF000]
-    require(len(faces) == 1, 'Ambiguous/missing appearance anchor')
+    require(len(faces) == 1, 'Ambiguous/missing appearance anchor', 'appearance_anchor_unsupported', 'unsupported')
     face = faces[0]
     username = face - 34497
-    require(username > 84 and username + 68545 + 136 == primary_end, 'Invalid section bounds')
+    require(username > 84 and username + 68545 + 136 == primary_end, 'Invalid section bounds', 'section_bounds_invalid', 'structure_rejected')
     entries = []
     for area, relative, capacity in AREAS:
         header = username + relative
@@ -93,12 +96,12 @@ def parse(data):
             offset = header + 4 + slot * 16
             handle, code, quantity, opaque = struct.unpack_from('<IIII', data, offset)
             if handle == 0:
-                require(code in (0, 0xFFFFFFFF) and quantity == 0, 'Malformed empty inventory slot')
+                require(code in (0, 0xFFFFFFFF) and quantity == 0, 'Malformed empty inventory slot', 'empty_inventory_invalid', 'structure_rejected')
                 continue
-            require(code != 0xFFFFFFFF and quantity > 0, 'Malformed active inventory slot')
+            require(code != 0xFFFFFFFF and quantity > 0, 'Malformed active inventory slot', 'active_inventory_invalid', 'structure_rejected')
             row = Entry(area, offset, handle, code, quantity, opaque & 0xFFF)
             active.append(row)
-        require(u32(data, header) == len(active), 'Inventory count does not match its records')
+        require(u32(data, header) == len(active), 'Inventory count does not match its records', 'inventory_count_invalid', 'structure_rejected')
         entries.extend(active)
     return Role(data, face, username, primary_end, entries)
 

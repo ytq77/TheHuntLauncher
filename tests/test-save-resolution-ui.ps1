@@ -123,6 +123,19 @@ function Choose-Abandon($desktop,[bool]$yes) {
     try { Await-Task (Invoke-Private $desktop 'AbandonSaveResolution'); Assert $script:dialogChosen 'Actual abandonment confirmation not exercised' }
     finally { $dialog.Stop() }
 }
+function Choose-Restart($desktop,[bool]$first,[bool]$second) {
+    $plan=Plan $desktop; $option=@($plan['options'] | Where-Object { $_['id'] -eq 'restart' })[0]
+    Assert ($null -ne $option) 'Missing real restart fallback'
+    $script:restartFirst=$first; $script:restartSecond=$second; $script:restartDialogs=0
+    $dialog=New-Object Windows.Threading.DispatcherTimer; $dialog.Interval=[TimeSpan]::FromMilliseconds(40)
+    $dialog.Add_Tick({
+        if($script:restartDialogs -eq 0 -and [ResolutionTestDialog]::Choose('确认存档选择',$script:restartFirst)) { $script:restartDialogs=1; if(-not $script:restartFirst) { $this.Stop() } }
+        elseif($script:restartDialogs -eq 1 -and [ResolutionTestDialog]::Choose('再次确认从头开始',$script:restartSecond)) { $script:restartDialogs=2; $this.Stop() }
+    })
+    $dialog.Start()
+    try { Await-Task (Invoke-Private $desktop 'ApplySaveResolution' @($plan,$option,(Field $desktop 'resolutionGeneration'))); Assert ($script:restartDialogs -eq $(if($first){2}else{1})) 'Restart did not exercise the expected native confirmations' }
+    finally { $dialog.Stop() }
+}
 function Choose-Resume($desktop) {
     $script:dialogChosen=$false
     $dialog=New-Object Windows.Threading.DispatcherTimer
@@ -135,6 +148,9 @@ function Choose-Resume($desktop) {
 $parser=New-Object Web.Script.Serialization.JavaScriptSerializer
 [Threading.SynchronizationContext]::SetSynchronizationContext((New-Object Windows.Threading.DispatcherSynchronizationContext))
 $passed=New-Object 'Collections.Generic.List[string]'
+$previousAppData=$env:APPDATA
+$env:APPDATA=Join-Path $fixture 'isolated-appdata'
+[void][IO.Directory]::CreateDirectory($env:APPDATA)
 try {
     foreach($name in @('Launcher.xaml','feature-catalog.json','trophy-catalog.json')) { Copy-Item -LiteralPath (Join-Path $repo ('launcher\'+$name)) -Destination $fixture }
     # Assets are immutable source assets, never a real installation.
@@ -150,6 +166,20 @@ try {
     Assert (-not $buttons[0].IsDefault -and -not $buttons[2].IsEnabled) 'Default destructive action or unknown action enabled'
     Assert ($window.FindName('SaveResolutionCharacters').Text -like '*主档读不出*备档可读*') 'Primary and backup readability collapsed'
     Assert ($window.FindName('SaveResolutionCharacters').Text -like '*主档说明*合成格式不支持*不代表永久损坏*') 'Generation detail or backend readability note was hidden'
+    $slice2=Map '{"ok":true,"needed":true,"show_choices":true,"summary":"slice2 DTO only","digest":"slice2-view","options":[],"characters":[],"warnings":[],"pending":null,"selection":null}'
+    $slice2['options']=@('reimport-ordinary','restart','restore-generation-0','restore-generation-9','choose-ordinary','restore-generation-10','restore-generation-x','future-action') | ForEach-Object { Map ('{"id":"'+$_+'","label":"'+$_+'","description":"backend bound text","recommended":false}') }
+    Invoke-Private $desktop 'ShowSaveResolution' @($slice2,$generation)
+    $sliceButtons=@($window.FindName('SaveResolutionOptions').Children | Where-Object { $_ -is [Windows.Controls.Button] })
+    for($i=0;$i -lt 8;$i++) { Assert ($sliceButtons[$i].IsEnabled -eq ($i -lt 5) -and -not $sliceButtons[$i].IsDefault) ('Slice2 allowlist/default mismatch '+$i) }
+    $ordinaryDto=Join-Path $fixture 'ordinary-dto'
+    [void][IO.Directory]::CreateDirectory((Join-Path $ordinaryDto 'user\savedata'))
+    $window.FindName('InstallPath').Text=Join-Path $ordinaryDto 'Bloodborne.exe'
+    $req=Invoke-Private $desktop 'ResolutionRequest' @($null)
+    Assert ($req['ordinary_install'] -eq $ordinaryDto) 'Resolution request did not carry explicit selected ordinary directory'
+    Assert ($null -eq (Plan $desktop)) 'Changing original path retained slice2 plan'
+    $generation=Field $desktop 'resolutionGeneration'
+    Invoke-Private $desktop 'ShowSaveResolution' @($view,$generation)
+    $passed.Add('Slice2 DTO only: explicit original directory, path invalidation, exact single-slot IDs, original-import/restart/choose allowlist, unknown disabled and no default. Not transaction coverage.')
     $desktop.Validate((Join-Path $OutputDirectory 'resolution-page.png'),'Save')
     $window.FindName('SaveResolutionPanel').BringIntoView(); $window.UpdateLayout()
     $desktop.Validate((Join-Path $OutputDirectory 'resolution-view.png'),'Save')
@@ -289,7 +319,7 @@ print('fixture ready, production validation passed; no game or process-check stu
         # Keep the synthetic ordinary installation outside ROOT, exactly as the
         # real prepare guard requires. No game executable in it is ever run.
         $ordinary=Join-Path $OutputDirectory 'synthetic-ordinary'; $game=Join-Path $OutputDirectory 'synthetic-game'
-        [void][IO.Directory]::CreateDirectory($ordinary); [void][IO.Directory]::CreateDirectory($game)
+        [void][IO.Directory]::CreateDirectory((Join-Path $ordinary 'user\savedata')); [void][IO.Directory]::CreateDirectory($game)
         foreach($name in @('Bloodborne.exe','bbport.ini')) { [IO.File]::WriteAllText((Join-Path $ordinary $name),'synthetic file only',$utf8) }
         [IO.File]::WriteAllText((Join-Path $game 'eboot.bin'),'synthetic file only',$utf8)
         $mod=Join-Path $fixture 'mod'; [void][IO.Directory]::CreateDirectory($mod)
@@ -398,6 +428,138 @@ print(json.dumps({'pid':os.getpid(),'stopped':'checkpoint exception after actual
         $desktop.Validate((Join-Path $OutputDirectory 'abandon-complete-page.png'),'Save')
         $passed.Add('Real second pending A via checkpoint exception (not OS kill), later file invalidates resume -> production dual eligibility -> native No leaves old lock -> native Yes -> JSON/CLI abandonment -> same progress, gate and no automatic launch. Healthy explicit history had needed=false/show_choices=true and visible options.')
 
+        # Independent slice2 root: no old state and no host settings.
+        $desktop.Window.Close(); $desktop=$null
+        $fixture=Join-Path $OutputDirectory ('slice2-fixture-'+[Guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($fixture)
+        $env:APPDATA=Join-Path $fixture 'isolated-appdata'; [void][IO.Directory]::CreateDirectory($env:APPDATA)
+        Copy-Item -LiteralPath $RuntimeRoot -Destination (Join-Path $fixture 'runtime') -Recurse
+        $env:PYTHONHOME=Join-Path $fixture 'runtime'
+        foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'launcher') -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $fixture }
+        foreach($name in @('Launcher.xaml','feature-catalog.json','trophy-catalog.json')) { Copy-Item -LiteralPath (Join-Path $repo ('launcher\'+$name)) -Destination $fixture }
+        $sliceOrdinary=Join-Path $OutputDirectory ('slice2-ordinary-'+[Guid]::NewGuid().ToString('N'))
+        $sliceExpected=Join-Path $OutputDirectory 'slice2-expected.json'
+        $sliceSetup=@'
+import hashlib,json,shutil,sys
+from pathlib import Path
+root,repo,ordinary,record=map(Path,sys.argv[1:]);sys.path[:0]=[str(root),str(repo/'tests')]
+from synthetic_world_fixture import fixture_pair
+import save_transfer as t
+raw,_=fixture_pair();role=root/'data/user/savedata/1/CUSA00207/SPRJ0005';role.mkdir(parents=True)
+for slot in (0,1):
+ for stem in ('userdata','backup'):(role/f'{stem}{slot:04d}').write_bytes(raw)
+(role/'userdata0010').write_bytes(b'profile'+bytes(100));t.validate_savedata(root/'data/user/savedata')
+shutil.copytree(root/'data/user/savedata',ordinary/'user/savedata');(ordinary/'Bloodborne.exe').write_bytes(b'fake never executed')
+for base in (root/'data/user/trophy',ordinary/'user/trophy'):
+ base.mkdir();(base/'sentinel').write_bytes(b'unchanged trophy')
+(role/'userdata0000').write_bytes(b'bad-primary'+bytes(127))
+def row(p):
+ st=p.stat();return [hashlib.sha256(p.read_bytes()).hexdigest(),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns]
+def tree(base):return {str(p.relative_to(base)):row(p) for p in base.rglob('*') if p.is_file()}
+record.write_text(json.dumps({'target':tree(root/'data/user/savedata'),'ordinary':tree(ordinary),'trophy':tree(root/'data/user/trophy')}),encoding='utf-8')
+'@
+        Invoke-FixturePython $sliceSetup @($fixture,$repo,$sliceOrdinary,$sliceExpected) 'slice2-setup'
+        $desktop=New-Object DesktopWindow($fixture); $window=$desktop.Window; $desktop.Page('Save')
+        $slicePrimary=Join-Path $fixture 'data\user\savedata\1\CUSA00207\SPRJ0005\userdata0000'
+        $before=Hash-File $slicePrimary
+        Await-Task (Invoke-Private $desktop 'RefreshSaveResolution'); Choose-Apply $desktop 'restore-generation-0' $false
+        Assert ((Hash-File $slicePrimary) -eq $before -and -not (Test-Path (Join-Path $fixture '.save-import.lock'))) 'Generation No mutated state'
+        Await-Task (Invoke-Private $desktop 'RefreshSaveResolution'); Choose-Apply $desktop 'restore-generation-0' $true
+        Assert (Test-Path (Join-Path $fixture 'data\user\save-resolution-review.json')) 'Generation restore omitted gate'
+        $sliceVerify=@'
+import hashlib,json,sys
+from pathlib import Path
+root,ordinary,record=map(Path,sys.argv[1:]);e=json.loads(record.read_text());base=root/'data/user/savedata'
+def row(p):
+ st=p.stat();return [hashlib.sha256(p.read_bytes()).hexdigest(),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns]
+def tree(base):return {str(p.relative_to(base)):row(p) for p in base.rglob('*') if p.is_file()}
+a=tree(base);primary=str(Path('1/CUSA00207/SPRJ0005/userdata0000'));backup=str(Path('1/CUSA00207/SPRJ0005/backup0000'))
+assert set(a)==set(e['target'])
+for k,v in e['target'].items():
+ if k!=primary:assert a[k]==v,(k,'content/inode/mtime changed')
+assert a[primary][0]==e['target'][backup][0]
+assert tree(ordinary)==e['ordinary'];assert tree(root/'data/user/trophy')==e['trophy']
+for stem in ('userdata','backup'):(base/'1/CUSA00207/SPRJ0005'/f'{stem}0000').write_bytes(b'bad-'+stem.encode()+bytes(127))
+e['bad_target']={k:v[0] for k,v in tree(base).items()};record.write_text(json.dumps(e),encoding='utf-8')
+'@
+        Assert (@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' }).Count -ge 1) 'Generation original absent from undo list'
+        Invoke-FixturePython $sliceVerify @($fixture,$sliceOrdinary,$sliceExpected) 'slice2-generation-verify-import-setup'
+        $window.FindName('InstallPath').Text=Join-Path $sliceOrdinary 'Bloodborne.exe'
+        Await-Task (Invoke-Private $desktop 'RefreshSaveBackups')
+        $oldIds=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' } | ForEach-Object { $_.Tag['id'] })
+        $before=Hash-File $slicePrimary
+        Choose-Apply $desktop 'reimport-ordinary' $false
+        Assert ((Hash-File $slicePrimary) -eq $before -and -not (Test-Path (Join-Path $fixture '.save-import.lock'))) 'Import No mutated state'
+        Await-Task (Invoke-Private $desktop 'RefreshSaveResolution'); Choose-Apply $desktop 'reimport-ordinary' $true
+        $verifyImport=@'
+import hashlib,json,sys
+from pathlib import Path
+root,ordinary,record=map(Path,sys.argv[1:]);e=json.loads(record.read_text())
+def row(p):
+ st=p.stat();return [hashlib.sha256(p.read_bytes()).hexdigest(),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns]
+def tree(base):return {str(p.relative_to(base)):row(p) for p in base.rglob('*') if p.is_file()}
+assert tree(ordinary)==e['ordinary'];assert tree(root/'data/user/trophy')==e['trophy']
+assert {k:v[0] for k,v in tree(root/'data/user/savedata').items()}=={k:v[0] for k,v in tree(ordinary/'user/savedata').items()}
+assert not (root/'.save-import.lock').exists()
+'@
+        Invoke-FixturePython $verifyImport @($fixture,$sliceOrdinary,$sliceExpected) 'slice2-import-verify'
+        $undo=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' -and $oldIds -notcontains $_.Tag['id'] })
+        Assert ($undo.Count -eq 1) 'Import original missing or ambiguous'
+        $window.FindName('SaveBackupList').SelectedItem=$undo[0]
+        Await-Task (Invoke-Private $desktop 'RestoreSaveBackup'); Choose-Apply $desktop 'restore-case' $true
+        $verifyUndo=@'
+import hashlib,json,sys
+from pathlib import Path
+root,record=map(Path,sys.argv[1:]);base=root/'data/user/savedata';e=json.loads(record.read_text())
+assert {str(p.relative_to(base)):hashlib.sha256(p.read_bytes()).hexdigest() for p in base.rglob('*') if p.is_file()}==e['bad_target']
+assert (root/'data/user/save-resolution-review.json').is_file()
+assert not (root/'launcher-state.json').exists(),'undo started a game session'
+'@
+        Invoke-FixturePython $verifyUndo @($fixture,$sliceExpected) 'slice2-import-undo-verify'
+        Assert ((Plan $desktop)['needed'] -and -not $desktop.Busy) 'Bad undo did not return to processing page'
+        Assert (@((Plan $desktop)['options'] | Where-Object { $_['id'] -eq 'use-current' }).Count -eq 0) 'Bad-primary undo exposed normal launch'
+        $passed.Add('Real slice2 CLI via WPF: generation No/Yes preserves other slot/profile/backup inode+mtime; reimport No/Yes preserves source/trophies; listed original undo returns exact bad state with gate and no launch. Synthetic only.')
+        # Restart is an explicit fallback, not a diagnosis. Exercise the actual
+        # production option only after the backend supplies it on this bad state.
+        $partialRestart=@((Plan $desktop)['options'] | Where-Object { $_['id'] -eq 'restart' })[0]
+        Assert ($null -ne $partialRestart) 'Blocked partial save lacks explicit restart fallback'
+        Assert ($partialRestart['description'] -like '*Hunter*') 'Restart omitted the identified readable role'
+        $beforeRestartCases=@($window.FindName('SaveBackupList').Items).Count
+        Choose-Restart $desktop $false $false
+        Invoke-FixturePython $verifyUndo @($fixture,$sliceExpected) 'restart-first-no-unchanged'
+        Assert (@($window.FindName('SaveBackupList').Items).Count -eq $beforeRestartCases -and -not (Test-Path (Join-Path $fixture '.save-import.lock'))) 'First No published preservation or lock'
+        Await-Task (Invoke-Private $desktop 'RefreshSaveResolution')
+        Choose-Restart $desktop $true $false
+        Invoke-FixturePython $verifyUndo @($fixture,$sliceExpected) 'restart-second-no-unchanged'
+        Assert (@($window.FindName('SaveBackupList').Items).Count -eq $beforeRestartCases -and -not (Test-Path (Join-Path $fixture '.save-import.lock'))) 'Second No published preservation or lock'
+        # Make every role unrecognized using only generated files. No valid
+        # character names may survive as a guessed current character list.
+        $unknownSetup=@'
+import hashlib,json,sys
+from pathlib import Path
+root,record=map(Path,sys.argv[1:]);base=root/'data/user/savedata';role=base/'1/CUSA00207/SPRJ0005'
+for slot in (0,1):
+ for stem in ('userdata','backup'):(role/f'{stem}{slot:04d}').write_bytes(b'unknown-role-format'+bytes(97))
+e=json.loads(record.read_text());e['bad_target']={str(p.relative_to(base)):hashlib.sha256(p.read_bytes()).hexdigest() for p in base.rglob('*') if p.is_file()};record.write_text(json.dumps(e),encoding='utf-8')
+'@
+        Invoke-FixturePython $unknownSetup @($fixture,$sliceExpected) 'restart-unknown-setup'
+        Await-Task (Invoke-Private $desktop 'RefreshSaveBackups')
+        $restartPlan=Plan $desktop
+        $restart=@($restartPlan['options'] | Where-Object { $_['id'] -eq 'restart' })[0]
+        Assert ($null -ne $restart -and -not $restart['recommended']) 'Unknown-format restart was absent or recommended'
+        Assert ($restart['description'] -like '*无法确认*' -and $restart['description'] -notlike '*已损坏*' -and $restart['description'] -notlike '*Hunter*') 'Unknown restart diagnosed damage or invented a role name'
+        Assert ($restartPlan['options'][-1]['id'] -eq 'restart') 'Nonrecommended restart was not last'
+        $oldIds=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' } | ForEach-Object { $_.Tag['id'] })
+        Choose-Restart $desktop $true $true
+        Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'data\user\savedata') -Recurse -File).Count -eq 0) 'Restart did not leave fresh empty savedata'
+        Assert (-not (Test-Path (Join-Path $fixture '.save-import.lock')) -and -not (Test-Path (Join-Path $fixture 'launcher-state.json'))) 'Restart retained lock or automatically launched game'
+        $restartOriginal=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' -and $oldIds -notcontains $_.Tag['id'] })
+        Assert ($restartOriginal.Count -eq 1 -and $restartOriginal[0].IsEnabled) 'Unrecognized restart original cannot be selected for exact undo'
+        $window.FindName('SaveBackupList').SelectedItem=$restartOriginal[0]
+        Await-Task (Invoke-Private $desktop 'RestoreSaveBackup'); Choose-Apply $desktop 'restore-case' $true
+        Invoke-FixturePython $verifyUndo @($fixture,$sliceExpected) 'restart-unknown-undo'
+        Assert ((Plan $desktop)['needed'] -and @((Plan $desktop)['options'] | Where-Object { $_['id'] -eq 'restart' }).Count -eq 1) 'Restart undo has no gate processing choices'
+        $passed.Add('Real restart: first No and second No preserve state; both Yes empty synthetic savedata; wholly unidentified original remains selectable; exact undo returns gate/processing choices. Unknown is not diagnosed as damaged or recommended. No real game launched.')
     } else { $passed.Add('NOT RUN: real Python backend chain. ViewOnly does not establish transaction safety.') }
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'result.txt'),[string]::Join("`r`n",$passed),$utf8)
     $passed
@@ -405,6 +567,7 @@ print(json.dumps({'pid':os.getpid(),'stopped':'checkpoint exception after actual
     [IO.File]::WriteAllText((Join-Path $OutputDirectory 'failure.txt'),($_ | Out-String),$utf8)
     throw
 } finally {
+    $env:APPDATA=$previousAppData
     if($desktop) { $desktop.GetType().GetField('operation',$flags).SetValue($desktop,$false); $desktop.Window.Close() }
     # Preserve the unique synthetic fixture and all failures for inspection. No cleanup/delete.
 }
