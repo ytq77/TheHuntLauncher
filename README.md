@@ -6,11 +6,11 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.25) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载 Windows 预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.26) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
 ![The Hunt preview.17 启动器首页](docs/launcher.png)
 
-当前版本为 **0.1.0-preview.25**，基于 **BBport 1.9.7**。本版加入启动前存档异常处理页和可换回的保全恢复，显示普通版存档查找路径，并支持手动选择存档文件夹与首次启动确认来源。原有自动备份和跨图入房功能保留；本版不包含双机 P2P 诊断补丁。[使用文档](https://thehunt.iytq.top/)。详见[发布说明](docs/releases/v0.1.0-preview.25.md)与[验收表](docs/validation-current.md)。
+当前 Windows 版本为 **0.1.0-preview.26**，基于 **BBport 1.9.7**。两台电脑使用同一客户端，玩家在游戏内摇铃开房或加入。存档页会显示所选备份中角色的姓名、等级和血之回响。旧版启动器可以通过「检查更新」升级。[发布说明](docs/releases/v0.1.0-preview.26.md) · [验收表](docs/validation-current.md) · [使用文档](https://thehunt.iytq.top/)
 
 ## 功能
 
@@ -32,9 +32,9 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.25-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.25.zip`，无需安装客户端引擎 |
-| Linux / Docker 开服 | `TheHuntServer-Linux-recipe-v0.1.0-preview.25.zip`，按[部署说明](server/docs/deployment.md)准备环境 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.26-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.26.zip`，无需安装客户端引擎 |
+| 查阅上一版 Linux / Docker 配方 | [preview.25 的 Linux 配方](https://github.com/ytq77/TheHuntLauncher/releases/download/v0.1.0-preview.25/TheHuntServer-Linux-recipe-v0.1.0-preview.25.zip) 和[部署说明](server/docs/deployment.md) |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 
 发布页附 `SHA256SUMS.txt` 和工具链记录。客户端仅发布 TheHuntLauncher 完整包，正常「检查更新」功能保留。

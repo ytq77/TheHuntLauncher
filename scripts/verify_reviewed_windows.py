@@ -11,6 +11,17 @@ def digest(path):
         return hashlib.file_digest(stream,"sha256").hexdigest()
 
 
+def release_documents(repository, version):
+    notes = "docs/releases/v" + version + ".md"
+    return {
+        "README.md": repository / "README.md",
+        "upstream.lock.json": repository / "upstream.lock.json",
+        "docs/validation-current.md": repository / "docs/validation-current.md",
+        notes: repository / notes,
+        "PREVIEW-NOTES.md": repository / notes,
+    }
+
+
 def archive_catalog(path):
     prefix = path.stem + "/"
     with ZipFile(path) as z:
@@ -28,6 +39,13 @@ def verify(pins, directory):
         if digest(path)!=pins[key]:
             raise ValueError("Reviewed ZIP digest differs: "+path.name)
     c,s=archive_catalog(client),archive_catalog(server)
+    repository = Path(__file__).resolve().parents[1]
+    documents = release_documents(repository, version)
+    if json.loads(documents["upstream.lock.json"].read_bytes())["version"] != version:
+        raise ValueError("The source version lock differs from the release")
+    for name, source in documents.items():
+        if c.get(name) != digest(source):
+            raise ValueError("Packaged release document differs from source: " + name)
     if {k[7:]:v for k,v in c.items() if k.startswith("server/")}!=s:
         raise ValueError("Embedded Windows server differs")
     if any(c.get(k)!=v for k,v in pins["client_files"].items()) or s["bbsc/shadnet.exe"]!=pins["matching_service"]:

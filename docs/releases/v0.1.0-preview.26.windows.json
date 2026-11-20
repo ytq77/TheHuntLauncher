@@ -1,6 +1,6 @@
 {
   "version": "0.1.0-preview.26",
-  "client": "34fb4b813b2ab04ab41e534894b3fe3029b2811cce909bfd08df3a3f17c6a034",
+  "client": "1757a17102897a9a279e24e45058abededfdfc0d6a3c890a2883baa447f45880",
   "server": "f648a9e216da26a9603a20a9482d4471170ba8f6a3e69cd7e9a8aa66235a80c7",
   "matching_service": "8aa29c4364e6f37caa7f93e1b08b31d1b3e9efdb33d243b85a0712a48d21e755",
   "client_files": {
@@ -12,6 +12,12 @@
     "bin/bb-probe.exe": "e6817a0b55c01d662c441f6f090e2053615f70a240a33fba4364d59dc5eadc1a",
     "START-TheHunt.cmd": "b4e599f72f0c5dacdc1b8a99d9456797f8f0d4081b2102e3243a4ccb9a8e435f",
     "engine/run.py": "659ff3b6ba26bc811c41ffce2c6aed0d630d5c34aaa2ee08c996f8dd0f2915ca",
-    "engine/conversion/bb-probe.exe": "641d3d53af2817f4adce4aef58ac8dac20186a72647436a2770ce49d74a7adcc"
+    "engine/conversion/bb-probe.exe": "641d3d53af2817f4adce4aef58ac8dac20186a72647436a2770ce49d74a7adcc",
+    "README.md": "e507667f12729c5bf16bc855eb86d6ea0aca23b6a02ced4754974cac14ac79c8",
+    "upstream.lock.json": "4ab334eea04a2be80c2bf65da4e422eb7d71ae38f390fed33946d357605d2bfc",
+    "docs/validation-current.md": "ec4f22c289754f6d73dfd4321313154069ec1a8b1488c2650c1fafb46b050ebe",
+    "docs/releases/v0.1.0-preview.26.md": "67ade6bbc1823c086f2455d9f0b2df55587b5a7c157a4d561b978577be8671f7",
+    "PREVIEW-NOTES.md": "67ade6bbc1823c086f2455d9f0b2df55587b5a7c157a4d561b978577be8671f7",
+    "conversion_jobs.py": "19e219ca704ce3d602c335dcd3c79c72c69842b3dc108950f991bb74574ceba9"
   }
 }
