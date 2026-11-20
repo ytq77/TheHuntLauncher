@@ -2,7 +2,6 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
 
@@ -31,9 +30,11 @@ def apply(kind, tree, patches=PATCHES):
             data = source.read_bytes()
             if b'\r\n' in data:
                 source.write_bytes(data.replace(b'\r\n',b'\n'))
-    command = ['git','-c','core.autocrlf=false','apply','--whitespace=nowarn',str(patches/(kind+'.patch'))]
-    env = {**os.environ,'GIT_CEILING_DIRECTORIES':str(tree.parent)}
-    subprocess.run(command,cwd=tree,env=env,check=True)
+    # An extracted tree can live inside another repository. Anchor patch paths
+    # here so native Windows Git and MSYS2 Git both apply them to this tree.
+    command = ['git','--git-dir=.git','--work-tree=.','-c','core.autocrlf=false',
+               'apply','--whitespace=nowarn',str(patches/(kind+'.patch'))]
+    subprocess.run(command,cwd=tree,check=True)
     for name,info in files.items():
         if digest(tree/name) != info['after']:
             raise ValueError('Output checksum mismatch for '+name)
