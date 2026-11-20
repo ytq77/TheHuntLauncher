@@ -1,0 +1,146 @@
+{
+  "bbsc": {
+    "emulator/mod/bbsc_http.cpp": {
+      "before": "e74674a18ca4fc1d5f3b1a692df85fba2d90bfd9377af375b76a1e90ebf99c98",
+      "after": "61041682ccddd8abd9b929a37bf40c20e0783cedca81aa257be5b0e4eaf2477b"
+    },
+    "emulator/mod/bbsc_mod_zh_cn.cpp": {
+      "before": "8bf94c2890a0293d17fe19e02636fc8b7440a69e0fbbeca8e4f47a6f90565d3d",
+      "after": "894d5e14933c19d40bea83c57257671b17df600741cdc24cb99526621b60a4bc"
+    },
+    "emulator/mod/claim_transport.hpp": {
+      "before": null,
+      "after": "158a7ddb97ff3e520faec627206d5e2a7b6ee5ba8e6ee5275e4de9632a1268d8"
+    },
+    "emulator/mod/startup01.h": {
+      "before": null,
+      "after": "6fe4d83daf388d349bf1ba3bbe28f684d98d266a75e0ac2fb1a2f4ab23d76a13"
+    },
+    "emulator/mod/summon_claim_origin.hpp": {
+      "before": null,
+      "after": "6556af4879b98558dfeda1651afe90a54b6760a7b9b1c02b2ddfa7cac90c7e73"
+    },
+    "emulator/mod/worker01.inc": {
+      "before": null,
+      "after": "8adc48d00a5bc67e80466b6e77b0453cd5db25e9f031520a549485cb9be3d866"
+    },
+    "emulator/src/core/action.inc": {
+      "before": null,
+      "after": "82036be51077cc80655ba80687b5f497500027a3cb11acd4394c211f4aa6ab96"
+    },
+    "emulator/src/core/bbsc_menu_quit.inc": {
+      "before": "4be8556930191c3653c882cc9c1301f9f428a6512f80ed3c082b77384331a76b",
+      "after": "f08a12e70c97837bc8537a627f963d88da985a313b73ed4d21445e7d2c6f4ac8"
+    },
+    "emulator/src/core/bloodborne_re_zh_cn.cpp": {
+      "before": "19561a9a20c32194becc748bdcdad61a3cb1a542b5516f1e4213f6e8ed1fbb44",
+      "after": "1512140c722e2c256e85a51ab7fae81649f8847a97700781663207ef38973261"
+    },
+    "emulator/src/core/host_claim_api.inc": {
+      "before": null,
+      "after": "fa73252bfa1cd38df2fac338075afea3f7c2e24acce9a4eb5a4ef03c2f729b7b"
+    },
+    "emulator/src/core/host_claim_events.inc": {
+      "before": null,
+      "after": "579ea8fc1ac1043a781a0d5e278d445f5a915c1d9940add9721ce8c47567ba96"
+    },
+    "emulator/src/core/host_claim_lifecycle.hpp": {
+      "before": null,
+      "after": "768ac3aa4c5ad8f5cc924d18afb08a44aaf4e8d8cf03705ec4a77a26a6967f42"
+    },
+    "emulator/src/core/host_claim_sites.inc": {
+      "before": null,
+      "after": "321073df117e1d3c36285a876d23155f5c0258be59654f0e2e9f3aa8bb1729f0"
+    },
+    "emulator/src/core/host_decode.hpp": {
+      "before": null,
+      "after": "e31ce2f229f16ff57179c8fe835d3636e7d8f7dec16dcdfa891243c3313eb46a"
+    },
+    "emulator/src/core/host_match.h": {
+      "before": null,
+      "after": "80b94dcf20925145af27bbf7dbe444be42b9ef6546cbc178d99c1df617551a7b"
+    },
+    "emulator/src/core/host_match_lifecycle.hpp": {
+      "before": null,
+      "after": "cd041fc3932a2c3cc98331cdce6349f6d1f57080affe8bc47e00e54ac1fb07ff"
+    },
+    "emulator/src/core/host_return.inc": {
+      "before": null,
+      "after": "e7cf3b3c318407b7871ba4db4bb2adb10ebe70194c209f19be578b5440a17864"
+    },
+    "emulator/src/core/host_return_runtime.inc": {
+      "before": null,
+      "after": "5c7bd38a920791975c3be92c014a49c87060c7bd35e5253ddb7e15527ea5a50c"
+    },
+    "emulator/src/core/host_room_api.inc": {
+      "before": null,
+      "after": "f376066ae6afa46262715cbd72125251e1512144698b297e96af494f298d98a0"
+    },
+    "emulator/src/core/host_room_descriptor.inc": {
+      "before": null,
+      "after": "baa7189396b86c055786ac342cc4d572490072dd29bdf6fec9ce0c320ace9502"
+    },
+    "emulator/src/core/host_room_handoff.h": {
+      "before": null,
+      "after": "cb1da81215acd966535aeca6aa53cd7f096fdd52c89aa867b7d820ecf83be8fb"
+    },
+    "emulator/src/core/host_room_sites.inc": {
+      "before": null,
+      "after": "004ccca2f49bff209f399b3815066d915e2505cdac891fa462c7dabb8268762a"
+    },
+    "emulator/src/core/host_row_events.inc": {
+      "before": null,
+      "after": "67d22e19a9ac275692e502936535c778d18f43482f599364869872704732f55b"
+    },
+    "emulator/src/core/observer.inc": {
+      "before": null,
+      "after": "15ee3bcfedb6a99203bb7e80ba7c9301fe341044ed6db27061a69e0ace6a3b81"
+    },
+    "emulator/src/core/origin_host.inc": {
+      "before": null,
+      "after": "bae07165acd7a38747723c3c63d6dca4e5d2b7da433dcbb0d112e1007bb3aa2c"
+    },
+    "emulator/src/core/origin_pins.inc": {
+      "before": null,
+      "after": "f34ff928e1a58b68702c0216789556ad014636c5f30a662efa5d6ee4d04d876b"
+    },
+    "emulator/src/core/origin_queue.inc": {
+      "before": null,
+      "after": "f4a76180c69e2a0fe11d8934d731c86fbf100cb08856d1c2134b4821f0c638a5"
+    },
+    "emulator/src/core/pins.inc": {
+      "before": null,
+      "after": "eb57f5596ce985da4cf1fa6356fe7904d03d7169fe9e6663056b75ec564905eb"
+    },
+    "emulator/src/core/primary.inc": {
+      "before": null,
+      "after": "6efcd5b3d7e4a8c4c0eec4a4da509fe4152a04b20d49eb31e5990e079a860939"
+    },
+    "emulator/src/core/return_observer.inc": {
+      "before": null,
+      "after": "1acd729620f0faa509cfa28a7f618f6e4acde46ff81bf9a542da1b230667f962"
+    },
+    "emulator/src/core/trace.inc": {
+      "before": null,
+      "after": "dd7c6271d25e07eadbdbc0ae2331aeefe4ce5986b091080b8640b80dec148fa7"
+    },
+    "emulator/src/death-queue-01/queue.inc": {
+      "before": null,
+      "after": "687ee6ce423d4f8dcb17cb7cdc9202e1409f6e4f776149a22d91775a6fbaca79"
+    }
+  },
+  "bbport": {
+    "src/loader01.inc": {
+      "before": null,
+      "after": "e4022aaa03da6c76b5557ac6a7b93daa341005ec5879e79a2c289a2ed381e618"
+    },
+    "src/probe.c": {
+      "before": "8463dc66c595f1c31e83894779b74aa9fc6314c92e4570da74cda4888570c265",
+      "after": "42f4b13c7ae5d48095f64ec11df988a92434190345a6debc4dee6490baf6ce0d"
+    },
+    "src/startup01.h": {
+      "before": null,
+      "after": "6fe4d83daf388d349bf1ba3bbe28f684d98d266a75e0ac2fb1a2f4ab23d76a13"
+    }
+  }
+}

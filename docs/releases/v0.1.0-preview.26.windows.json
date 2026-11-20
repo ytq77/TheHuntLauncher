@@ -1,0 +1,17 @@
+{
+  "version": "0.1.0-preview.26",
+  "client": "34fb4b813b2ab04ab41e534894b3fe3029b2811cce909bfd08df3a3f17c6a034",
+  "server": "f648a9e216da26a9603a20a9482d4471170ba8f6a3e69cd7e9a8aa66235a80c7",
+  "matching_service": "8aa29c4364e6f37caa7f93e1b08b31d1b3e9efdb33d243b85a0712a48d21e755",
+  "client_files": {
+    "TheHuntLauncher.exe": "aac3f137285878782c306c6f1ce38c128d51350eb23eb63c0bfa227764a93297",
+    "client.py": "c1b71cd19b90ca6b4d605ffdaf09555127881b87522689b98b8412a5977e4fe0",
+    "HuntUpdates.dll": "1d410beb591d83de8a33e4a67e870536ff303265858da5e7289bc08c22bda197",
+    "mod/bbsc.dll": "7c273031c69572b9e0922c23e92a534d551a76172eae1f93d3e35f7cd99bab77",
+    "mod/bbsc-launch.exe": "9f21b55094ee6383b6d38c7bc945498bea14e27814b11c1441fdd893ffeb6984",
+    "bin/bb-probe.exe": "e6817a0b55c01d662c441f6f090e2053615f70a240a33fba4364d59dc5eadc1a",
+    "START-TheHunt.cmd": "b4e599f72f0c5dacdc1b8a99d9456797f8f0d4081b2102e3243a4ccb9a8e435f",
+    "engine/run.py": "659ff3b6ba26bc811c41ffce2c6aed0d630d5c34aaa2ee08c996f8dd0f2915ca",
+    "engine/conversion/bb-probe.exe": "641d3d53af2817f4adce4aef58ac8dac20186a72647436a2770ce49d74a7adcc"
+  }
+}

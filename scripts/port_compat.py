@@ -1,6 +1,16 @@
 """Keep the pinned engine's GPU helper lookup valid behind a mod loader."""
 
 
+def patched_character_reader(text):
+    """Let the restore page supply the name verified by the release save parser."""
+    first_read = "    face = data.find(b'FACE', 0xF000)"
+    decode = "    name = data[at:at + NAME_BYTES].decode('utf-16-le', errors='replace').split('\\0')[0].strip()"
+    if text.count(first_read) != 1 or text.count(decode) != 1:
+        raise ValueError('Unexpected character reader layout.')
+    entry = '    return read_with_name(data, None)\n\n\ndef read_with_name(data, name):\n' + first_read
+    return text.replace(first_read, entry).replace(decode, '    if name is None:\n    ' + decode)
+
+
 def patched_run_script(text):
     before = "probe.parent / 'bb-gpu-capabilities.exe'"
     if text.count(before) != 2:

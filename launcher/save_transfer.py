@@ -177,13 +177,18 @@ def publish_intent(descriptor, folder, intent):
     write_lock_intent(descriptor, payload)
 
 
-def character_name(raw, role=None):
+def character_name(raw, role=None, *, unknown='姓名未识别'):
     """Decode Bloodborne's UTF-16BE display name; never change identity bytes."""
     role = offline_save.parse(raw) if role is None else role
     try:
         return raw[role.username:role.username+32].decode('utf-16-be').split(chr(0), 1)[0]
     except UnicodeError:
-        return '姓名未识别'
+        return unknown
+
+
+def character_identity(raw, role):
+    """The name and appearance bytes used to compare restore generations."""
+    return hashlib.sha256(raw[role.username:role.username+32] + raw[role.face+4:role.face+239]).hexdigest()
 
 
 def _source_io(error, kind, label, path):

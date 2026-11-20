@@ -314,6 +314,10 @@ def build_environment(profile, name, password, settings_env, snapshot):
     feature_env, feature_values = feature_environment(ROOT)
     env.update(feature_env)
     snapshot["features"] = feature_values
+    env["THEHUNT_JOIN_CLAIM_V1"] = "1"
+    env["TH_WIPE_OBSERVE_01"] = "0"
+    env.pop("TH_WIPE_PREFLIGHT_ONLY", None)
+    env.pop("TH_WIPE_TRACE_DIR", None)
     return env, network
 
 

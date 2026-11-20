@@ -33,6 +33,8 @@ jobs:
             mingw-w64-clang-x86_64-qt6-base
             mingw-w64-clang-x86_64-qt6-websockets
             mingw-w64-clang-x86_64-qt6-httpserver
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-protobuf
       - name: 编译、测试并打包
         shell: msys2 {0}
         run: |
@@ -164,6 +166,7 @@ jobs:
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: '4'
         run: |
+          python scripts/prepare_windows_join.py bbport .build/bbport
           launcher_root="$PWD"
           if [[ -e /b ]]; then echo 'Build drive B: is already in use' >&2; exit 1; fi
           MSYS2_ARG_CONV_EXCL='*' subst.exe B: "$(cygpath -m "$PWD/.build/bbport")"
@@ -195,7 +198,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Build BBSC and run native checks
-        run: bash scripts/build-mod.sh
+        run: |
+          bash scripts/build-mod.sh
+          python scripts/build_windows_join_mod.py .build/bbsc .build/bbport "$(cygpath -m /clang64)" .build/mod/bbsc.dll
+          python scripts/test_unified_windows.py .build/bbsc .build/bbport "$(cygpath -m /clang64)"
+          python scripts/test_join_placement.py .build/bbsc/emulator/src/core/bloodborne_re_zh_cn.cpp .build/mod/unified-placement.exe
       - name: Build launcher and validate WPF
         shell: powershell
         run: .\scripts\build-entry.ps1
@@ -246,7 +253,27 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 -c 'import json,os; assert os.environ["RELEASE_TAG"] == "v"+json.load(open("upstream.lock.json"))["version"]'
-          cd release
-          sha256sum *.zip > SHA256SUMS.txt
-          cd ..
-          gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --notes-file "docs/releases/$RELEASE_TAG.md" --title "The Hunt Launcher $RELEASE_TAG"
+          pins="docs/releases/$RELEASE_TAG.windows.json"
+          if [[ ! -f "$pins" ]]; then
+            (cd release && sha256sum -- *.zip > SHA256SUMS.txt)
+            gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --notes-file "docs/releases/$RELEASE_TAG.md" --title "The Hunt Launcher $RELEASE_TAG"
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          draft_assets="$(gh release view "$RELEASE_TAG" --json isDraft,assets --jq 'if .isDraft then [.assets[].name]|sort|join("\n") else error("expected the reviewed draft") end')"
+          client="TheHuntLauncher-$version-windows-x64.zip"
+          server="TheHuntServer-Windows-v$version.zip"
+          sources=(TheHuntLauncher-sources.zip "TheHuntServer-source-v$version.zip" fsr4vk-v0.4.3-amdfix-src.zip)
+          allowed="$(printf '%s\n' "$client" "$server" "${sources[@]}" toolchain-packages.txt SHA256SUMS.txt | sort)"
+          if [[ -n "$(comm -23 <(printf '%s\n' "$draft_assets" | sort) <(printf '%s\n' "$allowed"))" ]]; then exit 1; fi
+          gh release download "$RELEASE_TAG" --pattern "$client" --pattern "$server" --dir reviewed
+          python3 scripts/verify_reviewed_windows.py "$pins" reviewed
+          for asset in "${sources[@]}" toolchain-packages.txt; do cp "release/$asset" reviewed/; done
+          (cd reviewed && sha256sum -- "$client" "$server" "${sources[@]}" > SHA256SUMS.txt)
+          for asset in "${sources[@]}" toolchain-packages.txt SHA256SUMS.txt; do
+            gh release upload "$RELEASE_TAG" "reviewed/$asset" --clobber
+          done
+          release_api="$(gh release view "$RELEASE_TAG" --json apiUrl --jq .apiUrl)"
+          gh api "$release_api" --jq '{isDraft:.draft,assets:.assets}' > draft-assets.json
+          python3 scripts/verify_reviewed_windows.py "$pins" reviewed --remote-assets draft-assets.json
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --notes-file "docs/releases/$RELEASE_TAG.md" --title "The Hunt Launcher $RELEASE_TAG"

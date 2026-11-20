@@ -498,15 +498,50 @@ public sealed class DesktopWindow
             default: return "未确认可读";
         }
     }
-    static string CharacterSummary(Dictionary<string,object> value) {
-        var lines=Rows(value,"characters").Select(row=>"角色槽位 "+SlotLabel(Str(row,"slot"))+
-            (Str(row,"name").Length>0 ? " · "+Str(row,"name"):" · 名字未识别")+
-            "：主档"+Readability(Str(row,"primary"))+"，备档"+Readability(Str(row,"backup"))+
-            (Flag(row,"identity_conflict") ? "；两代角色身份不一致":"")+
+    static bool EmptyGeneration(string value) {
+        return value=="missing" || value=="absent" || value=="empty" || value=="unused";
+    }
+    static string GenerationStatus(Dictionary<string,object> row) {
+        return "主档"+Readability(Str(row,"primary"))+"，备档"+Readability(Str(row,"backup"))+
+            (Flag(row,"identity_conflict") ? "，两代角色身份不一致":"")+
             (Str(row,"primary_detail").Length>0 ? "\n主档说明："+Str(row,"primary_detail"):"")+
-            (Str(row,"backup_detail").Length>0 ? "\n备档说明："+Str(row,"backup_detail"):"")).ToList();
+            (Str(row,"backup_detail").Length>0 ? "\n备档说明："+Str(row,"backup_detail"):"");
+    }
+    static string CharacterLine(Dictionary<string,object> row) {
+        string source=Str(row,"source"), name=Str(row,"name"), detail;
+        if(name.Length==0) name="姓名未识别";
+        switch(Str(row,"issue")) {
+            case "unrecognized": detail="角色数据无法识别"; break;
+            case "read_failed": detail="读取失败，请重新检查"; break;
+            case "stats_unavailable": detail=name+" · 等级、回响未识别"; break;
+            default: detail=name+" · 等级 "+Str(row,"level")+" · 回响 "+Str(row,"echoes"); break;
+        }
+        string label=source=="both" ? "主档与备档":source=="primary" ? "主档":"备档";
+        return "角色槽位 "+SlotLabel(Str(row,"slot"))+" · "+label+" · "+detail;
+    }
+    static string CharacterSummary(Dictionary<string,object> value) {
+        var lines=new List<string>();
+        var states=Rows(value,"characters").Where(row=>!EmptyGeneration(Str(row,"primary")) || !EmptyGeneration(Str(row,"backup"))).ToList();
+        if(value!=null && value.ContainsKey("character_preview")) {
+            foreach(var slot in Rows(value,"character_preview").GroupBy(row=>Str(row,"slot"))) {
+                lines.AddRange(slot.Select(CharacterLine));
+                var state=states.FirstOrDefault(row=>Str(row,"slot")==slot.Key);
+                if(state!=null) lines[lines.Count-1]+=" · "+GenerationStatus(state);
+                else if(slot.Any(row=>Flag(row,"identity_conflict"))) lines[lines.Count-1]+=" · 两代角色身份不一致";
+            }
+            if(lines.Count==0) lines.Add("没有已使用的角色槽位。");
+        } else {
+            foreach(var row in states)
+                lines.Add("角色槽位 "+SlotLabel(Str(row,"slot"))+" · "+
+                    (Str(row,"name").Length>0 ? Str(row,"name"):"名字未识别")+" · "+GenerationStatus(row));
+        }
         if(Str(value,"readability_note").Length>0) lines.Add(Str(value,"readability_note"));
         return String.Join("\n",lines.ToArray());
+    }
+    static string SourceCharacters(Dictionary<string,object> plan,string key,string heading) {
+        object item;
+        if(!plan.TryGetValue(key,out item)) return "";
+        return heading+"\n"+CharacterSummary((Dictionary<string,object>)item);
     }
     static string SlotLabel(string slot) { int number; return Int32.TryParse(slot,out number) && number>=0 && number<10 ? (number+1).ToString():"未识别"; }
     void InvalidateResolution() {
@@ -531,7 +566,10 @@ public sealed class DesktopWindow
         resolutionNeeded=Flag(plan,"needed");
         Get<Border>("SaveResolutionPanel").Visibility=Flag(plan,"show_choices") ? Visibility.Visible:Visibility.Collapsed;
         Get<TextBlock>("SaveResolutionSummary").Text=Str(plan,"summary");
-        Get<TextBlock>("SaveResolutionCharacters").Text=CharacterSummary(plan);
+        string current=CharacterSummary(plan);
+        Get<TextBlock>("SaveResolutionCharacters").Text=String.Join("\n\n", new [] {
+            SourceCharacters(plan,"backup_view","备份中的角色"), SourceCharacters(plan,"import_view","原版导入来源中的角色"),
+            current.Length>0 ? "当前存档中的角色\n"+current:"" }.Where(s=>s.Length>0));
         Get<TextBlock>("SaveResolutionPending").Text=Str(pendingResolution,"message")+"\n"+Str(pendingResolution,"abandon_message");
         Get<Button>("ResumeSaveResolution").Visibility=pendingResolution!=null ? Visibility.Visible:Visibility.Collapsed;
         Get<Button>("AbandonSaveResolution").Visibility=pendingResolution!=null ? Visibility.Visible:Visibility.Collapsed;
@@ -613,8 +651,11 @@ public sealed class DesktopWindow
         if(launch) await Launch();
     }
     string ResolutionConfirmation(Dictionary<string,object> plan,Dictionary<string,object> option) {
-        string characters=CharacterSummary(plan), summary=Str(plan,"summary");
+        string characters=CharacterSummary(plan), summary=Str(plan,"summary"), id=Str(option,"id"), source="";
+        if(id=="restore-all" || id=="restore-case") source=SourceCharacters(plan,"backup_view","将恢复的备份角色");
+        if(id=="reimport-ordinary") source=SourceCharacters(plan,"import_view","将导入的原版角色");
         return Str(option,"label")+"\n\n"+Str(option,"description")+
+            (source.Length>0 ? "\n\n"+source:"")+
             (summary.Length>0 ? "\n\n当前版本检查："+summary:"")+
             (characters.Length>0 ? "\n"+characters:"")+
             "\n\n会先完整保全当前存档和相关记录，核验成功后才执行。不同版本不会合并。确认继续？";
@@ -662,7 +703,8 @@ public sealed class DesktopWindow
         var row=item==null ? null:item.Tag as Dictionary<string,object>;
         bool special=Str(row,"kind")=="resolution-before";
         Get<Button>("RestoreSaveBackup").Content=special ? "换回处理前状态":"恢复到这个备份";
-        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+CharacterSummary(row)+"\n会成套换回存档和联机记录；现在的版本会另存，不会合并，换回后须重新选择，不自动启动。":"";
+        string characters=CharacterSummary(row);
+        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n会成套换回存档和联机记录；现在的版本会另存，不会合并，换回后须重新选择，不自动启动。":characters;
     }
     async Task LoadSaveBackups() {
         var ordinary=await Request("save_backups.py",Map("action","list"),"");
@@ -723,7 +765,7 @@ public sealed class DesktopWindow
         }
         if(kind!="launch" && kind!="pre-restore") throw new InvalidOperationException("未知备份类型，不能执行恢复。");
         InvalidateResolution();
-        if(!Confirm("恢复到："+Convert.ToString(selected.Content)+"\n\n当前存档会先自动备份。只恢复无缝版 savedata；奖杯和联机辅助记录不变。\n\n确认恢复？","恢复存档")) return;
+        if(!Confirm("恢复到："+Convert.ToString(selected.Content)+"\n"+CharacterSummary(row)+"\n\n当前存档会先自动备份。只恢复无缝版 savedata；奖杯和联机辅助记录不变。\n\n确认恢复？","恢复存档")) return;
         await ApplySaveBackup(Map("action","restore","id",Str(row,"id"),"fingerprint",Str(row,"fingerprint"),"confirmed",true));
     }
     async Task ResumeSaveRestore() {

@@ -10,7 +10,7 @@ import zipfile
 from server_bundle import install_package
 from isolate_patches import patched_script
 from port_compat import (patched_run_script, patched_mods_script, patched_coop_saves, patched_pc_menu_script,
-                         patched_relay_credentials, patched_exit_backup_credentials)
+                         patched_relay_credentials, patched_exit_backup_credentials, patched_character_reader)
 
 ROOT = Path(__file__).resolve().parents[1]
 DIAGNOSTIC_TOOLS = ("launcher/support/Collect-TheHunt-Diagnostics.cmd",
@@ -131,6 +131,8 @@ def main():
     for folder in ("bin", "mod", "engine", "runtime/bin", "licenses", "source-info"):
         (dest / folder).mkdir(parents=True, exist_ok=True)
     binary_dir = args.toolchain / "bin"
+    from stock_conversion_core import stage_stock_core
+    stage_stock_core(dest / "engine/conversion/bb-probe.exe", ROOT / ".build/preview25-client.zip")
     for source, target in (
         (args.port / "out/bb-probe.exe", "bin/bb-probe.exe"),
         (args.port / "out/bb-gpu-capabilities.exe", "bin/bb-gpu-capabilities.exe"),
@@ -201,6 +203,8 @@ def main():
     for name in ("bbport_driver_runtime", "bbport_exit_backup", "bbport_saves",
                  "bbport_character", "bbport_trophies", "bbport_trophy_icons", "bbport_tls"):
         shutil.copy2(args.port / "launcher" / (name + ".py"), dest / "engine/launcher" / (name + ".py"))
+    character_reader = dest / "engine/launcher/bbport_character.py"
+    character_reader.write_text(patched_character_reader(character_reader.read_text('utf-8')), 'utf-8')
     shutil.copytree(args.port / "scripts", dest / "engine/scripts", ignore=shutil.ignore_patterns("__pycache__"))
     backup_runner = dest / 'engine/launcher/bbport_exit_backup.py'
     backup_runner.write_text(patched_exit_backup_credentials(backup_runner.read_text('utf-8')), 'utf-8')
@@ -300,6 +304,9 @@ def main():
     info["launcher_entry"] = "TheHuntLauncher.exe"
     info["public_online_validation"] = "Existing-account NP authentication, hybrid metadata, public game login and read-only notes query passed through the actual bridge (HTTP 200 / ResKind 0; empty notes list in the selected query). Loopback protocol/HTTP and credential isolation regressions passed. No real game, public content write or two-player hybrid-session acceptance is claimed. Unchanged gameplay results are reused only within their scope."
     apply_hardening_metadata(info)
+    info["features"].extend(["private-summon-claim", "guest-wipe-landing", "restore-character-summary"])
+    info["gameplay_validation"] = "Windows dual-role client. See PREVIEW-NOTES.md for this release."
+    shutil.copy2(ROOT / "docs/releases" / ("v" + lock["version"] + ".md"), dest / "PREVIEW-NOTES.md")
     (dest / "BUILD-INFO.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     archive = out / (dest.name + ".zip")
     files = archive_tree(dest, archive)

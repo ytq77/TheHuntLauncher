@@ -9,6 +9,7 @@ import shutil
 import sys
 import uuid
 
+from backup_characters import with_character_preview
 import save_transfer as transfer
 import world_recovery
 
@@ -397,7 +398,7 @@ def overview(root):
                                         f'。原存档位置：{intent["destination"]}；恢复前备份位置：{intent["backup"]}。'))
         except (OSError, ValueError, KeyError, TypeError) as error:
             pending['message'] += ' ' + str(error)
-    return {'ok': True, 'backups': [{k: v for k, v in row.items() if not k.startswith('_')} for row in rows],
+    return {'ok': True, 'backups': [with_character_preview(row) for row in rows],
             'warnings': warnings, 'pending': pending}
 
 

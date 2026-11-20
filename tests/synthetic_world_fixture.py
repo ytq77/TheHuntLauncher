@@ -12,7 +12,7 @@ def fixture_pair():
                           28: end+158, 36: end, 40: 150, 44: end+150, 48: 8}.items():
         struct.pack_into('<I', data, offset, value)
     struct.pack_into('<III', data, 52, end+241, 150001, end+241+150001)
-    data[name:name+12] = 'Hunter'.encode('utf-16-le')
+    data[name:name+12] = 'Hunter'.encode('utf-16-be')
     for _, relative, count in save.AREAS:
         for index in range(count):
             struct.pack_into('<IIII', data, name+relative+4+index*16, 0, 0xffffffff, 0, 0)

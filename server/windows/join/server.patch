@@ -1,0 +1,1747 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3,7 +3,7 @@
+ 
+ include(CTest)
+ 
+-set(CMAKE_CXX_STANDARD 17)
++set(CMAKE_CXX_STANDARD 23)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_AUTOMOC ON)
+ 
+diff --git a/src/authenticated_relay.cpp b/src/authenticated_relay.cpp
+--- a/src/authenticated_relay.cpp
++++ b/src/authenticated_relay.cpp
+@@ -4,21 +4,26 @@
+ #include "config.h"
+ #include "database.h"
+ #include "trusted_network.h"
++#include "summon_claim_origin.hpp"
+ #include <QCryptographicHash>
+ #include <QElapsedTimer>
+ #include <QMessageAuthenticationCode>
+ #include <QRandomGenerator>
+ #include <QSqlQuery>
++#include <QScopeGuard>
++#include <QThread>
+ #include <QTcpServer>
+ #include <QTcpSocket>
+ #include <QTimer>
+ #include <QUuid>
+ #include <QtEndian>
+ #include <algorithm>
++#include <array>
++#include <bit>
+ #include <limits>
+ #include <vector>
+ #include <cmath>
+-#include <cstring>
++#include <optional>
+ 
+ namespace {
+ template<class T> void Append(QByteArray& out, T value) {
+@@ -82,25 +87,40 @@
+     port = static_cast<quint16>(number);
+     return true;
+ }
++// Map, the four IEEE-754 bit patterns, and signed area, as compared by COMP.
++static std::optional<std::array<qint64,6>> ParsePlacement(const QByteArray& text) {
++    if (text.isEmpty() || text.size() > 128) return {};
++    const auto fields = text.split(',');
++    if (fields.size() != 7 || fields[0] != "1") return {};
++    std::array<qint64,6> values;
++    for (int i = 1; i <= 5; ++i) {
++        const auto& field = fields[i];
++        if (field.isEmpty() || field.size() > 8) return {};
++        for (char c : field)
++            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return {};
++        bool ok = false;
++        const quint32 bits = field.toUInt(&ok,16);
++        if (!ok) return {};
++        if (i == 1) {
++            if (!bits || bits == std::numeric_limits<quint32>::max()) return {};
++        } else if (!std::isfinite(std::bit_cast<float>(bits))) {
++            return {};
++        }
++        values[i-1] = bits;
++    }
++    const auto& area = fields[6];
++    if (area.isEmpty() || area.size() > 11) return {};
++    for (qsizetype i = 0; i < area.size(); ++i) {
++        if (i == 0 && area[i] == '-') continue;
++        if (area[i] < '0' || area[i] > '9') return {};
++    }
++    bool ok = false;
++    values[5] = area.toInt(&ok,10);
++    if (!ok) return {};
++    return values;
++}
+ bool ValidPlacement(const QByteArray& text) {
+-    if (text.isEmpty() || text.size()>128) return false;
+-    const auto fields=text.split(',');
+-    if(fields.size()!=7 || fields[0]!="1") return false;
+-    for(int i=1;i<=5;++i) {
+-        if(fields[i].isEmpty() || fields[i].size()>8) return false;
+-        for(char c:fields[i])
+-            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return false;
+-        bool ok=false;const quint32 bits=fields[i].toUInt(&ok,16);
+-        if(!ok) return false;
+-        if(i==1) {
+-            if(bits==0 || bits==std::numeric_limits<quint32>::max()) return false;
+-        } else { float number;std::memcpy(&number,&bits,4);if(!std::isfinite(number))return false; }
+-    }
+-    if(fields[6].isEmpty() || fields[6].size()>11) return false;
+-    for(qsizetype i=0;i<fields[6].size();++i) {
+-        char c=fields[6][i];if(i==0&&c=='-')continue;if(c<'0'||c>'9')return false;
+-    }
+-    bool ok=false;fields[6].toInt(&ok,10);return ok;
++    return ParsePlacement(text).has_value();
+ }
+ bool ValidInner(const QByteArray& p) {
+     if (p.size() < 5 || !p.startsWith("SHAD")) return false;
+@@ -168,6 +188,8 @@
+         quint32 frames = 0, bytes = 0;
+         bool authenticated = false, dead = false, haveContext = false, visibility = false;
+         QByteArray roster;
++        QByteArray pendingOutput;
++        qint64 outstandingBytes = 0; // queued here plus accepted by QTcpSocket
+         Context context;
+     };
+     struct Placement {
+@@ -176,6 +198,8 @@
+         QByteArray hostHash, targetHash, text;
+         qint64 expires = 0;
+         quint64 deliveredTo = 0;
++        QByteArray retryScope; // Only renewed legacy grants carry additional delivery checks.
++        QByteArray boundScope;
+     };
+     AuthenticatedRelay* self;
+     SharedState* shared;
+@@ -185,6 +209,14 @@
+     std::unique_ptr<Database> db;
+     std::vector<std::unique_ptr<Peer>> peers;
+     QHash<quint64, Placement> placements;
++    struct BoundAttempt {
++        Bloodborne::BoundClaimOrigin origin;
++        QByteArray actors, scope;
++        std::shared_ptr<const SummonRoomOrigin> nativeRoom;
++    };
++    // Main event thread only. Keep the receipt past the 10s placement TTL;
++    // only the matching registration's terminal event can release it.
++    QHash<quint64, BoundAttempt> boundAttempts;
+     quint64 nextPlacement = 0;
+     quint64 nextConnection = 0;
+     qint64 globalWindow = 0;
+@@ -202,23 +234,41 @@
+         if (p.dead) return;
+         p.dead = true;
+         p.key.fill(0); p.nonce.fill(0); p.tokenHash.fill(0);
+-        p.socket->abort();
++        p.pendingOutput.clear();
++        QMetaObject::invokeMethod(p.socket, &QAbstractSocket::abort, Qt::QueuedConnection);
++    }
++    // Each write goes through this FIFO, including replies and revocations.
++    // Posting to the socket's QObject drops the callback if Stop destroys it.
++    void Enqueue(Peer& p, const QByteArray& bytes) {
++        if (p.pendingOutput.isEmpty()) {
++            QMetaObject::invokeMethod(p.socket, [this, &p] {
++                if (p.dead) return;
++                QByteArray batch;
++                batch.swap(p.pendingOutput);
++                if (p.socket->write(batch) != batch.size()) Close(p);
++            }, Qt::QueuedConnection);
++        }
++        p.pendingOutput += bytes;
++        p.outstandingBytes += bytes.size();
+     }
+     bool Send(Peer& p, const QByteArray& payload) {
+         const QByteArray frame = RelayAuth::Frame(payload);
+-        if (p.dead || frame.isEmpty() || p.socket->bytesToWrite() + frame.size() > MaxBacklog) {
++        if (p.dead || frame.isEmpty() || p.outstandingBytes + frame.size() > MaxBacklog) {
+             Close(p); return false;
+         }
+-        if (p.socket->write(frame) != frame.size()) { Close(p); return false; }
++        Enqueue(p,frame);
+         return true;
+     }
+-    bool Signed(Peer& p, QByteArray payload) {
+-        if (p.dead || p.outgoing == std::numeric_limits<quint64>::max()) { Close(p); return false; }
++    QByteArray Sign(const Peer& p, const QByteArray& payload, quint64 sequence) const {
+         QByteArray out = payload.left(4);
+-        Append(out, ++p.outgoing);
++        Append(out, sequence);
+         out += payload.mid(4);
+         out += RelayAuth::Mac(p.key, out);
+-        return Send(p, out);
++        return out;
++    }
++    bool Signed(Peer& p, const QByteArray& payload) {
++        if (p.dead || p.outgoing == std::numeric_limits<quint64>::max()) { Close(p); return false; }
++        return Send(p, Sign(p,payload,++p.outgoing));
+     }
+     QByteArray Token(quint64 user, QString* npid = nullptr) {
+         if (user == 0 || user > std::numeric_limits<quint32>::max()) return {};
+@@ -260,13 +310,16 @@
+         return !token.isEmpty() && RelayAuth::Equal(expected,
+             QCryptographicHash::hash(token, QCryptographicHash::Sha256));
+     }
+-    bool PlacementFrame(Peer& guest, const Placement& grant, quint32 ttl) {
++    QByteArray PlacementPayload(const Placement& grant, quint32 ttl) const {
+         QByteArray out("THP2",4);
+         Append(out,grant.generation); Append(out,grant.hostContext.room);
+         Append(out,static_cast<quint32>(grant.host)); Append(out,static_cast<quint32>(grant.target));
+         Append(out,ttl);
+         if(ttl) out += grant.text;
+-        return Signed(guest,out);
++        return out;
++    }
++    bool PlacementFrame(Peer& guest, const Placement& grant, quint32 ttl) {
++        return Signed(guest,PlacementPayload(grant,ttl));
+     }
+     void Revoke(const Placement& grant) {
+         for(auto& p:peers)
+@@ -275,22 +328,233 @@
+     }
+     void CancelPlacements(quint64 user) {
+         for(auto it=placements.begin();it!=placements.end();)
+-            if(it->host==user || it->target==user) { Revoke(*it);it=placements.erase(it); } else ++it;
+-    }
+-    void QueuePlacement(quint64 host, const QByteArray& hostHash, quint64 target,
+-                        const QByteArray& targetHash, const QByteArray& text) {
++            if(it->boundScope.isEmpty() && (it->host==user || it->target==user)) {
++                Revoke(*it);it=placements.erase(it);
++            } else ++it;
++    }
++    Peer* AuthenticatedPeer(const Bloodborne::SummonIdentity& identity) const {
++        Peer* result = nullptr;
++        for (const auto& p : peers) {
++            if (p->dead || !p->authenticated || p->user != identity.user) continue;
++            if (result || !p->connection || !RelayAuth::Equal(p->tokenHash,identity.tokenHash)) return nullptr;
++            result = p.get();
++        }
++        return result;
++    }
++    bool CurrentIdentity(const Bloodborne::SummonIdentity& identity, QString& name) {
++        const auto token = Token(identity.user,&name);
++        return !token.isEmpty() && RelayAuth::Equal(identity.tokenHash,
++                   QCryptographicHash::hash(token,QCryptographicHash::Sha256));
++    }
++    // Opaque, server-side continuity across two rooms. ContextStart and login
++    // replacement cannot reuse the native history even when the numeric ID repeats.
++    QByteArray BoundActors(const Peer& host, const Peer& guest) const {
++        QByteArray result;
++        for (auto* p : {&host, &guest}) {
++            const auto client = shared->clients.constFind(qint64(p->user));
++            if (client == shared->clients.cend() || !client->bloodborneMatching ||
++                !client->matchingContextId || !client->summonJoins || client->summonJoins->context.isNull() ||
++                client->summonJoins->joins == std::numeric_limits<quint64>::max()) return {};
++            Append(result,p->user);
++            Append(result,p->connection);
++            result += p->tokenHash;
++            Append(result,client->matchingContextId);
++            result += client->summonJoins->context.toRfc4122();
++            Append(result,client->summonJoins->joins);
++        }
++        return result;
++    }
++    static bool CanJoin(const Room& room, quint64 user, const QString& name) {
++        if (room.isFull() || room.findByNpid(name) ||
++            (!room.allowedUsers.isEmpty() && !room.allowedUsers.contains(name)) ||
++            (!room.allowedAccountIds.isEmpty() && !room.allowedAccountIds.contains(user)) ||
++            room.blockedUsers.contains(name) || room.blockedAccountIds.contains(user)) return false;
++        for (const auto& member : room.members)
++            if (member.blockedUsers.contains(name) || member.blockedAccountIds.contains(user)) return false;
++        return true;
++    }
++    void CancelBound(const QString& registrationId, const QByteArray& scope) {
++        if (QThread::currentThread() != self->thread() || scope.isEmpty()) return;
++        for (auto it = boundAttempts.begin(); it != boundAttempts.end(); ++it) {
++            if (it->origin.registrationId != registrationId || it->scope != scope) continue;
++            auto grant = placements.find(it.key());
++            if (grant != placements.end() && grant->boundScope == scope) {
++                Revoke(*grant);
++                placements.erase(grant);
++            }
++            boundAttempts.erase(it);
++            return;
++        }
++    }
++    Bloodborne::BoundPlacementResult BoundPlacement(const Bloodborne::BoundPlacementRequest& request,
++                                                   const Bloodborne::BoundCommit& commit) {
++        using namespace Bloodborne;
++        using Status = BoundPlacementStatus;
++        const auto& origin = request.origin;
++        const auto& h = request.host;
++        const auto& g = request.guest;
++        const auto& run = origin.hostRun;
++        const auto pose = RelayAuth::ParsePlacement(request.placement);
++        if (!TheHunt::Summon::LowerHex(std::string_view(run),32) ||
++            !TheHunt::Summon::LowerHex(std::string_view(origin.registrationId.toLatin1()),48)) return {};
++        if (QThread::currentThread() != self->thread() || !commit || !db ||
++            !origin.room || !origin.ownerMember || !origin.ownerJoined ||
++            !origin.attempt || h.user == g.user || !pose) return {};
++
++        // SQLite busy_timeout=0. A successful reservation keeps reset/ban from
++        // racing either identity check and the protected grant. No DB access
++        // takes place under a matching lock (guards unwind in reverse order).
++        QSqlQuery transaction(db->Conn());
++        if (!transaction.exec("BEGIN IMMEDIATE")) return {Status::Busy,{}};
++        const auto endTransaction = qScopeGuard([&] { transaction.exec("ROLLBACK"); });
++        QString hostName, guestName;
++        if (!CurrentIdentity(h,hostName) || !CurrentIdentity(g,guestName)) return {};
++        Peer* host = AuthenticatedPeer(h);
++        Peer* guest = AuthenticatedPeer(g);
++        if (!host || !guest) return {};
++        if (!shared->matching.roomsLock.tryLockForRead()) return {Status::Busy,{}};
++        const auto rooms = qScopeGuard([&] { shared->matching.roomsLock.unlock(); });
++        if (!shared->clientsLock.tryLockForRead()) return {Status::Busy,{}};
++        const auto clients = qScopeGuard([&] { shared->clientsLock.unlock(); });
++
++        const Context current = Resolve(h.user);
++        bool waiting = false;
++        Resolve(g.user,&waiting);
++        const auto room = shared->matching.rooms.constFind({QStringLiteral("bloodborne"),origin.room});
++        if (!waiting || current.room != origin.room || current.owner != h.user ||
++            current.member != origin.ownerMember || current.joined != origin.ownerJoined ||
++            current.npid != hostName.toUtf8() || room == shared->matching.rooms.cend() ||
++            room->ownerMemberId != origin.ownerMember ||
++            shared->clients.constFind(qint64(g.user))->npid != guestName || !CanJoin(*room,g.user,guestName))
++            return {};
++
++        const auto nativeRoom = shared->summonRooms.value(origin.room);
++        if (!nativeRoom || nativeRoom->destroyed || nativeRoom->creator != h.user ||
++            nativeRoom->member != origin.ownerMember || nativeRoom->joined != origin.ownerJoined) return {};
++        const QByteArray actors = BoundActors(*host,*guest);
++        if (actors.isEmpty()) return {};
++        const auto previous = boundAttempts.constFind(g.user);
++        QByteArray scope;
++        switch (request.step) {
++        case BoundClaimStep::First:
++            if (request.previous || !request.previousScope.isEmpty() || previous != boundAttempts.cend()) return {};
++            if (boundAttempts.size() >= 1024) return {Status::Busy,{}};
++            break;
++        case BoundClaimStep::Retry:
++        case BoundClaimStep::Rebind:
++            if (!request.previous || previous == boundAttempts.cend()) return {Status::Expired,{}};
++            if (previous->origin != *request.previous || previous->scope != request.previousScope ||
++                previous->origin.registrationId != origin.registrationId || previous->origin.hostRun != run ||
++                previous->actors != actors) return {};
++            if (request.step == BoundClaimStep::Retry) {
++                if (previous->origin != origin || previous->nativeRoom != nativeRoom) return {};
++                scope = previous->scope;
++            } else {
++                // A native empty-room destruction must have retired this exact
++                // creation. A missing directory entry alone cannot prove that.
++                if (!previous->nativeRoom->destroyed || previous->origin.room == origin.room ||
++                    previous->origin.attempt == origin.attempt ||
++                    shared->matching.rooms.contains({QStringLiteral("bloodborne"),previous->origin.room})) return {};
++            }
++            break;
++        default:
++            return {};
++        }
++        const auto prior = placements.constFind(g.user);
++        if (prior != placements.cend() && (previous == boundAttempts.cend() ||
++            prior->boundScope != previous->scope || prior->deliveredTo != guest->connection)) return {};
++        if (request.step == BoundClaimStep::Retry && prior != placements.cend() && prior->expires > clock.elapsed() &&
++            (prior->text == request.placement || RelayAuth::ParsePlacement(prior->text) == pose)) {
++            // First delivery is already in this peer's FIFO or on the wire. Keep its deadline and generation.
++            commit(scope);
++            return {Status::Granted,scope};
++        }
++        if (prior == placements.cend() && placements.size() >= 256) return {Status::Busy,{}};
++        if (nextPlacement == std::numeric_limits<quint64>::max()) return {};
++        if (scope.isEmpty()) {
++            scope = QUuid::createUuid().toRfc4122();
++            Append(scope,nextPlacement+1);
++        }
++        constexpr quint32 ttl = 10000;
++        Placement grant{nextPlacement + 1,h.user,g.user,current,h.tokenHash,g.tokenHash,request.placement,
++                        clock.elapsed()+ttl,guest->connection,{},scope};
++        const quint64 count = prior == placements.cend() ? 1 : 2;
++        if (guest->outgoing > std::numeric_limits<quint64>::max() - count) return {};
++        quint64 sequence = guest->outgoing;
++        QByteArray bytes;
++        if (prior != placements.cend())
++            bytes = RelayAuth::Frame(Sign(*guest,PlacementPayload(*prior,0),++sequence));
++        bytes += RelayAuth::Frame(Sign(*guest,PlacementPayload(grant,ttl),++sequence));
++        if (guest->outstandingBytes + bytes.size() > MaxBacklog) return {Status::Busy,{}};
++
++        // All fallible business checks precede the sole broker commit. The native
++        // writer cannot insert the guest between it and enqueue. No socket call.
++        commit(scope);
++        boundAttempts.insert(g.user,{origin,actors,scope,nativeRoom});
++        placements.insert(g.user,grant);
++        nextPlacement = grant.generation;
++        guest->outgoing = sequence;
++        Enqueue(*guest,bytes);
++        return {Status::Granted,scope};
++    }
++    // Caller holds roomsLock THEN clientsLock. Read-only; no DB/socket calls.
++    QByteArray ClaimPlacementScope(quint64 host, const QByteArray& hostHash, quint64 target,
++                                  const QByteArray& targetHash, const Context& c, bool allowJoined = false) const {
++        if (!host || !target || host == target || !c.room || c.owner != host ||
++            !c.member || !c.joined || c.com != QStringLiteral("bloodborne") || c.npid.isEmpty()) return {};
++        bool targetNoRoom = false;
++        const auto guest = Resolve(target, &targetNoRoom);
++        // Admission requires pending membership. Delivery also permits the exact
++        // successful native join so the existing client hint survives reload.
++        if (!targetNoRoom && !(allowJoined && guest.room == c.room &&
++            guest.com == c.com && guest.owner == host && guest.member && guest.joined)) return {};
++        const auto h = shared->clients.constFind(static_cast<qint64>(host));
++        const auto g = shared->clients.constFind(static_cast<qint64>(target));
++        if (h == shared->clients.cend() || g == shared->clients.cend() ||
++            !h->bloodborneMatching || !g->bloodborneMatching ||
++            !h->matchingContextId || !g->matchingContextId ||
++            h->npid.isEmpty() || g->npid.isEmpty() || h->npid.size() > 16 || g->npid.size() > 16) return {};
++        quint64 hostConnection = 0, targetConnection = 0;
++        for (const auto& p : peers) {
++            if (p->dead || !p->authenticated) continue;
++            if (p->user == host) {
++                if (hostConnection || !p->connection || !RelayAuth::Equal(p->tokenHash, hostHash)) return {};
++                hostConnection = p->connection;
++            }
++            if (p->user == target) {
++                if (targetConnection || !p->connection || !RelayAuth::Equal(p->tokenHash, targetHash)) return {};
++                targetConnection = p->connection;
++            }
++        }
++        if (!hostConnection || !targetConnection) return {};
++        QByteArray scope("THCS1",5);
++        Append(scope,host); Append(scope,target); Append(scope,c.room); Append(scope,c.joined);
++        Append(scope,c.member); Append(scope,c.owner);
++        Append(scope,h->matchingContextId); Append(scope,g->matchingContextId);
++        Append(scope,hostConnection); Append(scope,targetConnection);
++        const auto hn=h->npid.toUtf8(), gn=g->npid.toUtf8();
++        Append(scope,static_cast<quint32>(hn.size())); scope+=hn;
++        Append(scope,static_cast<quint32>(gn.size())); scope+=gn;
++        return scope;
++    }
++    QByteArray QueuePlacement(quint64 host, const QByteArray& hostHash, quint64 target,
++                        const QByteArray& targetHash, const QByteArray& text,
++                        const QByteArray& expectedScope = {}, bool claimScoped = false) {
+         // This callback is used only by the authenticated native summon broker.
+-        if (host == target || !RelayAuth::ValidPlacement(text) || !HashCurrent(host, hostHash) ||
+-            !HashCurrent(target, targetHash) || nextPlacement == std::numeric_limits<quint64>::max()) return;
+-        if (!shared->matching.roomsLock.tryLockForRead()) return;
+-        if (!shared->clientsLock.tryLockForRead()) { shared->matching.roomsLock.unlock(); return; }
++        if (boundAttempts.contains(target) || host == target || !RelayAuth::ValidPlacement(text) || !HashCurrent(host, hostHash) ||
++            !HashCurrent(target, targetHash) || nextPlacement == std::numeric_limits<quint64>::max()) return {};
++        if (!shared->matching.roomsLock.tryLockForRead()) return {};
++        if (!shared->clientsLock.tryLockForRead()) { shared->matching.roomsLock.unlock(); return {}; }
+         const Context c = Resolve(host);
++        const auto scope = claimScoped ? ClaimPlacementScope(host,hostHash,target,targetHash,c) : QByteArray{};
+         shared->clientsLock.unlock(); shared->matching.roomsLock.unlock();
+-        if (!c.room || c.owner != host) return;
+-        if (!placements.contains(target) && placements.size() >= 256) return;
++        if (!c.room || c.owner != host) return {};
++        if (!expectedScope.isEmpty() && (!claimScoped || scope != expectedScope)) return {};
++        if (!placements.contains(target) && placements.size() >= 256) return {};
+         const auto old=placements.constFind(target);
+         if(old!=placements.cend()) Revoke(*old);
+-        placements.insert(target, {++nextPlacement, host, target, c, hostHash, targetHash, text, clock.elapsed() + 10000});
++        placements.insert(target, {++nextPlacement, host, target, c, hostHash, targetHash, text, clock.elapsed() + 10000, 0, expectedScope});
++        return scope;
+     }
+     // Caller holds roomsLock THEN clientsLock, matching the existing native order.
+     Context Resolve(quint64 user, bool* noRoom = nullptr) const {
+@@ -403,7 +667,30 @@
+         }
+         for (auto it = placements.begin(); it != placements.end();) {
+             const Context host = Resolve(it->host);
+-            if (!host.room || host.owner != it->host || !host.SameMembership(it->hostContext)) {
++            if (!it->boundScope.isEmpty()) {
++                // The positive frame was already addressed to one connection in
++                // BoundPlacement. A later tick may retire it, never broadcast it.
++                bool waiting = false;
++                const auto target = Resolve(it->target,&waiting);
++                const auto receipt = boundAttempts.constFind(it->target);
++                auto* h = AuthenticatedPeer({it->host,it->hostHash});
++                auto* g = AuthenticatedPeer({it->target,it->targetHash});
++                const bool sameHost = host.owner == it->host && host.SameMembership(it->hostContext);
++                if (sameHost && target.room == host.room && target.owner == it->host) {
++                    it = placements.erase(it); // the normal native join consumed the hint
++                } else if (!sameHost || !waiting || !h || !g || g->connection != it->deliveredTo ||
++                           receipt == boundAttempts.cend() || receipt->scope != it->boundScope ||
++                           BoundActors(*h,*g) != receipt->actors) {
++                    Revoke(*it);
++                    it = placements.erase(it);
++                } else {
++                    ++it;
++                }
++                continue;
++            }
++            if (!host.room || host.owner != it->host || !host.SameMembership(it->hostContext) ||
++                (!it->retryScope.isEmpty() && ClaimPlacementScope(it->host,it->hostHash,it->target,
++                    it->targetHash,host,true) != it->retryScope)) {
+                 Revoke(*it);it = placements.erase(it); continue;
+             }
+             bool completed = false;
+@@ -533,6 +820,9 @@
+             QRandomGenerator::system()->fillRange(random);
+             p.nonce = QByteArray(reinterpret_cast<const char*>(random), sizeof(random));
+             peers.push_back(std::move(item));
++            QObject::connect(socket, &QTcpSocket::bytesWritten, self, [&p](qint64 count) {
++                p.outstandingBytes -= count;
++            });
+             QObject::connect(socket, &QTcpSocket::readyRead, self, [this, &p] { ReadReady(p); });
+             QObject::connect(socket, &QTcpSocket::disconnected, self, [this, &p] { Close(p); });
+             Send(p, QByteArray("THC2", 4) + p.nonce);
+@@ -586,6 +876,17 @@
+                                       const QByteArray& targetHash, const QByteArray& text) {
+         m->QueuePlacement(host,hostHash,target,targetHash,text);
+     };
++    m->shared->relayClaimPlacement = [this](quint64 host, const QByteArray& hostHash, quint64 target,
++        const QByteArray& targetHash, const QByteArray& text, const QByteArray& scope) {
++        return m->QueuePlacement(host,hostHash,target,targetHash,text,scope,true);
++    };
++    m->shared->relayBoundClaimPlacement = [this](const Bloodborne::BoundPlacementRequest& request,
++                                                const Bloodborne::BoundCommit& commit) {
++        return m->BoundPlacement(request, commit);
++    };
++    m->shared->relayCancelBoundPlacement = [this](const QString& id, const QByteArray& scope) {
++        m->CancelBound(id,scope);
++    };
+     m->shared->relayCancelPlacement = [this](quint64 user) { m->CancelPlacements(user); };
+     m->timer.start();
+     return true;
+@@ -597,8 +898,12 @@
+         m->shared->relayHost = {};
+         m->shared->relaySearchAccess = {};
+         m->shared->relayPlacement = {};
++        m->shared->relayClaimPlacement = {};
+         m->shared->relayCancelPlacement = {};
+-    }
++        m->shared->relayBoundClaimPlacement = {};
++        m->shared->relayCancelBoundPlacement = {};
++    }
++    m->boundAttempts.clear();
+     m->placements.clear();
+     m->timer.stop();
+     m->listener.close();
+diff --git a/src/authenticated_relay.h b/src/authenticated_relay.h
+--- a/src/authenticated_relay.h
++++ b/src/authenticated_relay.h
+@@ -24,7 +24,10 @@
+ }
+ 
+ // All sockets, timers and database access stay on the owning Qt event thread.
+-// No blocking socket calls; native state is consulted under its existing locks.
++// Bound admission runs synchronously on this thread under the caller's broker
++// lock. It reserves the credential generation, then tries roomsLock and
++// clientsLock in that order. Commit only updates the already-locked record.
++// Signed bytes enter the peer FIFO under protection; Qt writes them after return.
+ class AuthenticatedRelay : public QObject {
+ public:
+     explicit AuthenticatedRelay(SharedState* shared, QObject* parent = nullptr);
+diff --git a/src/bloodborne_summon_broker.cpp b/src/bloodborne_summon_broker.cpp
+--- a/src/bloodborne_summon_broker.cpp
++++ b/src/bloodborne_summon_broker.cpp
+@@ -5,13 +5,16 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <limits>
++#include <utility>
+ #include <vector>
+ 
++#include <QCryptographicHash>
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonValue>
+ #include <QMutexLocker>
+ #include <QSet>
++#include <QUuid>
+ 
+ namespace Bloodborne {
+ namespace {
+@@ -48,6 +51,10 @@
+ bool IsSeamlessActiveState(SummonBroker::State state) {
+     return state == SummonBroker::State::Preparing || state == SummonBroker::State::Claimed ||
+            state == SummonBroker::State::Delivered;
++}
++
++bool Expired(qint64 now, qint64 updated, qint64 ttl) {
++    return now >= updated && quint64(now) - quint64(updated) > quint64(ttl);
+ }
+ 
+ bool ForceConsumeRequested(const QJsonObject& request) {
+@@ -138,8 +145,9 @@
+     QByteArray raw;
+ };
+ 
+-QList<TopLevelMember> TopLevelMembers(const QByteArray& rawObject) {
+-    const QByteArray raw = rawObject.trimmed();
++QList<TopLevelMember> TopLevelMembers(const QByteArray& rawObject, bool acceptBom = false) {
++    QByteArray raw = rawObject.trimmed();
++    if (acceptBom && raw.startsWith("\xef\xbb\xbf")) raw = raw.sliced(3).trimmed();
+     QList<TopLevelMember> members;
+     if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') {
+         return members;
+@@ -292,12 +300,92 @@
+     return QString::fromLatin1(payload.toBase64());
+ }
+ 
++constexpr char RegistrationIdField[] = "TheHuntRegistrationId";
++
++bool IsJsonKey(const QByteArray& rawKey, const char* name) {
++    if (!rawKey.contains('\\')) return rawKey == name;
++    // The raw splitter preserves JSON key escapes. Compare their decoded spelling too.
++    return QJsonDocument::fromJson("{\"" + rawKey + "\":0}").object().contains(QLatin1String(name));
++}
++
++struct Decimal {
++    QByteArray digits;
++    qint64 power;
++    bool operator==(const Decimal&) const = default;
++};
++
++// The JSON parser has validated the object's syntax. Read the wire number
++// before Qt converts large integers or exponent notation to a double.
++std::optional<Decimal> UnsignedDecimal(const TopLevelMember& member) {
++    const auto colon = member.raw.indexOf(':', member.key.size() + 2);
++    auto digits = member.raw.sliced(colon + 1).trimmed().toLower();
++    if (digits.isEmpty() || digits.front() < '0' || digits.front() > '9') return {};
++    const auto e = digits.indexOf('e');
++    qint64 power = 0;
++    if (e >= 0) {
++        bool ok;
++        power = digits.sliced(e + 1).toInt(&ok);
++        if (!ok) return {};
++        digits.truncate(e);
++    }
++    const auto point = digits.indexOf('.');
++    if (point >= 0) {
++        power -= digits.size() - point - 1;
++        digits.remove(point, 1);
++    }
++    qsizetype first = 0;
++    while (first < digits.size() && digits[first] == '0') ++first;
++    if (first == digits.size()) return Decimal{"0", 0};
++    while (digits.endsWith('0')) {
++        digits.chop(1);
++        ++power;
++    }
++    return Decimal{digits.sliced(first), power};
++}
++
++std::optional<Decimal> NativeCharacterNumber(const QByteArray& advertisement) {
++    const auto members = TopLevelMembers(advertisement, true);
++    for (auto it = members.crbegin(); it != members.crend(); ++it)
++        if (IsJsonKey(it->key, "CharaId")) return UnsignedDecimal(*it);
++    return {};
++}
++
++std::optional<quint64> NativeId(const QList<TopLevelMember>& members, const char* name) {
++    std::optional<quint64> result;
++    for (const auto& member : members) {
++        if (!IsJsonKey(member.key, name)) continue;
++        if (result) return {}; // Duplicate selector, including escaped spellings.
++        const auto n = UnsignedDecimal(member);
++        if (!n || n->power < 0 || n->power > 20 || n->digits.size() > 20 - n->power) return {};
++        bool ok;
++        result = (n->digits + QByteArray(n->power, '0')).toULongLong(&ok);
++        if (!ok) return {};
++    }
++    return result;
++}
++
++bool ValidBoundOrigin(const BoundClaimOrigin& origin) {
++    const auto lowerHex = [](auto c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); };
++    return origin.room && origin.ownerMember && origin.ownerJoined && origin.attempt &&
++           origin.hostRun.size() == 32 && std::all_of(origin.hostRun.cbegin(), origin.hostRun.cend(), lowerHex) &&
++           origin.registrationId.size() == 48 &&
++           std::all_of(origin.registrationId.cbegin(), origin.registrationId.cend(), lowerHex);
++}
++
++QByteArray NativeClaimDigest(const QJsonObject& request, const QByteArray& raw) {
++    auto bytes = QJsonDocument(request).toJson(QJsonDocument::Compact);
++    if (const auto character = NativeId(TopLevelMembers(raw, true), "TargetCharaId"))
++        bytes += '\0' + QByteArray::number(*character);
++    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
++}
++
+ QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
+                                          const QJsonObject& advertisement,
+-                                         const QJsonObject& request, bool spoofLocation) {
+-    const QList<TopLevelMember> members = TopLevelMembers(rawAdvertisement);
++                                         const QJsonObject& request, bool spoofLocation,
++                                         const TheHuntRegistrationId* registrationId) {
++    const auto members = TopLevelMembers(rawAdvertisement, registrationId != nullptr);
+     if (members.isEmpty()) {
+-        return rawAdvertisement;
++        return registrationId ? QByteArray{} : rawAdvertisement;
+     }
+ 
+     const std::optional<QString> summonData = SummonDataWithAvailableResult(advertisement);
+@@ -317,6 +405,7 @@
+     };
+ 
+     for (const TopLevelMember& member : members) {
++        if (registrationId && IsJsonKey(member.key, RegistrationIdField)) continue;
+         emitted.insert(member.key);
+         const QString key = QString::fromLatin1(member.key);
+         const QJsonValue replacement = request.value(key);
+@@ -343,11 +432,23 @@
+             }
+         }
+     }
++    if (registrationId)
++        appendMember(BuildRawMember(RegistrationIdField, *registrationId));
+     out.append('}');
+     return out;
+ }
+ 
+ } // namespace
++
++TheHuntRegistrationId SummonBroker::NewRegistrationIdLocked() {
++    // A new broker (or exhausted counter) starts a new UUID namespace. The
++    // serial is independent of the clock, aliases, and the number of searches.
++    if (m_registrationEpoch.isEmpty() || m_registrationSequence == std::numeric_limits<quint64>::max()) {
++        m_registrationEpoch = QUuid::createUuid().toString(QUuid::Id128);
++        m_registrationSequence = 0;
++    }
++    return m_registrationEpoch + QString::number(++m_registrationSequence, 16).rightJustified(16, u'0');
++}
+ 
+ SummonBroker::SummonBroker() : SummonBroker(Options{}) {}
+ 
+@@ -361,7 +462,10 @@
+       m_seamlessCoop(options.seamlessCoop),
+       m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop),
+       m_relayPlacement(std::move(options.relayPlacement)),
+-      m_relayCancelPlacement(std::move(options.relayCancelPlacement)) {}
++      m_relayClaimPlacement(std::move(options.relayClaimPlacement)),
++      m_relayCancelPlacement(std::move(options.relayCancelPlacement)),
++      m_boundPlacement(std::move(options.boundPlacement)),
++      m_cancelBoundPlacement(std::move(options.cancelBoundPlacement)) {}
+ 
+ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
+                                                       const QByteArray& rawBody, qint64 nowMs, const SummonIdentity& caller) {
+@@ -370,6 +474,18 @@
+ 
+     const QString key = RecordKey(body);
+     auto it = m_records.find(key);
++    if (it != m_records.end() && it->boundOrigin && !caller.user) return {State::Advertised, {}, {}, false};
++    const auto characterChanged = [&](const Record& previous) {
++        const auto oldCharacter = previous.advertisement.value(QStringLiteral("CharaId"));
++        const auto character = body.value(QStringLiteral("CharaId"));
++        const double rounded = character.toDouble();
++        // Qt can round unsigned integers and numbers in exponent form. When
++        // the doubles coincide at this magnitude, use the original JSON numbers.
++        if (rounded >= 0x1p53 && oldCharacter.toDouble() == rounded && previous.rawAdvertisement != rawBody) {
++            return NativeCharacterNumber(previous.rawAdvertisement) != NativeCharacterNumber(rawBody);
++        }
++        return oldCharacter != character;
++    };
+     if (caller.user) {
+         if (caller.user > std::numeric_limits<quint32>::max() || caller.tokenHash.size() != 32 ||
+             !body.contains(QStringLiteral("CharaId"))) return {State::Advertised, {}, {}, false};
+@@ -380,17 +496,18 @@
+                 old->publisher.user && old->publisher.user != caller.user)
+                 return {State::Advertised, {}, {}, false};
+         if (it == m_records.end() && m_records.size() >= 1024) return {State::Advertised, {}, {}, false};
+-        if (it == m_records.end() && m_relayCancelPlacement) m_relayCancelPlacement(caller.user);
+-        if (it != m_records.end() && (it->publisher.tokenHash != caller.tokenHash ||
+-            it->advertisement.value(QStringLiteral("CharaId")) != body.value(QStringLiteral("CharaId")))) {
+-            if (m_relayCancelPlacement) m_relayCancelPlacement(caller.user);
++        if (it == m_records.end()) CancelPlacementLocked(caller.user);
++        if (it != m_records.end() && (it->publisher.tokenHash != caller.tokenHash || characterChanged(*it))) {
++            CancelPlacementLocked(caller.user, &*it);
+             it->state = State::Consumed;
+         }
+     }
+     if (it == m_records.end() || it->state == State::Consumed) {
+         Record record;
++        record.registrationId = NewRegistrationIdLocked();
+         record.state = State::Advertised;
+         record.publisher = caller;
++        record.authenticatedAdvertisement = caller.user != 0;
+         record.advertisement = body;
+         record.rawAdvertisement = rawBody;
+         record.updatedAtMs = nowMs;
+@@ -398,7 +515,12 @@
+         return {State::Advertised, {}, {}};
+     }
+ 
++    // Anonymous registrations keep the legacy claim state across a role change.
++    if (!caller.user && characterChanged(*it)) {
++        it->registrationId = NewRegistrationIdLocked();
++    }
+     if (caller.user) it->publisher = caller;
++    it->authenticatedAdvertisement = caller.user != 0;
+     it->advertisement = body;
+     it->rawAdvertisement = rawBody;
+     it->updatedAtMs = nowMs;
+@@ -426,6 +548,11 @@
+ 
+ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
+                                        const QByteArray& hostPlacement, const SummonIdentity& caller) {
++    return Search(request, nowMs, hostPlacement, caller, SearchMode::Legacy);
++}
++
++QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
++                                       const QByteArray& hostPlacement, const SummonIdentity& caller, SearchMode mode) {
+     QMutexLocker lock(&m_mutex);
+     PurgeExpiredLocked(nowMs);
+ 
+@@ -436,18 +563,30 @@
+     std::vector<Candidate> candidates;
+     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
+     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
++    const bool discovery = mode == SearchMode::RegistrationDiscovery;
+     const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
++    QSet<quint64> boundPublishers;
++    if (!discovery && !hostPlacement.isEmpty() && !m_boundHosts.isEmpty()) {
++        for (const auto& record : std::as_const(m_records))
++            if (record.boundOrigin) boundPublishers.insert(record.publisher.user);
++    }
+     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+         if (caller.user && (!it->publisher.user || it->publisher.user == caller.user ||
+             (it->claimant.user && it->claimant.user != caller.user))) continue;
+-        if (caller.user && it->state == State::Preparing && it->claimant.user == caller.user &&
+-            MatchesSearch(request, it->advertisement, anywhereSummons) && !hostPlacement.isEmpty()) {
+-            if (m_relayPlacement) m_relayPlacement(caller,it->publisher,hostPlacement);
+-        }
+-        if (it->state == State::Advertised &&
+-            MatchesSearch(request, it->advertisement, anywhereSummons)) {
+-            if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
++        const bool advertised = it->state == State::Advertised;
++        const bool ownPreparation = caller.user && it->state == State::Preparing && it->claimant.user == caller.user;
++        const bool retained = m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
++                              Integer(it->claim, QStringLiteral("UserId"), -2) == requester;
++        if (!(advertised || ownPreparation || retained) ||
++            !MatchesSearch(request, it->advertisement, anywhereSummons)) continue;
++
++        if (!discovery) {
++            if (ownPreparation && !hostPlacement.isEmpty() && m_relayPlacement &&
++                !boundPublishers.contains(it->publisher.user))
++                m_relayPlacement(caller,it->publisher,hostPlacement);
++            if (advertised && anywhereSummons && hostMap.has_value() && requester >= 0 &&
+                 Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
++                if (boundPublishers.contains(it->publisher.user)) continue;
+                 it->state = State::Preparing;
+                 it->hostPlacement = hostPlacement;
+                 it->preparationRequester = requester;
+@@ -456,16 +595,12 @@
+                 it->updatedAtMs = nowMs;
+                 continue;
+             }
+-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+-                                                       it->rawAdvertisement, it->advertisement,
+-                                                       request, anywhereSummons)});
+-        } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
+-                   Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
+-                   MatchesSearch(request, it->advertisement, anywhereSummons)) {
+-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+-                                                       it->rawAdvertisement, it->advertisement,
+-                                                       request, anywhereSummons)});
+-        }
++            if (!advertised && !retained) continue;
++        }
++        const auto row = PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement,
++                                                       request, anywhereSummons,
++                                                       discovery ? &it->registrationId : nullptr);
++        if (!discovery || !row.isEmpty()) candidates.push_back({it->updatedAtMs, row});
+     }
+     std::sort(candidates.begin(), candidates.end(),
+               [](const Candidate& left, const Candidate& right) {
+@@ -496,6 +631,70 @@
+     const QJsonValue targetChara = request.value(QStringLiteral("TargetCharaId"));
+ 
+     auto target = m_records.end();
++    auto diagnostic = [&](ClaimResult result, ClaimFailureReason reason) {
++        result.failureReason = reason;
++        const bool selected = target != m_records.end();
++        const bool charaPresent = !targetChara.isUndefined() && !targetChara.isNull();
++        result.diagnosticFlags =
++            (selected ? 1u : 0u) |
++            (!requestedSession.isEmpty() ? 2u : 0u) |
++            (selected && !requestedSession.isEmpty() && target->advertisement.value(QStringLiteral("SessionId")).toString() == requestedSession ? 4u : 0u) |
++            (targetUser.has_value() ? 8u : 0u) |
++            (selected && targetUser.has_value() && Integer(target->advertisement,QStringLiteral("UserId"),-1) == *targetUser ? 16u : 0u) |
++            (charaPresent ? 32u : 0u) |
++            (selected && charaPresent && target->advertisement.value(QStringLiteral("CharaId")) == targetChara ? 64u : 0u) |
++            (selected && caller.user && target->publisher.user == caller.user ? 128u : 0u) |
++            (selected && caller.user && target->claimant.user == caller.user ? 256u : 0u);
++        return result;
++    };
++    if (caller.user) {
++    // Native claim SessionId belongs to the caller's network manager, not
++    // the target advertisement. Explicit target selectors must take precedence.
++    const bool explicitTarget = request.contains(QStringLiteral("TargetUserId"));
++    const bool explicitChara = request.contains(QStringLiteral("TargetCharaId"));
++    const auto targetValue = request.value(QStringLiteral("TargetUserId"));
++    const double targetNumber = targetValue.toDouble(-1);
++    const double charaNumber = targetChara.toDouble(-1);
++    if ((explicitTarget && (!targetValue.isDouble() || !std::isfinite(targetNumber) ||
++                            std::trunc(targetNumber) != targetNumber || targetNumber < 1 ||
++                            targetNumber > std::numeric_limits<quint32>::max())) ||
++        (explicitChara && (!targetChara.isDouble() || !std::isfinite(charaNumber) ||
++                          std::trunc(charaNumber) != charaNumber || charaNumber < 0 ||
++                          charaNumber >= std::ldexp(1.0, 64))))
++        return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::InvalidTargetSelector);
++    if (explicitTarget) {
++        bool newestTie = false;
++        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
++            if (Integer(it->advertisement, QStringLiteral("UserId"), -1) != *targetUser) continue;
++            if (explicitChara && it->advertisement.value(QStringLiteral("CharaId")) != targetChara) continue;
++            if (target != m_records.end()) {
++                // Never filter by caller authority then silently choose another record.
++                // Distinct publishers/token generations/characters, or equal timestamps,
++                // do not identify a unique target incarnation. Consumed records are not
++                // skipped to resurrect an older active advertisement.
++                if (target->publisher.user != it->publisher.user ||
++                    target->publisher.tokenHash != it->publisher.tokenHash ||
++                    target->advertisement.value(QStringLiteral("CharaId")) != it->advertisement.value(QStringLiteral("CharaId")))
++                    return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::AmbiguousTarget);
++            }
++            if (target == m_records.end() || it->updatedAtMs > target->updatedAtMs) {
++                target = it;
++                newestTie = false;
++            } else if (it->updatedAtMs == target->updatedAtMs) newestTie = true;
++        }
++        if (newestTie) return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::AmbiguousTarget);
++        // Explicit unmatched targets fail closed. No fallback to caller SessionId.
++    } else if (!requestedSession.isEmpty()) {
++        // Preserve the existing missing-TargetUserId legacy path, without using it
++        // for explicit null, invalid, or unmatched selectors.
++        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
++            if (it->advertisement.value(QStringLiteral("SessionId")).toString() == requestedSession) {
++                target = it;
++                break;
++            }
++        }
++    }
++    } else {
+     if (!requestedSession.isEmpty()) {
+         for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+             if (it->advertisement.value(QStringLiteral("SessionId")).toString() ==
+@@ -519,22 +718,70 @@
+             }
+         }
+     }
++    }
+     if (target == m_records.end() || target->state == State::Consumed) {
+-        return {ClaimStatus::NotFound, {}, -1};
+-    }
++        return diagnostic({ClaimStatus::NotFound, {}, -1}, ClaimFailureReason::TargetNotFound);
++    }
++    if (HasBoundPlacementLocked(target->publisher.user, nowMs))
++        return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::ClaimBodyConflict);
++    const auto history = m_boundHosts.constFind(caller.user);
++    if (history != m_boundHosts.cend() && history->tokenHash == caller.tokenHash &&
++        history->nativeClaims.contains({target->publisher.user, NativeClaimDigest(request, rawRequest)}))
++        return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::ClaimBodyConflict);
+ 
+     if (caller.user && (!target->publisher.user || target->publisher.user == caller.user ||
+         (target->claimant.user && target->claimant.user != caller.user) ||
+         (targetUser.has_value() && Integer(target->advertisement,QStringLiteral("UserId"),-1) != *targetUser) ||
+         (!targetChara.isUndefined() && !targetChara.isNull() && target->advertisement.value(QStringLiteral("CharaId")) != targetChara)))
+-        return {ClaimStatus::Conflict, {}, -1};
++    {
++        // Keep the original authorization predicates and their priority unchanged.
++        const auto reason = !target->publisher.user ? ClaimFailureReason::NoPublisher :
++            target->publisher.user == caller.user ? ClaimFailureReason::SelfPublisher :
++            (target->claimant.user && target->claimant.user != caller.user) ? ClaimFailureReason::OtherClaimant :
++            (targetUser.has_value() && Integer(target->advertisement,QStringLiteral("UserId"),-1) != *targetUser) ? ClaimFailureReason::TargetUserMismatch :
++            ClaimFailureReason::TargetCharaMismatch;
++        return diagnostic({ClaimStatus::Conflict, {}, -1}, reason);
++    }
++    // A retained request is bound to its original advertisement incarnation.
++    // Explicit target selection must not convert an invalidated retry into a new
++    // initial claim on a replacement advertisement. A terminal Consume/expiry
++    // ends the old record; no time-only or search-only freshness is invented here.
++    if (m_seamlessCoop && caller.user && m_relayClaimPlacement &&
++        request.contains(QStringLiteral("TargetUserId"))) {
++        for (auto old = m_records.cbegin(); old != m_records.cend(); ++old) {
++            if (old.key() == target.key() ||
++                (old->state != State::Claimed && old->state != State::Delivered)) continue;
++            if (old->claimant.user == caller.user && old->claimant.tokenHash == caller.tokenHash &&
++                old->publisher.user == target->publisher.user &&
++                old->publisher.tokenHash == target->publisher.tokenHash &&
++                old->advertisement.value(QStringLiteral("CharaId")) == target->advertisement.value(QStringLiteral("CharaId")) &&
++                old->claim == request)
++                return diagnostic({ClaimStatus::Conflict, {}, -1}, ClaimFailureReason::ClaimBodyConflict);
++        }
++    }
+     ClaimResult result;
+     result.targetSessionId = target->advertisement.value(QStringLiteral("SessionId")).toString();
+     result.targetUserId = Integer(target->advertisement, QStringLiteral("UserId"), -1);
+     if (target->state == State::Claimed || target->state == State::Delivered) {
+         result.status =
+             target->claim == request ? ClaimStatus::AlreadyClaimed : ClaimStatus::Conflict;
+-        return result;
++        // Only an identical fresh authenticated retry may renew this pending claim.
++        // Never learn a new incarnation or extend the broker record lifetime here.
++        if (result.status == ClaimStatus::AlreadyClaimed && target->state == State::Claimed &&
++            m_seamlessCoop && caller.user && caller.user == target->claimant.user &&
++            caller.tokenHash.size() == 32 && caller.tokenHash == target->claimant.tokenHash &&
++            !target->claimPlacementScope.isEmpty() && m_relayClaimPlacement &&
++            nowMs >= target->updatedAtMs && m_seamlessTtlMs >= 10000 &&
++            nowMs - target->updatedAtMs <= m_seamlessTtlMs - 10000 &&
++            !hostPlacement.isEmpty() && hostPlacement.size() <= MaxHostPlacementSize &&
++            !hostPlacement.contains('\r') && !hostPlacement.contains('\n') &&
++            HostPlacementMap(hostPlacement).has_value() &&
++            HostPlacementMap(hostPlacement) == HostPlacementMap(target->hostPlacement)) {
++            const auto scope = m_relayClaimPlacement(caller, target->publisher, hostPlacement,
++                                                    target->claimPlacementScope);
++            if (scope == target->claimPlacementScope) target->hostPlacement = hostPlacement;
++        }
++        return result.status == ClaimStatus::Conflict ? diagnostic(result, ClaimFailureReason::ClaimBodyConflict) : result;
+     }
+ 
+     target->state = State::Claimed;
+@@ -550,9 +797,138 @@
+     }
+     target->updatedAtMs = nowMs;
+     result.status = ClaimStatus::Claimed;
+-    if (caller.user && m_relayPlacement && !target->hostPlacement.isEmpty())
+-        m_relayPlacement(caller,target->publisher,target->hostPlacement);
++    if (caller.user && !target->hostPlacement.isEmpty()) {
++        if (m_relayClaimPlacement)
++            target->claimPlacementScope = m_relayClaimPlacement(caller, target->publisher,
++                                                               target->hostPlacement, {});
++        else if (m_relayPlacement)
++            m_relayPlacement(caller,target->publisher,target->hostPlacement);
++    }
+     return result;
++}
++
++SummonBroker::ClaimResult SummonBroker::ClaimBound(const BoundClaimOrigin& origin, const QByteArray& rawRequest,
++                                                  qint64 nowMs, const QByteArray& hostPlacement,
++                                                  const SummonIdentity& caller) {
++    using Reason = ClaimFailureReason;
++    const auto conflict = [](Reason reason) { return ClaimResult{ClaimStatus::Conflict, {}, -1, reason}; };
++    if (!m_seamlessCoop || !m_boundPlacement || !m_cancelBoundPlacement || !ValidBoundOrigin(origin) ||
++        !caller.user || caller.user > std::numeric_limits<quint32>::max() || caller.tokenHash.size() != 32)
++        return conflict(Reason::BoundOriginInvalid);
++    const auto map = HostPlacementMap(hostPlacement);
++    if (!map || hostPlacement.size() > MaxHostPlacementSize || hostPlacement.contains('\r') ||
++        hostPlacement.contains('\n')) return conflict(Reason::BoundPlacementDenied);
++    const auto document = QJsonDocument::fromJson(rawRequest);
++    if (!document.isObject()) return conflict(Reason::InvalidTargetSelector);
++    const auto members = TopLevelMembers(rawRequest, true);
++    const auto user = NativeId(members, "TargetUserId"), character = NativeId(members, "TargetCharaId");
++    if (!user || !*user || *user > std::numeric_limits<quint32>::max() || !character)
++        return conflict(Reason::InvalidTargetSelector);
++
++    QMutexLocker lock(&m_mutex);
++    auto target = std::find_if(m_records.begin(), m_records.end(), [&](const Record& record) {
++        return record.registrationId == origin.registrationId && record.state != State::Consumed;
++    });
++    if (target == m_records.end()) return {ClaimStatus::NotFound, {}, -1, Reason::TargetNotFound};
++    const auto ttl = IsSeamlessActiveState(target->state) ? m_seamlessTtlMs : m_ttlMs;
++    if (nowMs < target->updatedAtMs) return conflict(Reason::BoundPlacementExpired);
++    const auto age = quint64(nowMs) - quint64(target->updatedAtMs);
++    if (age > quint64(ttl)) return {ClaimStatus::NotFound, {}, -1, Reason::BoundPlacementExpired};
++    if (!target->authenticatedAdvertisement || !target->publisher.user || target->publisher.tokenHash.size() != 32)
++        return conflict(Reason::NoPublisher);
++    if (target->publisher.user == caller.user) return conflict(Reason::SelfPublisher);
++    const auto signDocument = QJsonDocument::fromJson(target->rawAdvertisement);
++    if (!signDocument.isObject() || signDocument.object() != target->advertisement)
++        return conflict(Reason::InvalidTargetSelector);
++    const auto sign = TopLevelMembers(target->rawAdvertisement, true);
++    if (NativeId(sign, "UserId") != user) return conflict(Reason::TargetUserMismatch);
++    if (NativeId(sign, "CharaId") != character) return conflict(Reason::TargetCharaMismatch);
++
++    const auto attemptKey = qMakePair(origin.hostRun, origin.attempt);
++    const auto& previous = target->boundOrigin;
++    BoundClaimStep step = BoundClaimStep::First;
++    if (previous) {
++        if (target->claimant.user != caller.user || target->claimant.tokenHash != caller.tokenHash)
++            return conflict(Reason::OtherClaimant);
++        if (*previous == origin) {
++            if (target->rawClaim != rawRequest || map != HostPlacementMap(target->hostPlacement))
++                return conflict(Reason::ClaimBodyConflict);
++            step = BoundClaimStep::Retry;
++        } else {
++            if (origin.hostRun != previous->hostRun || origin.room == previous->room || origin.attempt == previous->attempt)
++                return conflict(Reason::BoundOriginInvalid);
++            step = BoundClaimStep::Rebind;
++        }
++    } else if (target->state != State::Advertised || HasBoundPlacementLocked(target->publisher.user, nowMs)) {
++        return conflict(Reason::ClaimBodyConflict);
++    }
++    const auto session = target->advertisement.value(QStringLiteral("SessionId")).toString();
++    const auto targetUser = static_cast<qint64>(*user);
++    if (step == BoundClaimStep::Retry) {
++        if (target->state == State::Delivered) return {ClaimStatus::AlreadyClaimed, session, targetUser};
++        if (m_seamlessTtlMs < 10000 || age > quint64(m_seamlessTtlMs - 10000))
++            return conflict(Reason::BoundPlacementExpired);
++    } else {
++        const auto h = m_boundHosts.constFind(caller.user);
++        if (h != m_boundHosts.cend() && h->tokenHash == caller.tokenHash && h->attempts.contains(attemptKey))
++            return conflict(Reason::BoundOriginInvalid);
++    }
++
++    const BoundPlacementRequest placement{step, origin, previous, target->claimPlacementScope,
++                                          caller, target->publisher, hostPlacement};
++    const Record before = *target;
++    const auto receipt = qMakePair(target->publisher.user, step == BoundClaimStep::Retry ? QByteArray{} :
++                                   NativeClaimDigest(document.object(), rawRequest));
++    std::optional<BoundHostHistory> retired;
++    bool newReceipt = false;
++    bool committed = false, invalidCommit = false;
++    const BoundCommit commit = [&](const QByteArray& scope) {
++        if (committed || invalidCommit || scope.isEmpty() ||
++            (step == BoundClaimStep::Retry && scope != placement.previousScope) ||
++            (step == BoundClaimStep::Rebind && scope == placement.previousScope)) {
++            invalidCommit = true;
++            return;
++        }
++        committed = true;
++        if (step != BoundClaimStep::Retry) {
++            auto& history = m_boundHosts[caller.user];
++            if (history.tokenHash != caller.tokenHash) {
++                retired.emplace(std::move(history));
++                history = BoundHostHistory{caller.tokenHash, {}, {}};
++            }
++            history.attempts.insert(attemptKey);
++            newReceipt = !history.nativeClaims.contains(receipt);
++            history.nativeClaims.insert(receipt);
++            target->boundOrigin = origin;
++            target->claimant = caller;
++            target->claim = document.object();
++            target->rawClaim = rawRequest;
++            target->claimPlacementScope = scope;
++            target->state = State::Claimed;
++            target->updatedAtMs = nowMs;
++        }
++        target->hostPlacement = hostPlacement;
++    };
++    const auto result = m_boundPlacement(placement, commit);
++    if (result.status != BoundPlacementStatus::Granted || !committed || invalidCommit ||
++        result.scope != target->claimPlacementScope) {
++        if (committed) {
++            *target = before;
++            if (step != BoundClaimStep::Retry) {
++                auto& history = m_boundHosts[caller.user];
++                history.attempts.remove(attemptKey);
++                if (newReceipt) history.nativeClaims.remove(receipt);
++                if (retired) {
++                    if (retired->tokenHash.isEmpty()) m_boundHosts.remove(caller.user);
++                    else history = std::move(*retired);
++                }
++            }
++        }
++        if (result.status == BoundPlacementStatus::Busy) return conflict(Reason::BoundPlacementBusy);
++        if (result.status == BoundPlacementStatus::Expired) return conflict(Reason::BoundPlacementExpired);
++        return conflict(Reason::BoundPlacementDenied);
++    }
++    return {step == BoundClaimStep::Retry ? ClaimStatus::AlreadyClaimed : ClaimStatus::Claimed, session, targetUser};
+ }
+ 
+ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qint64 nowMs, const SummonIdentity& caller) {
+@@ -578,7 +954,9 @@
+             !userId.has_value() ||
+             Integer(it->advertisement, QStringLiteral("UserId"), -1) == *userId;
+         if (sessionMatches && userMatches && it->state != State::Consumed) {
+-            if (caller.user && it->publisher.user != caller.user) return {0,0,{},false};
++            if ((caller.user && it->publisher.user != caller.user) ||
++                (it->boundOrigin && (caller.user != it->publisher.user || caller.tokenHash != it->publisher.tokenHash)))
++                return {0,0,{},false};
+             it->updatedAtMs = nowMs;
+             if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {
+                 ++result.retained;
+@@ -587,8 +965,11 @@
+                 }
+                 continue;
+             }
++            if (it->publisher.user) CancelPlacementLocked(it->publisher.user, &*it);
+             it->state = State::Consumed;
+-            if (it->publisher.user && m_relayCancelPlacement) m_relayCancelPlacement(it->publisher.user);
++            it->registrationId.clear();
++            it->boundOrigin.reset();
++            it->claimPlacementScope.clear();
+             ++result.consumed;
+         }
+     }
+@@ -620,12 +1001,32 @@
+     return m_seamlessAnywhereSummons;
+ }
+ 
++bool SummonBroker::HasBoundPlacementLocked(quint64 publisher, qint64 nowMs) const {
++    if (!publisher || m_boundHosts.isEmpty()) return false;
++    return std::any_of(m_records.cbegin(), m_records.cend(), [&](const Record& r) {
++        return r.boundOrigin && r.publisher.user == publisher && !Expired(nowMs, r.updatedAtMs, m_seamlessTtlMs);
++    });
++}
++
++void SummonBroker::CancelPlacementLocked(quint64 user, const Record* ending) {
++    if (ending && ending->boundOrigin) {
++        m_cancelBoundPlacement(ending->registrationId, ending->claimPlacementScope);
++        return;
++    }
++    for (auto it = m_records.begin(); it != m_records.end(); ++it)
++        if (!it->boundOrigin && (it->publisher.user == user || it->claimant.user == user))
++            it->claimPlacementScope.clear();
++    if (m_relayCancelPlacement) m_relayCancelPlacement(user);
++}
++
+ void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
+     for (auto it = m_records.begin(); it != m_records.end();) {
+         const qint64 ttl =
+             m_seamlessCoop && IsSeamlessActiveState(it->state) ? m_seamlessTtlMs : m_ttlMs;
+-        if (nowMs - it->updatedAtMs > ttl) {
+-            if (it->publisher.user && m_relayCancelPlacement) m_relayCancelPlacement(it->publisher.user);
++        if (Expired(nowMs, it->updatedAtMs, ttl)) {
++            // Consumed records already revoked on the terminal transition.
++            // Expiring their tombstone must not revoke a later incarnation.
++            if (it->state != State::Consumed && it->publisher.user) CancelPlacementLocked(it->publisher.user, &*it);
+             it = m_records.erase(it);
+         } else {
+             ++it;
+diff --git a/src/bloodborne_summon_broker.h b/src/bloodborne_summon_broker.h
+--- a/src/bloodborne_summon_broker.h
++++ b/src/bloodborne_summon_broker.h
+@@ -10,17 +10,49 @@
+ #include <QJsonObject>
+ #include <QList>
+ #include <QMutex>
++#include <QSet>
+ #include <QString>
+ 
+ namespace Bloodborne {
+ 
++// Opaque server-issued JSON string identifying one advertisement lifetime.
++using TheHuntRegistrationId = QString;
++
+ // Server-owned identity; never parsed from JSON UserId/TargetUserId/CharaId.
+ struct SummonIdentity { quint64 user = 0; QByteArray tokenHash; };
++
++struct BoundClaimOrigin {
++    TheHuntRegistrationId registrationId;
++    quint64 room = 0;
++    quint16 ownerMember = 0;
++    quint64 ownerJoined = 0;
++    quint64 attempt = 0; // Non-reused within hostRun; retries carry both original values.
++    QByteArray hostRun{}; // 128-bit process namespace, encoded as 32 lowercase ASCII hex digits.
++    bool operator==(const BoundClaimOrigin&) const = default;
++};
++
++enum class BoundClaimStep { First, Retry, Rebind };
++enum class BoundPlacementStatus { Granted, Denied, Busy, Expired };
++struct BoundPlacementRequest {
++    BoundClaimStep step;
++    BoundClaimOrigin origin;
++    std::optional<BoundClaimOrigin> previous;
++    QByteArray previousScope;
++    SummonIdentity host, guest;
++    QByteArray placement;
++};
++struct BoundPlacementResult {
++    BoundPlacementStatus status = BoundPlacementStatus::Denied;
++    QByteArray scope;
++};
++using BoundCommit = std::function<void(const QByteArray& scope)>;
+ 
+ class SummonBroker {
+ public:
+     enum class State { Advertised, Preparing, Claimed, Delivered, Consumed };
+     enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict };
++    // RegistrationDiscovery only reads eligible records after the usual expiry pass.
++    enum class SearchMode { Legacy, RegistrationDiscovery };
+ 
+     struct Options {
+         qint64 ttlMs = 130'000;
+@@ -28,7 +60,22 @@
+         bool seamlessCoop = false;
+         bool seamlessAnywhereSummons = false;
+         std::function<void(const SummonIdentity&, const SummonIdentity&, const QByteArray&)> relayPlacement;
++        // Private first-claim incarnation; an empty result never authorizes a retry.
++        std::function<QByteArray(const SummonIdentity&, const SummonIdentity&, const QByteArray&, const QByteArray&)> relayClaimPlacement;
+         std::function<void(quint64)> relayCancelPlacement;
++        // Synchronous under the broker lock. Try roomsLock then clientsLock; never
++        // re-enter the broker. The caller of ClaimBound holds neither native lock.
++        // Atomically validate both current credentials, owner membership, waiting
++        // guest, pose and invitation scope, and queue the grant. Rebind also
++        // requires proof the previous room ended and its invitation was unaccepted.
++        // Every refusal leaves the relay intact and invokes no commit. On grant,
++        // call commit(finalScope) exactly once under the native locks, in the
++        // same transaction as queuing, before external socket actions. Never
++        // retain the callback. Return that nonempty scope: identical on Retry,
++        // fresh on First or Rebind.
++        std::function<BoundPlacementResult(const BoundPlacementRequest&, const BoundCommit&)> boundPlacement;
++        // Revoke only this ended registration and grant. The user-wide hook is legacy-only.
++        std::function<void(const TheHuntRegistrationId&, const QByteArray& scope)> cancelBoundPlacement;
+     };
+ 
+     struct AdvertiseResult {
+@@ -38,10 +85,19 @@
+         bool authorized = true;
+     };
+ 
++    enum class ClaimFailureReason : quint8 {
++        None=0, NoPublisher=1, SelfPublisher=2, OtherClaimant=3,
++        TargetUserMismatch=4, TargetCharaMismatch=5, InvalidTargetSelector=6,
++        AmbiguousTarget=7, TargetNotFound=8, ClaimBodyConflict=9,
++        BoundOriginInvalid=10, BoundPlacementDenied=11, BoundPlacementBusy=12, BoundPlacementExpired=13
++    };
+     struct ClaimResult {
+         ClaimStatus status = ClaimStatus::NotFound;
+         QString targetSessionId;
+         qint64 targetUserId = -1;
++        // Private diagnostics only; never added to an HTTP or relay response.
++        ClaimFailureReason failureReason = ClaimFailureReason::None;
++        quint16 diagnosticFlags = 0;
+     };
+ 
+     struct ConsumeResult {
+@@ -58,8 +114,12 @@
+     AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs, const SummonIdentity& caller = {});
+     QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
+                              const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {});
++    QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
++                             const QByteArray& hostPlacement, const SummonIdentity& caller, SearchMode mode);
+     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
+                       const QByteArray& hostPlacement = {}, const SummonIdentity& caller = {});
++    ClaimResult ClaimBound(const BoundClaimOrigin& origin, const QByteArray& rawRequest, qint64 nowMs,
++                           const QByteArray& hostPlacement, const SummonIdentity& caller);
+     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs, const SummonIdentity& caller = {});
+ 
+     std::optional<State> StateFor(const QString& sessionId, qint64 userId, qint64 nowMs);
+@@ -70,26 +130,44 @@
+ private:
+     struct Record {
+         State state = State::Advertised;
++        TheHuntRegistrationId registrationId;
+         SummonIdentity publisher, claimant;
++        bool authenticatedAdvertisement = false;
+         QJsonObject advertisement;
+         QByteArray rawAdvertisement;
+         QJsonObject claim;
+         QByteArray rawClaim;
+         QByteArray hostPlacement;
++        QByteArray claimPlacementScope;
++        std::optional<BoundClaimOrigin> boundOrigin;
+         qint64 preparationRequester = -1;
+         qint64 updatedAtMs = 0;
+     };
+ 
++    void CancelPlacementLocked(quint64 user, const Record* ending = nullptr);
++    bool HasBoundPlacementLocked(quint64 publisher, qint64 nowMs) const;
+     void PurgeExpiredLocked(qint64 nowMs);
++    TheHuntRegistrationId NewRegistrationIdLocked();
+ 
+     qint64 m_ttlMs;
+     qint64 m_seamlessTtlMs;
+     bool m_seamlessCoop;
+     bool m_seamlessAnywhereSummons;
+     std::function<void(const SummonIdentity&, const SummonIdentity&, const QByteArray&)> m_relayPlacement;
++    std::function<QByteArray(const SummonIdentity&, const SummonIdentity&, const QByteArray&, const QByteArray&)> m_relayClaimPlacement;
+     std::function<void(quint64)> m_relayCancelPlacement;
++    decltype(Options::boundPlacement) m_boundPlacement;
++    decltype(Options::cancelBoundPlacement) m_cancelBoundPlacement;
+     QMutex m_mutex;
+     QHash<QString, Record> m_records;
++    struct BoundHostHistory {
++        QByteArray tokenHash;
++        QSet<QPair<QByteArray, quint64>> attempts;
++        QSet<QPair<quint64, QByteArray>> nativeClaims; // Publisher and digest of a granted native request.
++    };
++    QHash<quint64, BoundHostHistory> m_boundHosts;
++    QString m_registrationEpoch;
++    quint64 m_registrationSequence = 0;
+ };
+ 
+ bool HasRequiredAdvertisementFields(const QJsonObject& body);
+diff --git a/src/claim_diagnostic.h b/src/claim_diagnostic.h
+new file mode 100644
+--- /dev/null
++++ b/src/claim_diagnostic.h
+@@ -0,0 +1,36 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++#include <QDebug>
++#include <QElapsedTimer>
++#include "bloodborne_summon_broker.h"
++
++// Owner Qt thread only. No identities, strings, JSON or credential data retained.
++struct ClaimDiagnosticWindow {
++    static constexpr qint64 DurationMs = 5 * 60 * 1000;
++    static constexpr qint64 MinIntervalMs = 1000;
++    static constexpr unsigned MaxLines = 32;
++    bool enabled = false;
++    QElapsedTimer clock;
++    qint64 first = -1, last = -1;
++    unsigned emitted = 0;
++    explicit ClaimDiagnosticWindow(bool on) : enabled(on) { if (on) clock.start(); }
++    bool Allow(quint8 reason, qint64 now) {
++        if (!enabled || reason < 1 || reason > 9 || now < 0) return false;
++        if (first < 0) first = now;
++        if (now < first || now - first >= DurationMs || emitted >= MaxLines ||
++            (last >= 0 && (now < last || now - last < MinIntervalMs))) return false;
++        last = now; ++emitted; return true;
++    }
++};
++inline void EmitClaimDiagnostic(ClaimDiagnosticWindow& window,
++                                const Bloodborne::SummonBroker::ClaimResult& result) {
++    const auto reason = static_cast<quint8>(result.failureReason);
++    if (!window.enabled || !window.Allow(reason,window.clock.elapsed())) return;
++    const auto f=result.diagnosticFlags;
++    qWarning().noquote() << "Bloodborne claim admission diagnostic"
++        << "reason=" << int(reason) << "selected=" << bool(f&1)
++        << "session_present=" << bool(f&2) << "session_equal=" << bool(f&4)
++        << "target_user_numeric=" << bool(f&8) << "target_user_equal=" << bool(f&16)
++        << "target_chara_present=" << bool(f&32) << "target_chara_equal=" << bool(f&64)
++        << "publisher_is_caller=" << bool(f&128) << "claimant_is_caller=" << bool(f&256);
++}
+diff --git a/src/client_session.h b/src/client_session.h
+--- a/src/client_session.h
++++ b/src/client_session.h
+@@ -15,7 +15,9 @@
+ #include <QSslSocket>
+ #include <QStringList>
+ #include <QTcpSocket>
++#include <QUuid>
+ #include <database.h>
++#include "bloodborne_summon_broker.h"
+ #include "config.h"
+ #include "matching_types.h"
+ #include "protocol.h"
+@@ -23,6 +25,22 @@
+ #include "score_db.h"
+ #include "score_files.h"
+ #include "stream_extractor.h"
++
++// Shared by one native Matching2 context and its login entry. The native
++// session writes the counter at admission under roomsLock, even for a rapid
++// join/leave between two relay ticks. ContextStart always supplies a new ID.
++struct SummonJoinHistory {
++    const QUuid context = QUuid::createUuid();
++    quint64 joins = 0;
++};
++
++// One native room lifetime. Access, including the destruction bit, requires roomsLock.
++struct SummonRoomOrigin {
++    quint64 creator;
++    quint16 member;
++    quint64 joined;
++    bool destroyed = false;
++};
+ 
+ // Shared state visible to all sessions (thread-safe with locks)
+ struct SharedState {
+@@ -33,7 +51,10 @@
+     enum class SummonSearchAccess { Denied, NoRoom, Owner };
+     std::function<SummonSearchAccess(quint64)> relaySearchAccess;
+     std::function<void(quint64,const QByteArray&,quint64,const QByteArray&,const QByteArray&)> relayPlacement;
++    std::function<QByteArray(quint64,const QByteArray&,quint64,const QByteArray&,const QByteArray&,const QByteArray&)> relayClaimPlacement;
+     std::function<void(quint64)> relayCancelPlacement;
++    decltype(Bloodborne::SummonBroker::Options::boundPlacement) relayBoundClaimPlacement;
++    decltype(Bloodborne::SummonBroker::Options::cancelBoundPlacement) relayCancelBoundPlacement;
+     ScoreCache* scoreCache = nullptr;
+     ScoreFiles* scoreFiles = nullptr;
+     // Connected clients: userId to (npid, channel write function)
+@@ -44,6 +65,7 @@
+         std::function<void(QByteArray)> send;
+         std::function<void(uint64_t)> resetMatchingRoomState;
+         uint32_t matchingContextId = 0;
++        std::shared_ptr<SummonJoinHistory> summonJoins;
+         bool bloodborneMatching = false; // NP login title group, not WebAPI presence.
+         // Online friends for this session
+         // Protected by clientsLock (same lock as the outer clients map).
+@@ -68,6 +90,12 @@
+ 
+     // Matchmaking shared state
+     MatchingSharedState matching;
++    QHash<quint64,std::shared_ptr<SummonRoomOrigin>> summonRooms;
++    void SummonRoomDestroyedLocked(const QString& title, quint64 room) {
++        if (title == QStringLiteral("bloodborne")) {
++            if (auto proof = summonRooms.take(room)) proof->destroyed = true;
++        }
++    }
+ 
+     // Live usage stats for the read-only stats HTTP server
+     mutable QReadWriteLock usageLock;
+@@ -295,6 +323,7 @@
+     std::unique_ptr<Database> m_db;
+     ClientInfo m_info;
+     MatchingSessionState m_matching;
++    std::shared_ptr<SummonJoinHistory> m_summonJoins;
+ };
+ 
+ inline bool ClientSession::IsValidNpid(const QString& npid) {
+diff --git a/src/cmd_matching.cpp b/src/cmd_matching.cpp
+--- a/src/cmd_matching.cpp
++++ b/src/cmd_matching.cpp
+@@ -1,6 +1,7 @@
+ // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ #include <algorithm>
++#include <limits>
+ #include <QDateTime>
+ #include <QDebug>
+ #include <QHostAddress>
+@@ -431,8 +432,12 @@
+     {
+         QWriteLocker lk(&m_shared->clientsLock);
+         auto client = m_shared->clients.find(m_info.userId);
+-        if (client != m_shared->clients.end())
++        if (client != m_shared->clients.end()) {
+             client->matchingContextId = m_matching.ctxId;
++            m_summonJoins = client->bloodborneMatching && m_matching.ctxId
++                ? std::make_shared<SummonJoinHistory>() : nullptr;
++            client->summonJoins = m_summonJoins;
++        }
+     }
+ 
+     qInfo() << "ContextStart:" << m_info.npid << "ctx=" << m_matching.ctxId
+@@ -645,6 +650,9 @@
+         QWriteLocker lk(&m_shared->matching.roomsLock);
+         const uint32_t worldId = room.worldId;
+         const uint64_t lobbyId = room.lobbyId;
++        if (m_matching.matchingKey == QStringLiteral("bloodborne"))
++            m_shared->summonRooms.insert(rid,std::make_shared<SummonRoomOrigin>(
++                SummonRoomOrigin{quint64(m_info.userId),memberId,owner.joinDate}));
+         m_shared->matching.rooms.insert({m_matching.matchingKey, rid}, std::move(room));
+         if (worldId != 0)
+             m_shared->matching.worldRooms[{m_matching.matchingKey, worldId}].append(rid);
+@@ -718,6 +726,10 @@
+         }
+ 
+         RoomMember* member = room.addMember(joiner);
++        // The same room write lock serializes bound claim admission. Count
++        // guest joins only, never a host's CreateJoinRoom or a failed JoinRoom.
++        if (m_summonJoins && m_summonJoins->joins != std::numeric_limits<quint64>::max())
++            ++m_summonJoins->joins;
+         myMemberId = member->memberId;
+         maxSlot = room.maxSlot;
+ 
+@@ -799,6 +811,7 @@
+         room.ownerSuccession.removeAll(myMemberId);
+ 
+         if (room.isEmpty()) {
++            m_shared->SummonRoomDestroyedLocked(m_matching.matchingKey,roomId);
+             m_shared->matching.rooms.erase(roomIt);
+             if (worldId != 0)
+                 m_shared->matching.worldRooms[{m_matching.matchingKey, worldId}].removeAll(roomId);
+@@ -1534,6 +1547,7 @@
+         room.ownerSuccession.removeAll(myMemberId);
+ 
+         if (room.isEmpty()) {
++            m_shared->SummonRoomDestroyedLocked(m_matching.matchingKey,roomId);
+             m_shared->matching.rooms.erase(roomIt);
+             if (worldId != 0)
+                 m_shared->matching.worldRooms[{m_matching.matchingKey, worldId}].removeAll(roomId);
+diff --git a/src/summon_claim_origin.hpp b/src/summon_claim_origin.hpp
+new file mode 100644
+--- /dev/null
++++ b/src/summon_claim_origin.hpp
+@@ -0,0 +1,72 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <algorithm>
++#include <charconv>
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace TheHunt::Summon {
++inline constexpr char discovery_header[] = "X-TheHunt-Registration-Discovery";
++inline constexpr char claim_origin_header[] = "X-TheHunt-Claim-Origin";
++
++// A parsed registration borrows the caller's input while the result is in use.
++// The server independently checks its native room and authenticated membership.
++struct ClaimOrigin {
++    std::string_view registration;
++    std::uint64_t room{};
++    std::uint16_t owner_member{};
++    std::uint64_t owner_joined{};
++    std::uint64_t attempt{};
++    std::string_view host_run;
++};
++
++inline bool LowerHex(std::string_view value, std::size_t digits) {
++    return value.size() == digits && std::all_of(value.begin(), value.end(), [](char c) {
++        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
++    });
++}
++
++template<class Integer>
++inline bool ParsePositive(std::string_view bytes, Integer& number) {
++    if (bytes.empty() || bytes.front() < '1' || bytes.front() > '9') return false;
++    const auto [next, ec] = std::from_chars(bytes.data(), bytes.data() + bytes.size(), number);
++    return ec == std::errc{} && next == bytes.data() + bytes.size();
++}
++
++inline std::optional<ClaimOrigin> ParseClaimOrigin(std::string_view text) {
++    if (!text.starts_with("1,") || text.size() > 152) return {};
++    text.remove_prefix(2);
++    auto take = [&]() -> std::string_view {
++        const auto comma = text.find(',');
++        if (comma == text.npos) return {};
++        const auto field = text.substr(0, comma);
++        text.remove_prefix(comma + 1);
++        return field;
++    };
++    ClaimOrigin origin{};
++    origin.registration = take();
++    if (!LowerHex(origin.registration, 48) || !ParsePositive(take(), origin.room) ||
++        !ParsePositive(take(), origin.owner_member) || !ParsePositive(take(), origin.owner_joined)) return {};
++    origin.host_run = take();
++    if (!LowerHex(origin.host_run, 32) || !ParsePositive(text, origin.attempt)) return {};
++    return origin;
++}
++
++inline std::optional<std::string> EncodeClaimOrigin(const ClaimOrigin& origin) {
++    if (!LowerHex(origin.registration, 48) || !LowerHex(origin.host_run, 32) ||
++        !origin.room || !origin.owner_member || !origin.owner_joined ||
++        !origin.attempt) return {};
++    std::string text = "1,";
++    text.append(origin.registration);
++    text += ',' + std::to_string(origin.room);
++    text += ',' + std::to_string(origin.owner_member);
++    text += ',' + std::to_string(origin.owner_joined);
++    text += ',';
++    text.append(origin.host_run);
++    text += ',' + std::to_string(origin.attempt);
++    return text;
++}
++} // namespace TheHunt::Summon
+diff --git a/src/webapi_routes_bloodborne.cpp b/src/webapi_routes_bloodborne.cpp
+--- a/src/webapi_routes_bloodborne.cpp
++++ b/src/webapi_routes_bloodborne.cpp
+@@ -19,8 +19,10 @@
+ #include <QString>
+ 
+ #include "bloodborne_summon_broker.h"
++#include "claim_diagnostic.h"
+ #include "authenticated_relay.h"
+ #include "client_session.h"
++#include "summon_claim_origin.hpp"
+ #include "webapi_auth.h"
+ #include <QCryptographicHash>
+ 
+@@ -114,10 +116,29 @@
+                                       const Bloodborne::SummonIdentity& guest, const QByteArray& text) {
+         if (shared.relayPlacement) shared.relayPlacement(host.user,host.tokenHash,guest.user,guest.tokenHash,text);
+     };
++    options.relayClaimPlacement = [&shared](const Bloodborne::SummonIdentity& host,
++        const Bloodborne::SummonIdentity& guest, const QByteArray& text, const QByteArray& scope) {
++        if (shared.relayClaimPlacement)
++            return shared.relayClaimPlacement(host.user,host.tokenHash,guest.user,guest.tokenHash,text,scope);
++        if (scope.isEmpty() && shared.relayPlacement)
++            shared.relayPlacement(host.user,host.tokenHash,guest.user,guest.tokenHash,text);
++        return QByteArray{}; // Preserve first-claim queuing; no retry without its binding.
++    };
+     options.relayCancelPlacement = [&shared](quint64 user) {
+         if (shared.relayCancelPlacement) shared.relayCancelPlacement(user);
+     };
++    options.boundPlacement = [&shared](const Bloodborne::BoundPlacementRequest& claim,
++                                       const Bloodborne::BoundCommit& commit) {
++        if (shared.relayBoundClaimPlacement) return shared.relayBoundClaimPlacement(claim, commit);
++        return Bloodborne::BoundPlacementResult{};
++    };
++    options.cancelBoundPlacement = [&shared](const Bloodborne::TheHuntRegistrationId& id, const QByteArray& scope) {
++        if (shared.relayCancelBoundPlacement) shared.relayCancelBoundPlacement(id, scope);
++    };
+     auto broker = std::make_shared<Bloodborne::SummonBroker>(options);
++    // Explicit opt-in, bounded from the first denial; never dump request bodies.
++    auto claimDiagnostic = std::make_shared<ClaimDiagnosticWindow>(
++        qEnvironmentVariable("THEHUNT_CLAIM_DIAGNOSTICS") == QStringLiteral("1"));
+ 
+     qInfo() << "Bloodborne summon routes registered; seamless co-op"
+             << (broker->IsSeamlessCoopEnabled() ? "enabled" : "disabled") << "anywhere summons"
+@@ -200,8 +221,11 @@
+                        if (access == Access::NoRoom)
+                            placement.clear();
+                    }
+-                   const QList<QByteArray> signs =
+-                       broker->Search(*body, QDateTime::currentMSecsSinceEpoch(), placement, caller);
++                   using SearchMode = Bloodborne::SummonBroker::SearchMode;
++                   const auto mode = caller.user && request.value(TheHunt::Summon::discovery_header) == "1"
++                                         ? SearchMode::RegistrationDiscovery : SearchMode::Legacy;
++                   const QList<QByteArray> signs = broker->Search(
++                       *body, QDateTime::currentMSecsSinceEpoch(), placement, caller, mode);
+                    qInfo() << "Bloodborne summon: search for user"
+                            << Integer(*body, QStringLiteral("UserId")) << "returned"
+                            << signs.size();
+@@ -243,7 +267,7 @@
+                });
+ 
+     http.route("/summon_messenger/request", QHttpServerRequest::Method::Post,
+-               [broker, seamlessCoop, &db, &shared](const QHttpServerRequest& request) -> QHttpServerResponse {
++               [broker, claimDiagnostic, seamlessCoop, &db, &shared](const QHttpServerRequest& request) -> QHttpServerResponse {
+                    Bloodborne::SummonIdentity caller;
+                    if (seamlessCoop) {
+                        auto auth = WebApiAuth::Authenticate(request,db);
+@@ -264,9 +288,26 @@
+                    if (caller.user && !request.value(HostPlacementHeader).isEmpty() &&
+                        !RelayAuth::ValidPlacement(request.value(HostPlacementHeader)))
+                        return InvalidRequest(QStringLiteral("Invalid host placement"));
+-                   const auto result =
+-                       broker->Claim(*body, request.body(), QDateTime::currentMSecsSinceEpoch(),
+-                                     request.value(HostPlacementHeader),caller);
++                   const auto origins = request.headers().values(TheHunt::Summon::claim_origin_header);
++                   const auto now = QDateTime::currentMSecsSinceEpoch();
++                   Bloodborne::SummonBroker::ClaimResult result;
++                   if (origins.isEmpty()) {
++                       result = broker->Claim(*body, request.body(), now, request.value(HostPlacementHeader), caller);
++                   } else {
++                       if (!caller.user) return QHttpServerResponse(QHttpServerResponse::StatusCode::Forbidden);
++                       if (origins.size() != 1) return InvalidRequest(QStringLiteral("Invalid claim origin"));
++                       const auto parsed = TheHunt::Summon::ParseClaimOrigin(std::string_view(origins.front()));
++                       if (!parsed) return InvalidRequest(QStringLiteral("Invalid claim origin"));
++                       const auto placements = request.headers().values(HostPlacementHeader);
++                       if (placements.size() != 1 || !RelayAuth::ValidPlacement(placements.front()))
++                           return InvalidRequest(QStringLiteral("Invalid host placement"));
++                       const Bloodborne::BoundClaimOrigin origin{
++                           QString::fromLatin1(parsed->registration.data(), qsizetype(parsed->registration.size())),
++                           parsed->room, parsed->owner_member, parsed->owner_joined, parsed->attempt,
++                           QByteArray(parsed->host_run.data(), qsizetype(parsed->host_run.size()))};
++                       result = broker->ClaimBound(origin, request.body(), now, placements.front(), caller);
++                   }
++                   if (caller.user) EmitClaimDiagnostic(*claimDiagnostic,result);
+                    switch (result.status) {
+                    case Bloodborne::SummonBroker::ClaimStatus::Claimed:
+                        qInfo() << "Bloodborne summon: claimed session" << result.targetSessionId
+diff --git a/tests/test_relay_auth.cpp b/tests/test_relay_auth.cpp
+--- a/tests/test_relay_auth.cpp
++++ b/tests/test_relay_auth.cpp
+@@ -40,9 +40,9 @@
+     QByteArray input, nonce, key;
+     quint64 user = 0, incoming = 0, outgoing = 0;
+     QVector<QByteArray> frames;
+-    explicit Client(quint16 port) {
++    explicit Client(quint16 port, bool settleFirst = true) {
+         socket.connectToHost(QHostAddress::LocalHost, port);
+-        Pump();
++        if (settleFirst) Pump();
+         auto challenge = Read();
+         CHECK(challenge.size() == 36 && challenge.startsWith("THC2"));
+         nonce = challenge.mid(4);
+@@ -288,7 +288,7 @@
+     Client slow(port); slow.socket.write(QByteArray(1,'x')); CHECK(slow.Closed(5300));
+     Client rate(port); rate.Auth(6,"token6"); rate.Drain(); QByteArray flood;
+     for(int i=0;i<257;++i) flood+=RelayAuth::Frame(rate.Data(Life()));
+-    rate.socket.write(flood); CHECK(rate.Closed(100));
++    rate.socket.write(flood); CHECK(rate.Closed(2000));
+     // A valid token can authenticate before the game's NP login. It stays
+     // connected without a room, then acquires context after the live login/join.
+     Pump(300); state.clients.remove(6);
+@@ -324,12 +324,15 @@
+     }
+     host.Drain();
+     std::vector<std::unique_ptr<Client>> capacity;
+-    Pump(300);
+-    // Open to the fixed cap; the next connection receives no challenge and closes.
+-    for(int i=0;i<61;++i) {
+-        auto s=std::make_unique<Client>(port); capacity.push_back(std::move(s));
+-    }
+-    QTcpSocket overflow; overflow.connectToHost(QHostAddress::LocalHost,port); Pump();
++    // Begin the capacity check with an empty loopback listener. Earlier cases
++    // close clients asynchronously and cannot establish the starting peer count.
++    relay.Stop();
++    CHECK(relay.Listen(QHostAddress::LocalHost,0,temporary.filePath("fixture.db")));
++    const quint16 capacityPort = relay.Port();
++    for(int i=0;i<64;++i) {
++        auto s=std::make_unique<Client>(capacityPort,false); capacity.push_back(std::move(s));
++    }
++    QTcpSocket overflow; overflow.connectToHost(QHostAddress::LocalHost,capacityPort); Pump(300);
+     CHECK(overflow.state()==QAbstractSocket::UnconnectedState);
+     CHECK(capacity.front()->Closed(5300));
+     capacity.clear();

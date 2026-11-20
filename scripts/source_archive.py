@@ -8,6 +8,12 @@ import subprocess
 import zipfile
 from package import ROOT, check_public, digest, private_path
 
+WINDOWS_JOIN = json.loads((ROOT / "patches/windows-join/inputs.json").read_bytes())
+
+
+def added_join_sources(component):
+    return tuple(name for name, hashes in WINDOWS_JOIN[component].items() if hashes["before"] is None)
+
 BBSC_GENERATED = (
     "emulator/mod/bbsc_launch_zh_cn.cpp", "emulator/mod/bbsc_mod_zh_cn.cpp",
     "emulator/mod/bbsc_slot_guard.inc",
@@ -26,7 +32,7 @@ BBSC_GENERATED = (
         "bbsc_private_join_recovery.inc", "bbsc_first_spawn.inc", "bbsc_load_protection.inc", "bbsc_peer_display.inc", "bbsc_host_ready.inc", "bbsc_visual_diagnostics.inc", "bbsc_visibility_wire.h",
         "bbsc_summon_type.inc", "bbsc_world_recovery.inc", "bloodborne_re_zh_cn.cpp",
         "windows-zh-cn-validation.json", "zh-cn-validation.json")),
-)
+) + added_join_sources("bbsc")
 BRIDGE_GENERATED = ("bloodborne_re_save.cpp", "bbsc_mod_save.cpp")
 SOURCE_EXCLUDES = {"installer-tests", "test-output", "dist", "build", "build-ui", "downloads", "bbsc-game"}
 
@@ -120,6 +126,8 @@ def source_entries(root, port):
         yield path, "bbsc/" + name
     for path, name in pinned_sources(port.resolve(), lock["bbport"]["commit"]):
         yield path, "bbport/" + name
+    for name in added_join_sources("bbport"):
+        yield safe_source(port, name), "bbport/" + name
     for name in BRIDGE_GENERATED:
         yield safe_source(root / ".build/save-bridge", name), "save-bridge/" + name
 

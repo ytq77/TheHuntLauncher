@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -339,7 +340,26 @@ def snapshots_for(job, step):
     return [json.loads(plain_path(p).read_text(encoding='utf-8')) for p in files]
 
 
-def game_environment(job, step):
+def diagnostic_core(directory):
+    # Graphics providers and their helpers resolve siblings of bb-probe.exe.
+    # Use a private scratch layout so the stock engine keeps its original name.
+    manifest = json.loads((ROOT / 'file-sha256.json').read_bytes())
+    stock = 'engine/conversion/bb-probe.exe'
+    if stock not in manifest or 'bin/bb-probe.exe' not in manifest:
+        raise ValueError('缺少分步诊断引擎，请使用完整安装包。')
+    for relative in manifest:
+        member = Path(relative)
+        if member.parent != Path('bin') or member.suffix.lower() not in ('.dll', '.exe'):
+            continue
+        source = stock if relative == 'bin/bb-probe.exe' else relative
+        target = directory / member.name
+        shutil.copyfile(plain_path(ROOT / source), target)
+        if file_hash(target) != manifest[source]:
+            raise ValueError('分步诊断引擎文件校验失败，请重新解压安装包。')
+    return directory / 'bb-probe.exe'
+
+
+def game_environment(job, step, core):
     path = job_path(job['id'])
     data = path / step
     profile = job['profile']
@@ -361,9 +381,9 @@ def game_environment(job, step):
                BBSC_SAVE_DIR=str(data / 'user/savedata/1/CUSA00207/SPRJ0005'),
                PATH=str(ROOT / 'runtime/bin') + os.pathsep + env.get('PATH', ''))
     if step == 'verify':
-        env['BB_PROBE'] = str(ROOT / 'bin/bb-probe.exe')
+        env['BB_PROBE'] = str(core)
     else:
-        env.update(BB_PROBE=str(path / 'mod/bbsc-launch.exe'), BBSC_EMULATOR=str(ROOT / 'bin/bb-probe.exe'))
+        env.update(BB_PROBE=str(path / 'mod/bbsc-launch.exe'), BBSC_EMULATOR=str(core))
     if step == 'convert':
         env['BBSC_CONVERSION_QUICK_SLOTS_CLEARED'] = '1'
     return env
@@ -371,8 +391,9 @@ def game_environment(job, step):
 
 def play(job, step):
     path = job_path(job['id'])
-    env = game_environment(job, step)
-    with (path / step / 'run.log').open('w', encoding='utf-8') as output:
+    with tempfile.TemporaryDirectory(prefix='engine-', dir=path) as directory, \
+            (path / step / 'run.log').open('w', encoding='utf-8') as output:
+        env = game_environment(job, step, diagnostic_core(Path(directory)))
         process = subprocess.Popen([str(ROOT / 'runtime/bin/python.exe'), str(ROOT / 'engine/run.py')],
             cwd=ROOT / 'engine', env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW)

@@ -118,6 +118,8 @@ class SourceArchive(unittest.TestCase):
     def test_application_uses_registered_sources_and_explicit_downloads_and_bridge(self):
         bbsc, bbsc_revision = self.bbsc()
         port, port_revision = self.repo('port', {'engine.cpp': b'// engine\n'})
+        for name in sources.added_join_sources('bbport'):
+            write(port, name)
         raw = b'synthetic locked archive'
         manifest = {'archives': [{'name': 'shadnet.tar.gz', 'sha256': hashlib.sha256(raw).hexdigest()}],
                     'bbsc': {'files': {}}}
@@ -142,6 +144,8 @@ class SourceArchive(unittest.TestCase):
             self.assertIn('bbsc-launcher/server/windows/package.py', bundle.namelist())
             self.assertIn('bbsc-launcher/scripts/prepare_save_hardening.py', bundle.namelist())
             self.assertIn('bbsc/emulator/src/core/bbsc_active_save.inc', bundle.namelist())
+            for name in sources.added_join_sources('bbport'):
+                self.assertIn('bbport/' + name, bundle.namelist())
             self.assertEqual(bundle.read('bbsc-launcher/server/windows/downloads/shadnet.tar.gz'), raw)
             for name in sources.BRIDGE_GENERATED:
                 self.assertIn('save-bridge/' + name, bundle.namelist())

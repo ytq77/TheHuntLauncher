@@ -1,0 +1,168 @@
+diff --git a/src/loader01.inc b/src/loader01.inc
+new file mode 100644
+--- /dev/null
++++ b/src/loader01.inc
+@@ -0,0 +1,41 @@
++/* Included only in the dedicated diagnostic probe.c. */
++#include "startup01.h"
++
++_Noreturn static void th01_stop(const char *reason) {
++    fprintf(stderr, "TH_WIPE_STARTUP_01 refused: %s\n", reason);
++    fflush(stderr);
++    /* A timed-out Worker may still be installing. Do not run CRT/DLL teardown on partial state. */
++    TerminateProcess(GetCurrentProcess(), 78);
++    _exit(78);
++}
++
++static ThWipeStartupFn01 th01_bind(void) {
++    wchar_t expected[32768], actual[32768];
++    HMODULE mod = NULL;
++    if (!Th01PackageModulePath(expected, 32768)) th01_stop("core package path");
++    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, expected, &mod))
++        th01_stop("package mod/bbsc.dll is not loaded");
++    DWORD n = GetModuleFileNameW(mod, actual, 32768);
++    if (!n || n >= 32768 || _wcsicmp(actual, expected)) th01_stop("loaded module path");
++    FARPROC proc = GetProcAddress(mod, TH01_EXPORT);
++    if (!proc) th01_stop("fixed R2/01 export missing");
++    MEMORY_BASIC_INFORMATION owner;
++    if (VirtualQuery((const void *)proc, &owner, sizeof(owner)) != sizeof(owner) ||
++        owner.Type != MEM_IMAGE || owner.AllocationBase != mod)
++        th01_stop("fixed export belongs to a different module");
++    return (ThWipeStartupFn01)proc;
++}
++
++static void th01_before_guest(ThWipeStartupFn01 startup, int mode, int preflight,
++                              uint64_t base, uint64_t bytes) {
++    ThWipeReceipt01 receipt = {0};
++    const uint32_t stages = Th01RequiredStages(mode, preflight);
++    if (Th01Mode() != mode || Th01Preflight() != preflight) th01_stop("mode changed before startup");
++    if (startup(base, bytes, stages, &receipt) != 1) th01_stop("Worker refused or timed out");
++    if (receipt.identity != TH01_ID || receipt.image_base != base || receipt.image_bytes != bytes ||
++        receipt.mode != (uint32_t)mode || receipt.stages != stages ||
++        Th01Mode() != mode || Th01Preflight() != preflight)
++        th01_stop("incomplete or mismatched Worker receipt");
++    printf("TH_WIPE_STARTUP_01 ready mode=%d base=0x%" PRIx64 " bytes=%" PRIu64
++           " stages=0x%x\n", mode, base, bytes, (unsigned)receipt.stages);
++}
+diff --git a/src/probe.c b/src/probe.c
+--- a/src/probe.c
++++ b/src/probe.c
+@@ -13,6 +13,7 @@
+ #endif
+ #ifdef _WIN32
+ #include <windows.h>
++#include "loader01.inc"
+ #else
+ #include <sys/mman.h>
+ #include <malloc.h>
+@@ -494,7 +495,10 @@
+     mallopt(M_ARENA_MAX,1);
+     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
+ #endif
+-    if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
++    if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) {
++        if (Th01Preflight() != 0) th01_stop("preflight requires the linked boot image");
++        return vulkan_smoke();
++    }
+     check_cpu();
+ #ifdef _WIN32
+     /* The PS4 user range must stay free of host allocations (GPU driver, heaps), and the guest
+@@ -519,6 +523,12 @@
+         fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
+         return 1;
+     }
++    const int th_mode01 = Th01Mode();
++    if (th_mode01 < 0) th01_stop("TH_WIPE_OBSERVE_01 must be exactly 0 or 1");
++    const int th_preflight01 = Th01Preflight();
++    if (th_preflight01 < 0) th01_stop("TH_WIPE_PREFLIGHT_ONLY must be absent or exactly 1");
++    ThWipeStartupFn01 th_start01 = th01_bind();
++    if (th_preflight01) cpu_only = 1;
+     if (content_profile) {
+         FILE *profile=fopen(content_profile,"rb");
+         unsigned char data[28];
+@@ -673,7 +683,7 @@
+     bbgpu_pc_menu_set_image(image);
+     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
+     fclose(f);
+-    runtime_discord_start(image);
++    if (!th_preflight01) runtime_discord_start(image);
+     if (!cpu_only) {
+         char title[128]="Bloodborne", serial[16]="UNKNOWN", sfo[4096];
+         uint32_t attributes=0;
+@@ -753,6 +763,16 @@
+             for (uint64_t i=0;i<ns;++i)
+                 if ((segments[i].flags&1) && modules[m].init>=segments[i].address && modules[m].init-segments[i].address<segments[i].size) init_executable=1;
+             if (!init_executable) fail("module init is not executable");
++        }
++    }
++    th01_before_guest(th_start01, th_mode01, th_preflight01, (uintptr_t)image, size);
++    if (th_preflight01) {
++        puts("TH_WIPE_PREFLIGHT_ONLY complete: before native TLS, module init, bbnet and guest");
++        fflush(stdout);
++        return 0;
++    }
++    if (native_libc) {
++        for (uint64_t m=0;m<module_count;++m) {
+             if (modules[m].tls_module)
+                 runtime_set_module_tls(modules[m].tls_module,image+modules[m].tls_address,modules[m].tls_filesz,modules[m].tls_memsz);
+         }
+diff --git a/src/startup01.h b/src/startup01.h
+new file mode 100644
+--- /dev/null
++++ b/src/startup01.h
+@@ -0,0 +1,55 @@
++#pragma once
++#include <stdint.h>
++#include <string.h>
++#include <wchar.h>
++#include <windows.h>
++
++/* Fixed ABI of the isolated 01 R2 pair. Both binaries use the Windows x64 C ABI. */
++#define TH01_EXPORT "ThWipeStartup01_R2_5a99108_v2"
++#define TH01_ID UINT64_C(0x5448303152320002)
++enum {
++    TH01_BYTE_READBACK = 1u,
++    TH01_REQUIRED_R2 = 2u,
++    TH01_RECORDER = 4u,
++    TH01_PREFLIGHT_ONLY = 8u
++};
++typedef struct {
++    uint64_t identity;
++    uint64_t image_base;
++    uint64_t image_bytes;
++    uint32_t mode;
++    uint32_t stages;
++} ThWipeReceipt01;
++typedef int (*ThWipeStartupFn01)(uint64_t, uint64_t, uint32_t, ThWipeReceipt01*);
++
++static inline int Th01Mode(void) {
++    wchar_t value[2];
++    if (GetEnvironmentVariableW(L"TH_WIPE_OBSERVE_01", value, 2) != 1) return -1;
++    if (value[0] == L'1') return 1;
++    if (value[0] == L'0') return 0;
++    return -1;
++}
++
++static inline int Th01Preflight(void) {
++    wchar_t value[2];
++    SetLastError(ERROR_SUCCESS);
++    DWORD n = GetEnvironmentVariableW(L"TH_WIPE_PREFLIGHT_ONLY", value, 2);
++    if (!n && GetLastError() == ERROR_ENVVAR_NOT_FOUND) return 0;
++    return n == 1 && value[0] == L'1' ? 1 : -1;
++}
++
++static inline uint32_t Th01RequiredStages(int mode, int preflight) {
++    return TH01_BYTE_READBACK | TH01_REQUIRED_R2 | (mode == 1 ? TH01_RECORDER : 0u) |
++           (preflight == 1 ? TH01_PREFLIGHT_ONLY : 0u);
++}
++
++/* Resolve only the installed layout of this pair, independent of cwd or PATH. */
++static inline int Th01PackageModulePath(wchar_t *path, DWORD capacity) {
++    static const wchar_t core_tail[] = L"\\bin\\bb-probe.exe";
++    static const wchar_t dll_tail[] = L"\\mod\\bbsc.dll";
++    DWORD n = GetModuleFileNameW(NULL, path, capacity);
++    const size_t suffix = sizeof(core_tail) / sizeof(*core_tail) - 1;
++    if (n <= suffix || n >= capacity || _wcsicmp(path + n - suffix, core_tail)) return 0;
++    memcpy(path + n - suffix, dll_tail, sizeof(dll_tail));
++    return 1;
++}

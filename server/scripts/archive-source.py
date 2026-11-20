@@ -21,6 +21,7 @@ prefix = f"TheHuntServer-source-v{VERSION}"
 with zipfile.ZipFile(OUT / f"{prefix}.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
     for name in sorted(tracked):
         bundle.write(ROOT / name, f"{prefix}/{name}")
+    bundle.write(ROOT.parent / "scripts/prepare_windows_join.py", f"{prefix}/windows/prepare_windows_join.py")
     shared_updates = ROOT.parent / "launcher/HuntUpdates.cs"
     if shared_updates.is_file():
         bundle.write(shared_updates, f"{prefix}/windows/gui/HuntUpdates.cs")

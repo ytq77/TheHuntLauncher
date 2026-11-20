@@ -2,6 +2,8 @@
     [Parameter(Mandatory=$true)][string]$AssemblyPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [string]$RuntimeRoot,
+    [string]$BackupPreviewFixture,
+    [string]$CandidateRoot,
     [switch]$ViewOnly
 )
 $ErrorActionPreference='Stop'
@@ -43,6 +45,15 @@ public static class ResolutionTestDialog {
 }
 '@
 function Assert($value,[string]$message) { if(-not $value) { throw $message } }
+function Copy-FixtureReaders([string]$destination) {
+    foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'launcher') -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $destination }
+    if($CandidateRoot) {
+        foreach($file in Get-ChildItem -LiteralPath $CandidateRoot -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $destination -Force }
+        $reader='engine\launcher\bbport_character.py'
+        [void][IO.Directory]::CreateDirectory((Join-Path $destination 'engine\launcher'))
+        Copy-Item -LiteralPath (Join-Path $CandidateRoot $reader) -Destination (Join-Path $destination $reader)
+    }
+}
 function Invoke-Private($object,[string]$name,[object[]]$arguments=@()) {
     $raw=New-Object object[] $arguments.Length
     for($i=0;$i -lt $arguments.Length;$i++) { $raw[$i]=$arguments[$i].PSObject.BaseObject }
@@ -213,6 +224,34 @@ try {
     $desktop.Validate((Join-Path $OutputDirectory 'special-row-page.png'),'Save')
     $window.FindName('SelectedSaveBackup').BringIntoView(); $window.UpdateLayout()
     $desktop.Validate((Join-Path $OutputDirectory 'special-row-profile.png'),'Save')
+    if($BackupPreviewFixture) {
+        $fromSaves=Map ([IO.File]::ReadAllText([IO.Path]::GetFullPath($BackupPreviewFixture)))
+        Invoke-Private $desktop 'ShowSaveBackups' @($fromSaves)
+        $list=$window.FindName('SaveBackupList')
+        $details=$window.FindName('SelectedSaveBackup')
+        Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106') 'Launch preview changed the release name or duplicated equal progress'
+        $list.SelectedIndex=1
+        Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 旧月 · 等级 16 · 回响 0') 'Pre-restore preview retained the previous character or lost zero echoes'
+        $list.SelectedIndex=2
+        Assert ($window.FindName('RestoreSaveBackup').Content -eq '换回处理前状态') 'Sealed backup lost its dedicated restore action'
+        Assert ($details.Text -like '*主档与备档 · 封存 · 等级 41 · 回响 777*' -and $details.Text -notlike '*角色槽位 3 ·*' -and $details.Text -notlike '*当前 ·*') 'Sealed detail showed an empty slot or the active character'
+        Assert ($details.Text -like '*角色槽位 2 · 主档 · 猎人甲*角色槽位 2 · 备档 · 晓*角色槽位 4 · 备档 · 晓*') 'Different generations or the backup-only slot disappeared'
+        Assert ($details.Text -like '*角色槽位 7 · 主档 · 角色数据无法识别*角色槽位 7 · 备档 · 晓*' -and $details.Text -like '*角色槽位 9 · 主档 · 猎人甲 · 等级、回响未识别*') 'Occupied unreadable slots were hidden'
+        $list.SelectedIndex=4
+        Assert ($details.Text -eq '没有已使用的角色槽位。') 'Empty backup retained stale character lines'
+        $list.SelectedIndex=0
+        Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106' -and $window.FindName('RestoreSaveBackup').Content -eq '恢复到这个备份') 'Switching back failed to restore the ordinary view'
+        $proofPlan=$fromSaves['explicit_plan']
+        Invoke-Private $desktop 'ShowSaveResolution' @($proofPlan,(Field $desktop 'resolutionGeneration'))
+        $panes=$window.FindName('SaveResolutionCharacters').Text -split '当前存档中的角色'
+        Assert ($panes.Count -eq 2 -and $panes[0] -like '*备份中的角色*封存 · 等级 41 · 回响 777*' -and $panes[1] -like '*当前 · 等级 24 · 回响 999*') 'Processing panel confused the backup with the current save'
+        Assert ($panes[1] -like '*主档 · 猎人甲*备档 · 猎人甲*两代角色身份不一致*' -and $panes[1] -like '*主档读不出，备档可读*主档说明*') 'Processing panel lost a conflict or the native readability diagnostics'
+        Assert (([regex]::Matches($panes[1],'角色槽位 8 ·')).Count -eq 1 -and $panes[1] -like '*角色槽位 8 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106*') 'Playtime-only differences duplicated a visible role'
+        $restore=@($proofPlan['options'] | Where-Object { $_['id'] -eq 'restore-case' })[0]
+        $confirm=Invoke-Private $desktop 'ResolutionConfirmation' @($proofPlan,$restore)
+        Assert ($confirm.Contains($restore['description']) -and $confirm -like '*将恢复的备份角色*封存 · 等级 41 · 回响 777*当前版本检查*当前 · 等级 24 · 回响 999*主档说明*') 'Restore confirmation lost the actual source or current diagnostics'
+        $passed.Add('Selected-backup WPF text matched actual synthetic launch, pre-restore, sealed and all-empty lists in both directions.')
+    }
     $noReadable=Map '{"summary":"全部角色代次当前版本无法读取，不代表永久损坏。","characters":[{"slot":0,"primary":"unreadable","backup":"unreadable"}],"readability_note":"原件只封存，不列为可换回项。"}'
     $restoreDescription=Map '{"id":"restore-all","label":"恢复所选整套备份","description":"当前版本会先完整保全，但只封存，不列为可换回项；不能保证日后恢复，不合并进度。"}'
     $confirmation=Invoke-Private $desktop 'ResolutionConfirmation' @($noReadable,$restoreDescription)
@@ -228,7 +267,7 @@ try {
     if(-not $ViewOnly) {
         Assert ($RuntimeRoot -and (Test-Path -LiteralPath (Join-Path $RuntimeRoot 'bin\python.exe'))) 'A known packaged Python runtime is required for real chain checks'
         Copy-Item -LiteralPath $RuntimeRoot -Destination (Join-Path $fixture 'runtime') -Recurse
-        foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'launcher') -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $fixture }
+        Copy-FixtureReaders $fixture
         $setup=@'
 import json, sys
 from pathlib import Path
@@ -237,6 +276,9 @@ sys.path[:0] = [str(root), str(repo/'tests')]
 from synthetic_world_fixture import fixture_pair
 import save_transfer as t
 raw, _ = fixture_pair()
+if (root/'engine/launcher/bbport_character.py').is_file():
+    from check_backup_characters import character
+    raw = character('猎人甲', 33, 106)
 role = root/'data/user/savedata/1/CUSA00207/SPRJ0005'
 role.mkdir(parents=True)
 for stem in ('userdata', 'backup'): (role/f'{stem}0000').write_bytes(raw)
@@ -294,12 +336,30 @@ print('fixture ready, production validation passed; no game or process-check stu
         $special=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' })
         Assert ($special.Count -ge 1) 'Completed production original was not listed separately'
         foreach($item in $special) {
-            Assert ($item.Content -match '\d{4}-\d{2}-\d{2}' -and $item.Content -like '*角色槽位 1*主档可读*备档可读*') 'Production special row omitted timestamp or per-generation readability'
+            $expected=if($CandidateRoot) { '*角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106*' } else { '*角色槽位 1 · 主档 · Hunter · 等级、回响未识别*角色槽位 1 · 备档 · Hunter · 等级、回响未识别*' }
+            Assert ($item.Content -match '\d{4}-\d{2}-\d{2}' -and $item.Content -like $expected) 'Production special row omitted its timestamp or character details'
             if($item.Tag['readability_note']) { Assert ($item.Content.Contains($item.Tag['readability_note'])) 'Production special row hid its backend readability note' }
         }
         $window.FindName('SaveBackupList').SelectedItem=$special[0]
         Assert ($window.FindName('RestoreSaveBackup').Content -eq '换回处理前状态') 'Special row used ordinary restore wording'
+        if($CandidateRoot) {
+            $setCurrent=@'
+import sys
+from pathlib import Path
+root,repo=map(Path,sys.argv[1:]);sys.path[:0]=[str(root),str(repo/'tests')]
+from check_backup_characters import character
+raw=character('当前',24,999)
+for stem in ('userdata','backup'):
+    (root/'data/user/savedata/1/CUSA00207/SPRJ0005'/(stem+'0000')).write_bytes(raw)
+'@
+            Invoke-FixturePython $setCurrent @($fixture,$repo) 'distinct-current-character'
+        }
         Await-Task (Invoke-Private $desktop 'RestoreSaveBackup')
+        if($CandidateRoot) {
+            $realText=$window.FindName('SaveResolutionCharacters').Text
+            Assert ($realText -like '*备份中的角色*猎人甲 · 等级 33 · 回响 106*当前存档中的角色*当前 · 等级 24 · 回响 999*主档可读，备档可读*') 'Actual restore button / JSON / processing panel did not separate the two save generations'
+            [IO.File]::WriteAllText((Join-Path $OutputDirectory 'selected-and-current.txt'),$realText,$utf8)
+        }
         Assert ((Plan $desktop)['selection']['kind'] -eq 'resolution-before') 'Actual special dispatch lost selection kind'
         Assert (-not (Plan $desktop)['needed'] -and (Plan $desktop)['show_choices']) 'Healthy explicit history was mislabeled or hidden'
         Assert ($window.FindName('SaveResolutionPanel').Visibility -eq [Windows.Visibility]::Visible -and $window.FindName('SaveResolutionOptions').Children.Count -gt 0) 'Healthy history has no real visible options'
@@ -436,7 +496,7 @@ print(json.dumps({'pid':os.getpid(),'stopped':'checkpoint exception after actual
         $env:APPDATA=Join-Path $fixture 'isolated-appdata'; [void][IO.Directory]::CreateDirectory($env:APPDATA)
         Copy-Item -LiteralPath $RuntimeRoot -Destination (Join-Path $fixture 'runtime') -Recurse
         $env:PYTHONHOME=Join-Path $fixture 'runtime'
-        foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'launcher') -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $fixture }
+        Copy-FixtureReaders $fixture
         foreach($name in @('Launcher.xaml','feature-catalog.json','trophy-catalog.json')) { Copy-Item -LiteralPath (Join-Path $repo ('launcher\'+$name)) -Destination $fixture }
         $sliceOrdinary=Join-Path $OutputDirectory ('slice2-ordinary-'+[Guid]::NewGuid().ToString('N'))
         $sliceExpected=Join-Path $OutputDirectory 'slice2-expected.json'
@@ -489,6 +549,9 @@ e['bad_target']={k:v[0] for k,v in tree(base).items()};record.write_text(json.du
         Await-Task (Invoke-Private $desktop 'RefreshSaveBackups')
         $sourcePlan=Plan $desktop; $sourceChoice=@($sourcePlan['options'] | Where-Object { $_['id'] -eq 'reimport-ordinary' })[0]
         Assert ($null -ne $sourceChoice -and $sourceChoice.ContainsKey('digest') -and $sourceChoice['digest'] -ne $sourcePlan['digest']) 'Real reimport lacks independent source binding'
+        Assert ($window.FindName('SaveResolutionCharacters').Text -like '*原版导入来源中的角色*Hunter*当前存档中的角色*') 'Processing page omitted the offered import source'
+        $importConfirm=Invoke-Private $desktop 'ResolutionConfirmation' @($sourcePlan,$sourceChoice)
+        Assert ($importConfirm -like '*将导入的原版角色*Hunter*当前版本检查*' -and $importConfirm -notlike '*将恢复的备份角色*') 'Import confirmation displayed the wrong branch'
         $oldIds=@($window.FindName('SaveBackupList').Items | Where-Object { $_.Tag['kind'] -eq 'resolution-before' } | ForEach-Object { $_.Tag['id'] })
         $before=Hash-File $slicePrimary
         Choose-Apply $desktop 'reimport-ordinary' $false

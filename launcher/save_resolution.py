@@ -17,6 +17,7 @@ import stat
 import sys
 import uuid
 
+from backup_characters import character_preview, with_character_preview
 import offline_aux
 import offline_save
 import save_backups as backups
@@ -263,7 +264,7 @@ def _readability(folder):
             row[key+'_reason_code'] = 'qualified_generation'
             row[key+'_category'] = 'readable'
             readable += 1
-            identities.append(_sha(raw[role.username:role.username+32]+raw[role.face+4:role.face+239]))
+            identities.append(transfer.character_identity(raw, role))
             if not row['name']:
                 row['name'] = transfer.character_name(raw, role)
         if all(identities) and identities[0] != identities[1]:
@@ -360,7 +361,7 @@ def list_cases(root):
             return {'ok': True, 'backups': [], 'warnings': ['有尚未结束的存档操作。请先继续原操作，再读取处理前存档列表。']}
         _guards(root)
         rows, warnings = _list_cases(root)
-        return {'ok': True, 'backups': [{k: v for k, v in row.items() if not k.startswith('_')} for row in rows],
+        return {'ok': True, 'backups': [with_character_preview(row) for row in rows],
                 'warnings': warnings}
 
 
@@ -503,10 +504,10 @@ def _generation_sources(root, readable):
             # The identity can remain readable when the later flag-bank check
             # fails. Do not throw away a known mismatch merely because the
             # whole generation was not qualified for restoration.
-            primary_identity = _sha(raw[role.username:role.username+32]+raw[role.face+4:role.face+239])
+            primary_identity = transfer.character_identity(raw, role)
             backup_raw = world.stable(primary.with_name(f'backup{slot:04}'))
             backup_role = offline_save.parse(backup_raw)
-            backup_identity = _sha(backup_raw[backup_role.username:backup_role.username+32]+backup_raw[backup_role.face+4:backup_role.face+239])
+            backup_identity = transfer.character_identity(backup_raw, backup_role)
             if primary_identity != backup_identity:
                 continue
             relation = 'same'
@@ -704,7 +705,17 @@ def plan(root, selection_kind=None, selection_id=None, selection_fingerprint=Non
             return {'ok': True, 'needed': True, 'show_choices': True, 'summary': '上次选择未完成，可继续或先完整保全当前现场后放弃。',
                     'digest': None, 'options': [], 'characters': [], 'warnings': [],
                     'selection': None, 'pending': pending(root)}
-        return _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)[0]
+        public, data = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
+        # Display only the bytes bound to this completed plan. Apply recomputes its original digest.
+        if public['show_choices']:
+            public['character_preview'] = character_preview(root/TREES['savedata'], data['content']['trees']['savedata'])
+            if data['source'] is not None:
+                public['backup_view'] = with_character_preview(data['source'])
+            if any(option['id'] == 'reimport-ordinary' for option in public['options']):
+                ordinary = data['ordinary']
+                public['import_view'] = {'character_preview': character_preview(ordinary['path'], ordinary['inventory']),
+                                         'characters': ordinary['metadata']['characters']}
+        return public
 
 
 def _checkpoint(name):

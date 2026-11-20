@@ -1,0 +1,48 @@
+{
+  "server": {
+    "CMakeLists.txt": {
+      "after": "9f822f24cdfe1442bf035dcb73093f21fc8dc1c7deb31a9bf2181bd7f7300293",
+      "before": "73f2d1ebf520d5718d3f87724993775c8169aec84a0f857ad672112bcfe07c85"
+    },
+    "src/authenticated_relay.cpp": {
+      "after": "695aa938fe3bd95572d915c1f4e5482f448dca1fa0ab9296bda911399b4bf032",
+      "before": "4cba134e65c62dfcce7844d19fe5c0dd67ba3168d323d6e54911450199caf093"
+    },
+    "src/authenticated_relay.h": {
+      "after": "87e42cdc39041cc5142aac0ab07d75537dbfac91e90ce32d00195d4e392e70f0",
+      "before": "85ab6830ec2574bf60be3cda7fdc09360819f9ca4a6d79e598a09b2f936abd8e"
+    },
+    "src/bloodborne_summon_broker.cpp": {
+      "after": "f200295810c9cb7df41d1d93542da01e0ea6bfddb18e86aa69630ace98f9fbc0",
+      "before": "a66eacc49a7db94b1be68152d0e187ad4d8a595c7bb46fd441e64b9ed076aace"
+    },
+    "src/bloodborne_summon_broker.h": {
+      "after": "72da2caa94370f1d6425febb8c659c46f8b8cfb419b83c05947858124ec54246",
+      "before": "e87f77323242773abf5c444d4c32b0a098c7d40e5982d9f49ef6b85934d36f89"
+    },
+    "src/claim_diagnostic.h": {
+      "after": "96cd821f456744d7107de4cecbda2eb0f8fe531568d0c580c52898b8d3a07256",
+      "before": null
+    },
+    "src/client_session.h": {
+      "after": "e9438fc4d153be958f5f1310cd29d14ffccef33f505cf06ed0685a7973808da1",
+      "before": "1e6e346165c9b3e0034500149fb3b5dccb27b1f98ceeb8310c1dd7cc2949cc7c"
+    },
+    "src/cmd_matching.cpp": {
+      "after": "d770b9d6c383bf84ab60f2db506c70d08a82340b41ce4a96dcd2fc701c254e7c",
+      "before": "7204e023b698b0f8ee3b98130760179d4265dee95d56bb5927b414f7af5dc210"
+    },
+    "src/summon_claim_origin.hpp": {
+      "after": "6556af4879b98558dfeda1651afe90a54b6760a7b9b1c02b2ddfa7cac90c7e73",
+      "before": null
+    },
+    "src/webapi_routes_bloodborne.cpp": {
+      "after": "543486b0ce56e421e77787eb575bd520c0772f0c639805d09a72200919495f21",
+      "before": "1f9c7a046c56968bfdb9869af652adfd5ca861c666ec5044d01044fbdb8a9625"
+    },
+    "tests/test_relay_auth.cpp": {
+      "after": "da12f7aa19395c413dda11f2e77134f9661d31b7131807a3a8fc06225c46b1c5",
+      "before": "26f8f9648b181e793121ae0de83279cbdb9692096b11d72ed4d04d9f7ed2ca7d"
+    }
+  }
+}
