@@ -104,7 +104,7 @@ def require_stopped(action='导入'):
 
 
 @contextmanager
-def installation_guard(root=None):
+def installation_guard(root=None, *, read_only=False):
     """Serialize this installation's sessions/transfers, not other installations."""
     root = plain_path(ROOT if root is None else Path(root)).resolve()
     key = os.path.normcase(str(root))
@@ -139,7 +139,21 @@ def installation_guard(root=None):
                 kernel.CloseHandle(handle)
     else:
         import fcntl
-        descriptor = os.open(plain_path(root/'.save-transfer.guard'), os.O_CREAT | os.O_RDWR, 0o600)
+        path = plain_path(root/'.save-transfer.guard')
+        try:
+            descriptor = os.open(path, os.O_RDONLY if read_only else os.O_CREAT | os.O_RDWR, 0o600)
+        except FileNotFoundError:
+            if not read_only:
+                raise
+            descriptor = None
+        if descriptor is None:
+            # Writers leave this file in place. A fresh read needs no file of its own.
+            yield
+            try:
+                plain_path(path).stat()
+            except FileNotFoundError:
+                return
+            raise OperationUnavailable('查询期间出现了新的存档操作，请重新检查。')
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

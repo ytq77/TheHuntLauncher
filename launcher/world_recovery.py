@@ -131,7 +131,7 @@ def entries(folder, pattern='*'):
         return []
 
 
-def primary_identities(root):
+def primary_identities(root, *, fingerprints=None):
     """Exactly the read-only nonzero-primary check used by normal begin()."""
     _, saves = layout(root)
     result = {}
@@ -144,6 +144,8 @@ def primary_identities(root):
         except FileNotFoundError as error:
             require_stable_missing(error)
             continue
+        if fingerprints is not None:
+            fingerprints[path] = sha(raw)
         if any(raw):
             try:
                 result[str(slot)] = identity(raw)
@@ -1049,6 +1051,67 @@ def review(root):
     return {'ok': True, 'items': items, 'digest': evidence_plan(before) if items else None}
 
 
+def _status_stamp(path):
+    try:
+        value = plain_path(path).stat()
+    except FileNotFoundError as error:
+        require_stable_missing(error)
+        return None
+    if not stat.S_ISREG(value.st_mode):
+        raise OperationUnavailable('处理记录或角色路径不是普通文件，请检查目录设置。')
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+
+
+def _status_gates(root):
+    from save_resolution import GATE, _control
+    folder, _ = layout(root)
+    paths = (root/GATE, folder/'review-required.json', root/'.save-import.lock',
+             root/'.save-conversion.lock', root/'.save-conversion-pending.json')
+    # Presence blocks launch even for legacy or opaque intents. Read stably so
+    # an inaccessible marker or one that disappeared is reported as a read error.
+    return {path: _control(path)[0] for path in paths if _status_stamp(path) is not None}
+
+
+def _status_primaries(saves):
+    return {path: _status_stamp(path) for path in entries(saves, 'userdata000[0-9]')}
+
+
+def recovery_status(root):
+    """Read-only home indicator. Normal startup independently rechecks recovery."""
+    root = plain_path(root)
+    if not stat.S_ISDIR(root.stat().st_mode):
+        raise OperationUnavailable('当前安装目录无法读取。')
+    with installation_guard(root, read_only=True):
+        require_stopped('查询恢复状态')
+        changed = '查询期间恢复记录或角色存档发生变化，请重新检查。'
+        gates = _status_gates(root)
+        status = 'blocked'
+        if not gates:
+            _, saves = layout(root)
+            primaries = _status_primaries(saves)
+            items = review_items(root)
+            fingerprints = {}
+            try:
+                if primaries:
+                    primary_identities(root, fingerprints=fingerprints)
+            except ReviewRequired:
+                pass  # A stable nonzero primary failed the normal character check.
+            else:
+                if not items:
+                    status = 'clear'
+                elif all(row['state'] in ('verified', 'waiting-backup') for row in items):
+                    status = 'safe'
+            # Empty reviews need no full inventory of saves, runs or archived jobs.
+            checked = review(root)['items'] if items else review_items(root)
+            if (checked != items or _status_primaries(saves) != primaries or
+                    any(sha(plain_path(path).read_bytes()) != digest for path, digest in fingerprints.items())):
+                raise EvidenceChangedError(changed)
+        if _status_gates(root) != gates:
+            raise EvidenceChangedError(changed)
+        require_stopped('查询恢复状态')
+        return {'ok': True, 'status': status}
+
+
 def export_evidence(root, expected):
     root = plain_path(root)
     with import_lock(root):
@@ -1081,7 +1144,9 @@ def export_evidence(root, expected):
 if __name__ == '__main__':
     try:
         root = Path(__file__).resolve().parent
-        if sys.argv[1:] == ['review']:
+        if sys.argv[1:] == ['recovery-status']:
+            result = recovery_status(root)
+        elif sys.argv[1:] == ['review']:
             result = review(root)
         elif sys.argv[1:] == ['copy-evidence']:
             result = export_evidence(root, json.load(sys.stdin)['digest'])
@@ -1089,5 +1154,9 @@ if __name__ == '__main__':
             raise ValueError('请选择复核或复制证据。')
         print(json.dumps(result, ensure_ascii=True))
     except (OSError, ValueError, KeyError, TypeError) as error:
-        print(json.dumps({'ok': False, 'error': str(error)}, ensure_ascii=True))
+        if sys.argv[1:] == ['recovery-status']:
+            print(json.dumps({'ok': False, 'retryable': True,
+                              'error': f'暂时无法判断恢复状态，请稍后重试。{error}'}, ensure_ascii=True))
+        else:
+            print(json.dumps({'ok': False, 'error': str(error)}, ensure_ascii=True))
         sys.exit(1)
