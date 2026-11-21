@@ -89,3 +89,43 @@ def with_character_preview(row):
         folder, inventory = row['_folder']/'savedata', row['_inventory']
     public = {key: value for key, value in row.items() if not key.startswith('_')}
     return {**public, 'character_preview': character_preview(folder, inventory)}
+
+
+def generation(info, detail):
+    """Keep identity and content digest private to comparisons."""
+    state = ('missing' if info is None else 'empty' if info == EMPTY_SLOT else
+             'unreadable' if detail.get('issue') == 'unrecognized' else 'readable')
+    return {'state': state, **{k: detail.get(k) for k in ('name', 'level', 'echoes', 'issue')},
+            '_identity': detail.get('_identity'), '_sha': info['sha256'] if info else None}
+
+
+def public_generation(value):
+    return {k: v for k, v in value.items() if not k.startswith('_')}
+
+
+def display_slot(slot, primary, backup):
+    comparable = primary['_identity'] is not None and backup['_identity'] is not None
+    same = comparable and primary['_identity'] == backup['_identity']
+    fields = ('name', 'level', 'echoes')
+    complete = all(g[k] is not None for g in (primary, backup) for k in fields)
+    return {'slot': slot, 'primary': public_generation(primary), 'backup': public_generation(backup),
+            'identity_relation': ('same' if same else 'different') if comparable else 'unknown',
+            'summary_equal': all(primary[k] == backup[k] for k in fields) if same and complete else None,
+            'bytes_equal': primary['_sha'] == backup['_sha'] if primary['_sha'] and backup['_sha'] else None}
+
+
+def inventory_slots(savedata, inventory):
+    """Both generations of all ten slots, strictly bound to a plan's inventory."""
+    files = {k.casefold(): (k, v) for k, v in inventory['files'].items()} if inventory else {}
+    cache, slots = {}, []
+    for slot in range(10):
+        row = {}
+        for source, stem in (('primary', 'userdata'), ('backup', 'backup')):
+            name = f'1/CUSA00207/SPRJ0005/{stem}{slot:04}'
+            stored, info = files.get(name.casefold(), (name, None))
+            detail = _generation(savedata/stored, info, cache) or {}
+            if detail.get('issue') == 'read_failed':
+                raise transfer.OperationUnavailable('角色文件暂时无法按本次指纹读取，请重新检查。')
+            row[source] = generation(info, detail)
+        slots.append(row)
+    return slots

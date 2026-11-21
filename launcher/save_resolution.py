@@ -17,10 +17,11 @@ import stat
 import sys
 import uuid
 
-from backup_characters import character_preview, with_character_preview
+from backup_characters import character_preview, inventory_slots, with_character_preview
 import offline_aux
 import offline_save
 import save_backups as backups
+from save_effects import effect, option_effects
 import save_transfer as transfer
 import world_recovery as world
 
@@ -670,6 +671,8 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
                 option['description'] += note
     if needed and not options:
         summary += '请先保全原件并暂不启动。'
+    if options:
+        option_effects(options, root, contents['trees']['savedata'], source, ordinary, readable['readable_generations'])
     _guards(root)
     if _capture(root) != before:
         raise ValueError('检查期间存档或联机记录发生变化，请重新检查；尚未更换存档。')
@@ -694,17 +697,21 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
         original_binding = {k: (str(v) if isinstance(v, Path) else v) for k, v in ordinary.items()}
         for row in options:
             if row['id'] == 'reimport-ordinary':
-                row['digest'] = _sha(_bytes({'plan': public['digest'], 'ordinary': original_binding}))
+                row['digest'] = _sha(_bytes({'plan': public['digest'], 'ordinary': original_binding,
+                                             'effects': row['effects']}))
     return public, data
 
 
 def plan(root, selection_kind=None, selection_id=None, selection_fingerprint=None, ordinary_install=None):
     root = _root(root)
-    with transfer.installation_guard(root):
+    with transfer.installation_guard(root, read_only=True):
+        transfer.require_stopped('预览存档处理选择')
         if _exists(root/'.save-import.lock'):
+            interrupted = pending(root)
+            transfer.require_stopped('预览存档处理选择')
             return {'ok': True, 'needed': True, 'show_choices': True, 'summary': '上次选择未完成，可继续或先完整保全当前现场后放弃。',
                     'digest': None, 'options': [], 'characters': [], 'warnings': [],
-                    'selection': None, 'pending': pending(root)}
+                    'selection': None, 'pending': interrupted}
         public, data = _plan(root, selection_kind, selection_id, selection_fingerprint, ordinary_install)
         # Display only the bytes bound to this completed plan. Apply recomputes its original digest.
         if public['show_choices']:
@@ -715,6 +722,7 @@ def plan(root, selection_kind=None, selection_id=None, selection_fingerprint=Non
                 ordinary = data['ordinary']
                 public['import_view'] = {'character_preview': character_preview(ordinary['path'], ordinary['inventory']),
                                          'characters': ordinary['metadata']['characters']}
+        transfer.require_stopped('预览存档处理选择')
         return public
 
 
@@ -983,6 +991,37 @@ def _intent(root):
     return case, value, raw
 
 
+def _resume_effects(root, case, intent, raw):
+    action = intent['action']
+    live_folder = root/TREES['savedata']
+    if action == 'abandon':
+        current = inventory_slots(live_folder, intent['before']['trees']['savedata'])
+        after = current
+    else:
+        prefix = _actual(root, case)
+        current = inventory_slots(live_folder, prefix['live']['savedata'])
+        after = current
+        staged = prefix['stage']['savedata']
+        if action == 'restore-case' and intent['target']['savedata'] is None:
+            after = inventory_slots(live_folder, None)
+        if staged is not None and (action != 'restore-generation' or
+                                   intent['generation']['relative'] in staged['files']):
+            incoming = inventory_slots(case/'stage/savedata', staged)
+            if action == 'restore-generation':
+                slot = intent['generation']['slot']
+                after = list(current)
+                after[slot] = {**current[slot], 'primary': incoming[slot]['primary']}
+            else:
+                after = incoming
+    original = _readability(case/'original/savedata')
+    result = effect(action, current, after, original['readable_generations'])
+    if _intent(root)[2] != raw:
+        raise world.EvidenceChangedError('预览时上次处理记录发生变化，请重新检查。')
+    if action != 'abandon' and _actual(root, case) != prefix:
+        raise world.EvidenceChangedError('预览时上次处理进度发生变化，请重新检查。')
+    return result
+
+
 def pending(root):
     root = _root(root)
     with transfer.installation_guard(root):
@@ -991,13 +1030,14 @@ def pending(root):
         try:
             case, value, raw = _intent(root)
             _guards(root, own_lock=raw)
-            result.update(can_resume=True, fingerprint=_sha(raw), message=
+            effects = _resume_effects(root, case, value, raw)
+            result.update(can_resume=True, fingerprint=_sha(raw), resume_effects=effects, message=
                 '上次处理未完成，将继续原来的选择。已保全的版本不会重新挑选或合并。')
         except (ValueError, OSError, KeyError, TypeError) as error:
             result['message'] = error_message(error)
         try:
             choice, _ = _abandon_plan(root)
-            result.update(can_abandon=True, abandon_digest=choice['digest'],
+            result.update(can_abandon=True, abandon_digest=choice['digest'], abandon_effects=choice['effects'],
                           abandon_message=choice['description'], characters=choice['characters'])
         except (ValueError, OSError, KeyError, TypeError) as error:
             result['abandon_message'] = '当前不能安全放弃：' + error_message(error)
@@ -1016,13 +1056,15 @@ def _abandon_plan(root):
     _guards(root, own_lock=raw)
     before = _capture(root)
     readable = _readability(root/TREES['savedata'])
+    current = inventory_slots(root/TREES['savedata'], _content(before)['trees']['savedata'])
+    impact = effect('abandon', current, current, readable['readable_generations'])
     _guards(root, own_lock=raw)
     if _capture(root) != before or _control(lock) != (lock_info, raw):
         raise transfer.OperationUnavailable('检查期间当前进度或处理记录变化，请重新检查。')
     data = {'root': str(root), 'before': before, 'content': _content(before),
             'lock_info': lock_info, 'lock_raw': raw}
-    digest = _sha(_bytes({key: value for key, value in data.items() if key != 'lock_raw'}))
-    return {'digest': digest, 'characters': readable['characters'], 'description':
+    digest = _sha(_bytes({key: value for key, value in data.items() if key != 'lock_raw'} | {'effects': impact}))
+    return {'digest': digest, 'effects': impact, 'characters': readable['characters'], 'description':
             '先完整另存当前全部角色、联机记录和上次处理记录，再放弃上次未完成选择。不会恢复旧目标，也不改写当前角色。'
             '当前可能是中断时的混合版本，仍须重新检查；旧保全件不自动删除，但不能保证已经缺失的旧原件完整。'}, data
 
@@ -1365,7 +1407,8 @@ def apply(root, digest, option_id, *, confirmed=False, selection_kind=None, sele
                   'before': plan_data['content'], 'target': target,
                   'bound': plan_data['bound'] if option_id == 'accept-bound' else None,
                   'selection': plan_data['selection'], 'plan_digest': digest, 'confirmed': True,
-                  'text_version': RECORD_VERSION, 'choice': next(row for row in public['options'] if row['id'] == option_id),
+                  'text_version': RECORD_VERSION,
+                  'choice': {key: value for key, value in choice.items() if key != 'effects'},
                   'new_gate': None}
         if generation is not None:
             intent['generation'] = generation

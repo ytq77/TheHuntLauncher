@@ -1146,6 +1146,9 @@ if __name__ == '__main__':
         root = Path(__file__).resolve().parent
         if sys.argv[1:] == ['recovery-status']:
             result = recovery_status(root)
+        elif sys.argv[1:] == ['recovery-details']:
+            from recovery_details import recovery_details
+            result = recovery_details(root)
         elif sys.argv[1:] == ['review']:
             result = review(root)
         elif sys.argv[1:] == ['copy-evidence']:
@@ -1154,7 +1157,10 @@ if __name__ == '__main__':
             raise ValueError('请选择复核或复制证据。')
         print(json.dumps(result, ensure_ascii=True))
     except (OSError, ValueError, KeyError, TypeError) as error:
-        if sys.argv[1:] == ['recovery-status']:
+        if sys.argv[1:] == ['recovery-details']:
+            print(json.dumps({'ok': False, 'schema': 1, 'status': 'unknown', 'retryable': True,
+                              'error': f'暂时无法读取当前存档和恢复详情，请稍后重试。{error}'}, ensure_ascii=True))
+        elif sys.argv[1:] == ['recovery-status']:
             print(json.dumps({'ok': False, 'retryable': True,
                               'error': f'暂时无法判断恢复状态，请稍后重试。{error}'}, ensure_ascii=True))
         else:

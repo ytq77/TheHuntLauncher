@@ -500,13 +500,24 @@ def finish_game(user, token, seal, exit_code, started, log_name):
         user / 'world-recovery/latest-result.json',
         {'state': 'review-required' if recovery_error else 'waiting-backup' if waiting_backup else 'complete',
          'outcomes': outcomes, 'game_exit_code': exit_code}))
+    from recovery_details import exit_disk_progress
+    message = '游戏正常退出（返回码 0）。' if exit_code == 0 else f'游戏退出，返回码 {exit_code}。'
+    try:
+        progress = exit_disk_progress(ROOT, token)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        report_failure('exit progress display', error)
+        progress = ''
+    message += progress or '本次未能确认对应角色的磁盘进度。'
     if recovery_error:
-        state("error", f"游戏已退出（返回码 {exit_code}）。世界恢复需复核：{recovery_error} 请打开「联机存档检查」。")
+        state("error", message + f"个人世界仍待核验。{recovery_error} 请打开「联机存档检查」。")
         return exit_code or 1
-    state("exited" if exit_code == 0 else "error",
-          ("主存档已恢复。下次加载并正常保存后，将确认游戏备份。" if waiting_backup else
-           "本次狩猎已结束，世界记录核对完成。") if exit_code == 0 else
-          f"游戏退出，返回码 {exit_code}。请打开日志查看本次记录。")
+    if waiting_backup:
+        message += '主档世界记录已核验，等待游戏下次正常保存以确认备档。'
+    elif outcomes:
+        message += '本次待核的世界记录已完成核对。'
+    if exit_code != 0:
+        message += '请打开日志查看本次记录。'
+    state("exited" if exit_code == 0 else "error", message)
     return exit_code
 
 
