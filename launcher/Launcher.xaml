@@ -64,7 +64,10 @@
         <!-- Save recovery notice from world_recovery.py recovery-status; hidden while clear. -->
         <Border x:Name="HomeRecoveryNotice" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="#3A383D" Background="#18171A" Padding="16,12" Margin="0,0,0,14">
           <DockPanel>
-            <Button x:Name="HomeRecoveryAction" DockPanel.Dock="Right" Content="重试" VerticalAlignment="Center" Margin="16,0,0,0"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+              <Button x:Name="HomeRecoveryMore" Content="查看全部选择 ›" Style="{StaticResource LinkButton}" Visibility="Collapsed" VerticalAlignment="Center" Margin="0,0,14,0"/>
+              <Button x:Name="HomeRecoveryAction" Content="重试" VerticalAlignment="Center"/>
+            </StackPanel>
             <TextBlock x:Name="HomeRecoveryIcon" Text="&#xE946;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="#A8A397" VerticalAlignment="Top" Margin="0,2,12,0"/>
             <StackPanel VerticalAlignment="Center">
               <TextBlock x:Name="HomeRecoveryTitle" FontSize="14" Foreground="#E4DFD4"/>
@@ -115,11 +118,11 @@
             <StackPanel>
               <DockPanel Margin="0,0,0,4">
                 <Button x:Name="HomeSavesLink" DockPanel.Dock="Right" Content="管理存档 ›" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
-                <TextBlock Text="开玩前备份" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                <TextBlock Text="当前存档" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
                 <TextBlock x:Name="HomeSaveSource" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,3,12,0" TextTrimming="CharacterEllipsis"/>
               </DockPanel>
               <StackPanel x:Name="HomeCharacters"/>
-              <TextBlock x:Name="HomeSaveNote" Text="正在读取最近的备份…" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+              <TextBlock x:Name="HomeSaveNote" Text="正在读取当前存档…" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
             </StackPanel>
           </Border>
           </Grid>

@@ -45,7 +45,7 @@ public sealed class DesktopWindow
     string currentPage;
     string recoveryStatus="", recoveryError="";
     bool recoveryChecking;
-    Dictionary<string,object> homeSaveResult;
+    Dictionary<string,object> recoveryDetails;
     bool drawingBackups, resolutionApplying, resolutionNeeded, drawingTimeline, fillingHost;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
@@ -150,6 +150,7 @@ public sealed class DesktopWindow
         AsyncClick("Launch",Launch);
         AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
         AsyncClick("HomeRecoveryAction",RecoveryAction);
+        AsyncClick("HomeRecoveryMore",async delegate { Page("Save"); if(!Busy) await RefreshSaveBackups(); });
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
         Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
         Click("CreateShortcut",CreateDesktopShortcut);
@@ -205,7 +206,7 @@ public sealed class DesktopWindow
         try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
         catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         Window.Loaded+=async delegate {
-            timer.Start(); await RefreshRecoveryStatus(); await RefreshTrophies(); await RefreshHomeSaves();
+            timer.Start(); await RefreshRecoveryStatus(); await RefreshTrophies();
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
@@ -686,6 +687,7 @@ public sealed class DesktopWindow
             button.Click+=async delegate { try { await ApplySaveResolution(plan,captured,generation); } catch(Exception e) { Error(e.Message); } };
             panel.Children.Add(button);
             panel.Children.Add(Block(Str(option,"description")+(known ? "":"（此启动器不支持这个选项，请先更新。）"),12));
+            var effects=EffectsPanel(option); if(effects!=null) panel.Children.Add(effects);
         }
         SetBusy();
         if(Flag(plan,"show_choices")) { Window.UpdateLayout(); Get<Border>("SaveResolutionPanel").BringIntoView(); }
@@ -757,7 +759,8 @@ public sealed class DesktopWindow
         string characters=CharacterSummary(plan), summary=Str(plan,"summary"), id=Str(option,"id"), source="";
         if(id=="restore-all" || id=="restore-case") source=SourceCharacters(plan,"backup_view","将恢复的备份角色");
         if(id=="reimport-ordinary") source=SourceCharacters(plan,"import_view","将导入的原版角色");
-        return Str(option,"label")+"\n\n"+Str(option,"description")+
+        string effects=EffectsText(option);
+        return Str(option,"label")+"\n\n"+Str(option,"description")+(effects.Length>0 ? "\n\n"+effects:"")+
             (source.Length>0 ? "\n\n"+source:"")+
             (summary.Length>0 ? "\n\n当前版本检查："+summary:"")+
             (characters.Length>0 ? "\n"+characters:"")+
@@ -805,9 +808,11 @@ public sealed class DesktopWindow
         var item=Get<ComboBox>("SaveBackupList").SelectedItem as ComboBoxItem;
         var row=item==null ? null:item.Tag as Dictionary<string,object>;
         bool special=Str(row,"kind")=="resolution-before";
-        Get<Button>("RestoreSaveBackup").Content=special ? "换回处理前状态":"恢复到这个备份";
+        DateTimeOffset when; string at=DateTimeOffset.TryParse(Str(row,"time"),out when) ? Friendly(when):"";
+        Get<Button>("RestoreSaveBackup").Content=special ? "撤销这次处理"+(at.Length>0 ? "（回到 "+at+" 处理前）":""):
+            (at.Length>0 ? "恢复到 "+at+(Str(row,"kind")=="pre-restore" ? " 恢复前":" 启动前"):"恢复到这个备份");
         string characters=CharacterSummary(row);
-        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n换回后需重新选择处理方式，不会自动启动游戏。":characters;
+        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n撤销后换回处理前的整套角色和联机记录，当时的待复核事项也会回来，需要重新选择。不会自动启动游戏。":characters;
         int drawn=DrawBackupTable(row);
         Get<TextBlock>("SelectedSaveBackup").Visibility=special || drawn==0 || Str(row,"readability_note").Length>0 ? Visibility.Visible:Visibility.Collapsed;
         drawingTimeline=true;
@@ -815,7 +820,7 @@ public sealed class DesktopWindow
     }
     static string TimelineTitle(Dictionary<string,object> row) {
         string kind=Str(row,"kind");
-        return kind=="launch" ? "游戏启动前":kind=="pre-restore" ? "恢复前":kind=="resolution-before" ? (Str(row,"label").Length>0 ? Str(row,"label"):"处理前"):"未知类型（不可恢复）";
+        return kind=="launch" ? "游戏启动前":kind=="pre-restore" ? "恢复前":kind=="resolution-before" ? "可撤销 · "+(Str(row,"label").Length>0 ? Str(row,"label"):"处理前"):"未知类型（不可恢复）";
     }
     static string BackupKind(Dictionary<string,object> row) {
         string kind=Str(row,"kind");
@@ -902,30 +907,67 @@ public sealed class DesktopWindow
     // Home "角色" card: list of verified backups; shows the newest launch/pre-restore snapshot.
     // Startup must stay read-only. With an import/restore lock present, save_backups list may
     // finish the interrupted restore, so leave that to the Save page and skip the read here.
-    // Home recovery notice. world_recovery.py recovery-status is read-only and answers
-    // {ok, status: clear|safe|blocked}; any failure means "not checked", never "damaged".
-    // Launch still rechecks on its own, so this only decides what the home page suggests.
+    // Home save status from world_recovery.py recovery-details (read-only, schema 1):
+    // {ok, status: clear|safe|blocked, reasons[{code,state,slot,message}],
+    //  slots[10]{slot, primary, backup, identity_relation, summary_equal}, current_action|null}.
+    // Any failure means "not checked", never "damaged". Launch still rechecks on its own.
     async Task RefreshRecoveryStatus() {
         if(closed || Busy || recoveryChecking || GameRunning()) return; // The query requires the game to be closed.
         recoveryChecking=true;
         try {
-            var result=await Request("world_recovery.py",null,"recovery-status");
+            var result=await Request("world_recovery.py",null,"recovery-details");
             string status=Str(result,"status");
             recoveryStatus=status=="clear" || status=="safe" || status=="blocked" ? status:"unknown";
             recoveryError=recoveryStatus=="unknown" ? "未知的检查结果："+status:"";
-        } catch(Exception e) { recoveryStatus="unknown"; recoveryError=e.Message; }
+            recoveryDetails=recoveryStatus=="unknown" ? null:result;
+        } catch(Exception e) { recoveryStatus="unknown"; recoveryError=e.Message; recoveryDetails=null; }
         finally { recoveryChecking=false; }
-        if(!closed) DrawRecoveryNotice();
+        if(!closed) { DrawRecoveryNotice(); DrawCurrentSave(); }
+    }
+    static Dictionary<string,object> Child(Dictionary<string,object> row,string key) {
+        object value; return row!=null && row.TryGetValue(key,out value) ? value as Dictionary<string,object>:null;
+    }
+    static long? Whole(Dictionary<string,object> row,string key) {
+        object value; if(row==null || !row.TryGetValue(key,out value) || value==null) return null;
+        try { return Convert.ToInt64(value); } catch(FormatException) { return null; } catch(InvalidCastException) { return null; }
+    }
+    static IEnumerable<string> Texts(Dictionary<string,object> row,string key) {
+        object value; if(row==null || !row.TryGetValue(key,out value) || value==null || value is string) return new string[0];
+        var list=value as System.Collections.IEnumerable; return list==null ? new string[0]:list.Cast<object>().Select(x=>Convert.ToString(x)).Where(x=>x.Length>0).ToArray();
+    }
+    static bool InUse(Dictionary<string,object> generation) { string state=Str(generation,"state"); return state=="readable" || state=="unreadable"; }
+    static string SlotName(int slot,Dictionary<string,object> generation) {
+        string name=Str(generation,"name"); return "槽位 "+(slot+1)+(name.Length>0 ? " · "+name:"");
+    }
+    Dictionary<string,object> CurrentAction() {
+        var action=Child(recoveryDetails,"current_action"); string id=Str(action,"id");
+        return id=="accept-bound" || id=="use-current" ? action:null;
     }
     void DrawRecoveryNotice() {
-        var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var icon=Get<TextBlock>("HomeRecoveryIcon");
-        if(homeSaveResult!=null) DrawHomeSaves(homeSaveResult); // the card hides backup numbers while blocked
+        var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var more=Get<Button>("HomeRecoveryMore"); var icon=Get<TextBlock>("HomeRecoveryIcon");
         if(recoveryStatus=="clear" || recoveryStatus.Length==0) { notice.Visibility=Visibility.Collapsed; return; }
         bool safe=recoveryStatus=="safe", blocked=recoveryStatus=="blocked";
-        Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复可以继续核验":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
-        Get<TextBlock>("HomeRecoveryText").Text=safe ? "启动时会重新核验存档。若仍提示等待备档，请用同一角色正常保存并退出。":
-            blocked ? "处理完成前不能开始游戏，具体原因见存档页。":"这不代表存档有问题，可以稍后重试。";
-        action.Content=safe ? "核验并启动":blocked ? "去存档页处理":"重试";
+        var reasons=Rows(recoveryDetails,"reasons").ToArray(); var current=CurrentAction();
+        bool waiting=reasons.Any(r=>Str(r,"state")=="waiting-backup");
+        string title, text;
+        if(safe) {
+            title=waiting ? "等待游戏更新备档":"存档恢复可以继续核验";
+            text=waiting ? "可以继续玩。用同一角色正常保存并退出后，游戏会更新备档，之后自动归档。":"开始游戏时会重新核验并自动归档，不需要你选择。";
+        } else if(blocked) {
+            title="开始游戏前需要确认";
+            var lines=reasons.Where(r=>Str(r,"state")!="verified" && Str(r,"state")!="waiting-backup").Select(r=>{
+                int slot; return (Int32.TryParse(Str(r,"slot"),out slot) && slot>=0 && slot<10 ? "槽位 "+(slot+1)+"：":"")+Str(r,"message"); }).Distinct().ToList();
+            if(lines.Count==0) lines.Add("处理完成前不能开始游戏，具体原因见存档页。");
+            if(Str(current,"id")=="accept-bound") lines.Add("可以保留这个角色现在的进度继续玩，代价是放弃这次没核清的世界变化；确认前会列出具体影响。");
+            else if(Str(current,"id")=="use-current") lines.Add("可以选用当前存档，继续启动检查；确认前会列出具体影响。");
+            text=String.Join("\n",lines);
+        } else {
+            title="暂时无法检查当前存档";
+            text="可能是游戏正在运行或文件正在变化，这不代表存档有问题，可以重试。";
+        }
+        Get<TextBlock>("HomeRecoveryTitle").Text=title; Get<TextBlock>("HomeRecoveryText").Text=text;
+        action.Content=safe ? "核验并启动":blocked ? (current==null ? "去存档页处理":Str(current,"id")=="accept-bound" ? "保留当前进度…":"使用当前存档…"):"重试";
+        more.Visibility=blocked && current!=null ? Visibility.Visible:Visibility.Collapsed;
         notice.ToolTip=recoveryStatus=="unknown" && recoveryError.Length>0 ? recoveryError:null;
         icon.Text=safe ? "":blocked ? "":"";
         icon.Foreground=Brush(safe ? "#E0B66E":blocked ? "#D58A80":"#A8A397");
@@ -933,57 +975,103 @@ public sealed class DesktopWindow
         notice.Background=Brush(safe ? "#1D1A16":blocked ? "#1E1716":"#18171A");
         notice.Visibility=Visibility.Visible;
     }
+    // The quick action reuses the Save page plan, confirmation (with effects) and apply path.
     async Task RecoveryAction() {
-        if(recoveryStatus=="safe") await Launch();
-        else if(recoveryStatus=="blocked") { Page("Save"); if(!Busy) await RefreshSaveBackups(); }
-        else await RefreshRecoveryStatus();
-    }
-    async Task RefreshHomeSaves() {
-        if(File.Exists(PathAt(".save-import.lock"))) {
-            Get<StackPanel>("HomeCharacters").Children.Clear(); Get<TextBlock>("HomeSaveSource").Text="";
-            Get<TextBlock>("HomeSaveNote").Text="有未完成的存档导入或恢复，请打开「存档」页处理。"; return;
-        }
-        try { DrawHomeSaves(await Request("save_backups.py",Map("action","list"),"")); }
-        catch { if(!closed) Get<TextBlock>("HomeSaveNote").Text="暂时无法读取备份；打开「存档」页可重新检查。"; }
+        if(recoveryStatus=="safe") { await Launch(); return; }
+        if(recoveryStatus!="blocked") { await RefreshRecoveryStatus(); return; }
+        var current=CurrentAction();
+        Page("Save"); if(Busy) return;
+        await RefreshSaveBackups();
+        if(current==null) return;
+        var plan=resolutionPlan;
+        var option=plan==null ? null:Rows(plan,"options").FirstOrDefault(o=>Str(o,"id")==Str(current,"id"));
+        if(option==null || !Flag(plan,"show_choices")) { Say("当前存档的处理方式已变化，请在存档页查看。"); return; }
+        await ApplySaveResolution(plan,option,resolutionGeneration);
     }
     static string Friendly(DateTimeOffset time) {
         var local=time.ToLocalTime().DateTime; int days=(DateTime.Today-local.Date).Days;
         return (days==0 ? "今天 ":days==1 ? "昨天 ":local.ToString("MM-dd "))+local.ToString("HH:mm");
     }
-    // The card shows the newest launch/pre-restore BACKUP, i.e. progress before the last
-    // session, never the current save. While something blocks the save it shows no numbers,
-    // so an old backup is not mistaken for the player's current progress.
-    void DrawHomeSaves(Dictionary<string,object> result) {
+    // "当前存档" card: both generations of every slot in use, as read from disk now.
+    void DrawCurrentSave() {
         if(closed) return;
-        homeSaveResult=result;
         var panel=Get<StackPanel>("HomeCharacters"); panel.Children.Clear();
-        if(recoveryStatus=="blocked") {
-            Get<TextBlock>("HomeSaveSource").Text="";
-            Get<TextBlock>("HomeSaveNote").Text="存档有待确认的事项。为免误会，这里先不显示开玩前备份里的旧进度；当前进度请到存档页查看。";
+        var note=Get<TextBlock>("HomeSaveNote"); var source=Get<TextBlock>("HomeSaveSource");
+        if(recoveryDetails==null) {
+            source.Text=""; note.Visibility=Visibility.Visible;
+            note.Text=recoveryStatus=="unknown" ? "暂时无法读取当前存档，这不代表存档有问题，可以在上方重试。":"正在读取当前存档…";
             return;
         }
-        Dictionary<string,object> latest=null; DateTimeOffset latestTime=DateTimeOffset.MinValue;
-        foreach(var row in Rows(result,"backups")) {
-            string kind=Str(row,"kind"); DateTimeOffset time;
-            if((kind=="launch" || kind=="pre-restore") && DateTimeOffset.TryParse(Str(row,"time"),out time) && time>latestTime) { latest=row; latestTime=time; }
-        }
-        var note=Get<TextBlock>("HomeSaveNote"); var source=Get<TextBlock>("HomeSaveSource");
-        if(latest==null) { source.Text=""; note.Text="还没有备份。存档非空时，启动游戏前会自动备份。"; return; }
-        source.Text=Friendly(latestTime)+(Str(latest,"kind")=="launch" ? " 开玩前自动备份":" 恢复前自动备份")+" · 不含之后的游戏进度";
-        var all=Rows(latest,"character_preview").ToArray();
-        var roles=all.Where(r=>Str(r,"source")!="backup" || !all.Any(o=>Str(o,"slot")==Str(r,"slot") && Str(o,"source")!="backup")).ToArray();
+        source.Text="读取于 "+DateTime.Now.ToString("HH:mm");
+        var rows=Rows(recoveryDetails,"slots").Where(s=>InUse(Child(s,"primary")) || InUse(Child(s,"backup"))).ToArray();
         Func<string,double,string,int,TextBlock> cell=(text,size,color,column)=>{ var t=new TextBlock {Text=text,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis}; Grid.SetColumn(t,column); return t; };
-        foreach(var r in roles.Take(4)) {
-            var g=new Grid(); foreach(var w in new [] {64.0,0,90,120}) g.ColumnDefinitions.Add(new ColumnDefinition {Width=w==0 ? new GridLength(1,GridUnitType.Star):new GridLength(w)});
-            string issue=Str(r,"issue");
-            g.Children.Add(cell("槽位 "+SlotLabel(Str(r,"slot")),12,"#948F84",0));
-            var name=cell(issue=="unrecognized" ? "无法识别":issue=="read_failed" ? "读取失败":Str(r,"name").Length>0 ? Str(r,"name"):"姓名未识别",15,issue.Length>0 && issue!="name_unavailable" ? "#D9BE8A":"#EDE6D6",1);
+        foreach(var row in rows.Take(5)) {
+            var primary=Child(row,"primary"); var backup=Child(row,"backup"); string state=Str(primary,"state");
+            var g=new Grid(); foreach(var w in new [] {64.0,0,64,110,124}) g.ColumnDefinitions.Add(new ColumnDefinition {Width=w==0 ? new GridLength(1,GridUnitType.Star):new GridLength(w)});
+            int slot; Int32.TryParse(Str(row,"slot"),out slot);
+            g.Children.Add(cell("槽位 "+(slot+1),12,"#948F84",0));
+            var name=cell(state=="readable" ? (Str(primary,"name").Length>0 ? Str(primary,"name"):"姓名未识别"):state=="unreadable" ? "主档读不出":"没有主档",15,state=="readable" ? "#EDE6D6":"#D9BE8A",1);
             name.FontFamily=(FontFamily)Window.FindResource("DisplayFont"); g.Children.Add(name);
-            g.Children.Add(cell(Str(r,"level").Length>0 ? "Lv "+Str(r,"level"):"—",12.5,"#C9C3B6",2));
-            g.Children.Add(cell(Str(r,"echoes").Length>0 ? "回响 "+Number(r,"echoes"):"",12.5,"#C9C3B6",3));
+            var level=Whole(primary,"level"); var echoes=Whole(primary,"echoes");
+            g.Children.Add(cell(level.HasValue ? "Lv "+level.Value:"—",12.5,"#C9C3B6",2));
+            g.Children.Add(cell(echoes.HasValue ? "回响 "+echoes.Value.ToString("N0"):"—",12.5,"#C9C3B6",3));
+            string bstate=Str(backup,"state"), relation=Str(row,"identity_relation"), note2, color="#E0B66E";
+            if(bstate=="missing" || bstate=="empty") note2="没有游戏备档";
+            else if(bstate=="unreadable") note2="备档读不出";
+            else if(relation=="different") note2="备档是另一个角色";
+            else if(Flag(row,"summary_equal")) { note2="主备一致"; color="#8FAE8A"; }
+            else if(relation=="same") { var bl=Whole(backup,"level"); var be=Whole(backup,"echoes"); note2="备档 "+(bl.HasValue ? "Lv "+bl.Value:"—")+" · "+(be.HasValue ? be.Value.ToString("N0"):"—"); }
+            else { note2="备档未能比较"; color="#A8A397"; }
+            g.Children.Add(cell(note2,12,color,4));
             panel.Children.Add(new Border {Child=g,BorderBrush=Brush("#29272C"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(0,8,0,8)});
         }
-        note.Text=roles.Length==0 ? "这份备份中没有可显示的角色。":(roles.Length>4 ? "另有 "+(roles.Length-4)+" 名角色。":"")+"这是开玩前自动备份里的进度。之后在游戏里获得的进度保存在当前存档中，不会显示在这里。";
+        note.Text=rows.Length==0 ? "还没有角色存档。":rows.Length>5 ? "另有 "+(rows.Length-5)+" 个槽位，在存档页查看。":"";
+        note.Visibility=note.Text.Length>0 ? Visibility.Visible:Visibility.Collapsed;
+    }
+    // effects (save_effects.py): keeps[], loses[], reversible{available,scope}, world_after,
+    // roles[{slot, before{primary,backup}, after{primary,backup}, primary{state,level_delta,echoes_delta}, backup{...}}]
+    static List<string> RoleChanges(Dictionary<string,object> effects) {
+        var lines=new List<string>();
+        foreach(var role in Rows(effects,"roles")) {
+            int slot; Int32.TryParse(Str(role,"slot"),out slot);
+            var before=Child(Child(role,"before"),"primary"); var after=Child(Child(role,"after"),"primary"); var change=Child(role,"primary");
+            if(!InUse(before) && !InUse(after)) continue;
+            string state=Str(change,"state");
+            if(state=="comparable") {
+                long? b=Whole(before,"echoes"), a=Whole(after,"echoes"), d=Whole(change,"echoes_delta");
+                long? bl=Whole(before,"level"), al=Whole(after,"level"), dl=Whole(change,"level_delta");
+                string echoes=d==0 ? "回响 "+a.Value.ToString("N0")+"（不变）":"回响 "+b.Value.ToString("N0")+" → "+a.Value.ToString("N0")+"（"+(d>0 ? "多 "+d.Value.ToString("N0"):"少 "+(-d.Value).ToString("N0"))+"）";
+                string level=dl==0 ? "":"，等级 "+bl.Value+" → "+al.Value;
+                lines.Add(SlotName(slot,before)+"："+echoes+level);
+            } else if(state=="different-character") lines.Add(SlotName(slot,before)+"：会换成另一个角色"+(Str(after,"name").Length>0 ? "（"+Str(after,"name")+"）":""));
+            else if(state=="absent") lines.Add(InUse(after) ? SlotName(slot,after)+"：会出现在当前存档中":SlotName(slot,before)+"：会从当前存档中移除");
+            else lines.Add(SlotName(slot,InUse(before) ? before:after)+"：无法确认是否同一角色，不显示数值变化");
+        }
+        return lines;
+    }
+    static string EffectsText(Dictionary<string,object> option) {
+        var effects=Child(option,"effects"); if(effects==null) return "";
+        var keeps=Texts(effects,"keeps").ToArray(); var loses=Texts(effects,"loses").ToArray(); var undo=Child(effects,"reversible");
+        var roles=RoleChanges(effects);
+        return "会保留："+(keeps.Length>0 ? String.Join("；",keeps):"—")+
+            "\n会失去："+(loses.Length>0 ? String.Join("；",loses):"无")+
+            "\n"+(Flag(undo,"available") ? "可以撤销：":"不能撤销：")+Str(undo,"scope")+
+            "\n角色变化："+(roles.Count>0 ? "\n  "+String.Join("\n  ",roles):"角色数值不变");
+    }
+    FrameworkElement EffectsPanel(Dictionary<string,object> option) {
+        var effects=Child(option,"effects"); if(effects==null) return null;
+        var stack=new StackPanel {Margin=new Thickness(14,4,0,12)};
+        Action<string,string,string> line=(label,text,color)=>{
+            var t=new TextBlock {TextWrapping=TextWrapping.Wrap,FontSize=12,LineHeight=20,Margin=new Thickness(0,1,0,0)};
+            t.Inlines.Add(new System.Windows.Documents.Run(label) {Foreground=Brush("#948F84")});
+            t.Inlines.Add(new System.Windows.Documents.Run(text) {Foreground=Brush(color)}); stack.Children.Add(t); };
+        var keeps=Texts(effects,"keeps").ToArray(); var loses=Texts(effects,"loses").ToArray(); var undo=Child(effects,"reversible");
+        line("保留  ",keeps.Length>0 ? String.Join("；",keeps):"—","#C9C3B6");
+        line("失去  ",loses.Length>0 ? String.Join("；",loses):"无",loses.Length>0 ? "#D9A59C":"#C9C3B6");
+        line(Flag(undo,"available") ? "可撤销  ":"不可撤销  ",Str(undo,"scope"),"#A8A397");
+        var roles=RoleChanges(effects);
+        line("角色  ",roles.Count>0 ? String.Join("\n",roles):"角色数值不变","#E4DFD4");
+        return stack;
     }
     void DrawHomeTrophies(Dictionary<string,object>[] rows,int count) {
         Get<ProgressBar>("HomeTrophyProgress").Value=count;
@@ -1005,7 +1093,6 @@ public sealed class DesktopWindow
         }
     }
     void ShowSaveBackups(Dictionary<string,object> result) {
-        DrawHomeSaves(result);
         var list=Get<ComboBox>("SaveBackupList"); string selected="";
         var previous=list.SelectedItem as ComboBoxItem;
         if(previous!=null) selected=Str(previous.Tag as Dictionary<string,object>,"id");
