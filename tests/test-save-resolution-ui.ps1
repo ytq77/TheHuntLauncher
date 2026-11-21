@@ -45,6 +45,13 @@ public static class ResolutionTestDialog {
 }
 '@
 function Assert($value,[string]$message) { if(-not $value) { throw $message } }
+function SelectedBackupTime($window) {
+    $selected=$window.FindName('SaveBackupList').SelectedItem.Tag
+    $local=[DateTimeOffset]::Parse([string]$selected['time']).LocalDateTime
+    $days=([DateTime]::Today-$local.Date).Days
+    $day=if ($days -eq 0) { '今天' } elseif ($days -eq 1) { '昨天' } else { $local.ToString('MM-dd') }
+    return $day+' '+$local.ToString('HH:mm')
+}
 function Copy-FixtureReaders([string]$destination) {
     foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'launcher') -Filter '*.py') { Copy-Item -LiteralPath $file.FullName -Destination $destination }
     if($CandidateRoot) {
@@ -232,15 +239,16 @@ try {
         Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106') 'Launch preview changed the release name or duplicated equal progress'
         $list.SelectedIndex=1
         Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 旧月 · 等级 16 · 回响 0') 'Pre-restore preview retained the previous character or lost zero echoes'
+        Assert ($window.FindName('RestoreSaveBackup').Content -eq ('恢复到 '+(SelectedBackupTime $window)+' 恢复前')) 'Pre-restore action lost its source time'
         $list.SelectedIndex=2
-        Assert ($window.FindName('RestoreSaveBackup').Content -eq '换回处理前状态') 'Sealed backup lost its dedicated restore action'
+        Assert ($window.FindName('RestoreSaveBackup').Content -eq ('撤销这次处理（回到 '+(SelectedBackupTime $window)+' 处理前）')) 'Sealed backup lost its dedicated restore action'
         Assert ($details.Text -like '*主档与备档 · 封存 · 等级 41 · 回响 777*' -and $details.Text -notlike '*角色槽位 3 ·*' -and $details.Text -notlike '*当前 ·*') 'Sealed detail showed an empty slot or the active character'
         Assert ($details.Text -like '*角色槽位 2 · 主档 · 猎人甲*角色槽位 2 · 备档 · 晓*角色槽位 4 · 备档 · 晓*') 'Different generations or the backup-only slot disappeared'
         Assert ($details.Text -like '*角色槽位 7 · 主档 · 角色数据无法识别*角色槽位 7 · 备档 · 晓*' -and $details.Text -like '*角色槽位 9 · 主档 · 猎人甲 · 等级、回响未识别*') 'Occupied unreadable slots were hidden'
         $list.SelectedIndex=4
         Assert ($details.Text -eq '没有已使用的角色槽位。') 'Empty backup retained stale character lines'
         $list.SelectedIndex=0
-        Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106' -and $window.FindName('RestoreSaveBackup').Content -eq '恢复到这个备份') 'Switching back failed to restore the ordinary view'
+        Assert ($details.Text -eq '角色槽位 1 · 主档与备档 · 猎人甲 · 等级 33 · 回响 106' -and $window.FindName('RestoreSaveBackup').Content -eq ('恢复到 '+(SelectedBackupTime $window)+' 启动前')) 'Switching back failed to restore the ordinary view'
         $proofPlan=$fromSaves['explicit_plan']
         Invoke-Private $desktop 'ShowSaveResolution' @($proofPlan,(Field $desktop 'resolutionGeneration'))
         $panes=$window.FindName('SaveResolutionCharacters').Text -split '当前存档中的角色'
@@ -341,7 +349,7 @@ print('fixture ready, production validation passed; no game or process-check stu
             if($item.Tag['readability_note']) { Assert ($item.Content.Contains($item.Tag['readability_note'])) 'Production special row hid its backend readability note' }
         }
         $window.FindName('SaveBackupList').SelectedItem=$special[0]
-        Assert ($window.FindName('RestoreSaveBackup').Content -eq '换回处理前状态') 'Special row used ordinary restore wording'
+        Assert ($window.FindName('RestoreSaveBackup').Content -eq ('撤销这次处理（回到 '+(SelectedBackupTime $window)+' 处理前）')) 'Special row used ordinary restore wording'
         if($CandidateRoot) {
             $setCurrent=@'
 import sys
