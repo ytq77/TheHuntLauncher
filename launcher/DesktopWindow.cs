@@ -893,8 +893,14 @@ public sealed class DesktopWindow
         ordinary["warnings"]=Warnings(ordinary).Concat(Warnings(special)).ToArray();
         ShowSaveBackups(ordinary);
     }
-    // Home "角色" card: read-only list of verified backups; shows the newest launch/pre-restore snapshot.
+    // Home "角色" card: list of verified backups; shows the newest launch/pre-restore snapshot.
+    // Startup must stay read-only. With an import/restore lock present, save_backups list may
+    // finish the interrupted restore, so leave that to the Save page and skip the read here.
     async Task RefreshHomeSaves() {
+        if(File.Exists(PathAt(".save-import.lock"))) {
+            Get<StackPanel>("HomeCharacters").Children.Clear(); Get<TextBlock>("HomeSaveSource").Text="";
+            Get<TextBlock>("HomeSaveNote").Text="有未完成的存档导入或恢复，请打开「存档」页处理。"; return;
+        }
         try { DrawHomeSaves(await Request("save_backups.py",Map("action","list"),"")); }
         catch { if(!closed) Get<TextBlock>("HomeSaveNote").Text="暂时无法读取备份；打开「存档」页可重新检查。"; }
     }
