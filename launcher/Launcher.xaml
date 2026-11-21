@@ -60,6 +60,18 @@
           </Grid>
         </Border>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+        <!-- Save recovery notice from world_recovery.py recovery-status; hidden while clear. -->
+        <Border x:Name="HomeRecoveryNotice" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="#3A383D" Background="#18171A" Padding="16,12" Margin="0,0,0,14">
+          <DockPanel>
+            <Button x:Name="HomeRecoveryAction" DockPanel.Dock="Right" Content="重试" VerticalAlignment="Center" Margin="16,0,0,0"/>
+            <TextBlock x:Name="HomeRecoveryIcon" Text="&#xE946;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="#A8A397" VerticalAlignment="Top" Margin="0,2,12,0"/>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock x:Name="HomeRecoveryTitle" FontSize="14" Foreground="#E4DFD4"/>
+              <TextBlock x:Name="HomeRecoveryText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+            </StackPanel>
+          </DockPanel>
+        </Border>
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition Width="1.6*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
           <Grid>
@@ -138,6 +150,7 @@
             </Border>
           </Grid>
         </Grid>
+        </StackPanel>
         </ScrollViewer>
       </Grid>
 

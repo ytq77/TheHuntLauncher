@@ -43,6 +43,8 @@ public sealed class DesktopWindow
     int noticeSequence;
     int resolutionGeneration;
     string currentPage;
+    string recoveryStatus="", recoveryError="";
+    bool recoveryChecking;
     bool drawingBackups, resolutionApplying, resolutionNeeded, drawingTimeline, fillingHost;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
@@ -117,7 +119,7 @@ public sealed class DesktopWindow
         if(File.Exists(PathAt("BUILD-INFO.json"))) version=Str(ReadJson(PathAt("BUILD-INFO.json")),"version");
         foreach(string n in new [] {"Home","Settings","Feature","Server","Save","Trophy"}) {
             string page=n;
-            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
+            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Home") await RefreshRecoveryStatus(); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
         }
         Click("HomeTrophies",delegate { Page("Trophy"); RefreshInBackground(); });
         Click("HomeFeatureLink",delegate { Page("Feature"); });
@@ -146,6 +148,7 @@ public sealed class DesktopWindow
         });
         AsyncClick("Launch",Launch);
         AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
+        AsyncClick("HomeRecoveryAction",RecoveryAction);
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
         Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
         Click("CreateShortcut",CreateDesktopShortcut);
@@ -201,7 +204,7 @@ public sealed class DesktopWindow
         try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
         catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         Window.Loaded+=async delegate {
-            timer.Start(); await RefreshTrophies(); await RefreshHomeSaves();
+            timer.Start(); await RefreshRecoveryStatus(); await RefreshTrophies(); await RefreshHomeSaves();
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
@@ -356,6 +359,7 @@ public sealed class DesktopWindow
     void SetBusy() {
         foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
+        Get<Button>("HomeRecoveryAction").IsEnabled=!Busy;
         Get<Button>("PickSaveFolder").IsEnabled=!Busy;
         Get<Button>("ClearSaveFolder").IsEnabled=!Busy;
         Get<Button>("RefreshSaveBackups").IsEnabled=!Busy;
@@ -500,6 +504,7 @@ public sealed class DesktopWindow
         finally {
             operation=false; SetBusy(); Get<Button>("Launch").Content="开始游戏  →";
         }
+        await RefreshRecoveryStatus();
         // The production worker can discover an anomaly after the UI's lightweight check.
         if(resolutionRequired || File.Exists(PathAt(@"data\user\save-resolution-review.json")) || File.Exists(PathAt(".save-import.lock"))) {
             Page("Save"); await RefreshSaveBackups();
@@ -896,6 +901,41 @@ public sealed class DesktopWindow
     // Home "角色" card: list of verified backups; shows the newest launch/pre-restore snapshot.
     // Startup must stay read-only. With an import/restore lock present, save_backups list may
     // finish the interrupted restore, so leave that to the Save page and skip the read here.
+    // Home recovery notice. world_recovery.py recovery-status is read-only and answers
+    // {ok, status: clear|safe|blocked}; any failure means "not checked", never "damaged".
+    // Launch still rechecks on its own, so this only decides what the home page suggests.
+    async Task RefreshRecoveryStatus() {
+        if(closed || Busy || recoveryChecking) return; // The query requires the game to be closed.
+        recoveryChecking=true;
+        try {
+            var result=await Request("world_recovery.py",null,"recovery-status");
+            string status=Str(result,"status");
+            recoveryStatus=status=="clear" || status=="safe" || status=="blocked" ? status:"unknown";
+            recoveryError=recoveryStatus=="unknown" ? "未知的检查结果："+status:"";
+        } catch(Exception e) { recoveryStatus="unknown"; recoveryError=e.Message; }
+        finally { recoveryChecking=false; }
+        if(!closed) DrawRecoveryNotice();
+    }
+    void DrawRecoveryNotice() {
+        var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var icon=Get<TextBlock>("HomeRecoveryIcon");
+        if(recoveryStatus=="clear" || recoveryStatus.Length==0) { notice.Visibility=Visibility.Collapsed; return; }
+        bool safe=recoveryStatus=="safe", blocked=recoveryStatus=="blocked";
+        Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复还差最后一步":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
+        Get<TextBlock>("HomeRecoveryText").Text=safe ? "点「核验并启动」进入游戏，用同一角色正常保存并退出，即可完成恢复。":
+            blocked ? "处理完成前不能开始游戏，具体原因见存档页。":"这不代表存档有问题，可以稍后重试。";
+        action.Content=safe ? "核验并启动":blocked ? "去存档页处理":"重试";
+        notice.ToolTip=recoveryStatus=="unknown" && recoveryError.Length>0 ? recoveryError:null;
+        icon.Text=safe ? "":blocked ? "":"";
+        icon.Foreground=Brush(safe ? "#E0B66E":blocked ? "#D58A80":"#A8A397");
+        notice.BorderBrush=Brush(safe ? "#6E5A38":blocked ? "#6E4A44":"#3A383D");
+        notice.Background=Brush(safe ? "#1D1A16":blocked ? "#1E1716":"#18171A");
+        notice.Visibility=Visibility.Visible;
+    }
+    async Task RecoveryAction() {
+        if(recoveryStatus=="safe") await Launch();
+        else if(recoveryStatus=="blocked") { Page("Save"); if(!Busy) await RefreshSaveBackups(); }
+        else await RefreshRecoveryStatus();
+    }
     async Task RefreshHomeSaves() {
         if(File.Exists(PathAt(".save-import.lock"))) {
             Get<StackPanel>("HomeCharacters").Children.Clear(); Get<TextBlock>("HomeSaveSource").Text="";
