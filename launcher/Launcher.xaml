@@ -115,7 +115,7 @@
             <StackPanel>
               <DockPanel Margin="0,0,0,4">
                 <Button x:Name="HomeSavesLink" DockPanel.Dock="Right" Content="管理存档 ›" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
-                <TextBlock Text="角色" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                <TextBlock Text="开玩前备份" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
                 <TextBlock x:Name="HomeSaveSource" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,3,12,0" TextTrimming="CharacterEllipsis"/>
               </DockPanel>
               <StackPanel x:Name="HomeCharacters"/>

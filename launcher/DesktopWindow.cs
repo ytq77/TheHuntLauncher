@@ -45,6 +45,7 @@ public sealed class DesktopWindow
     string currentPage;
     string recoveryStatus="", recoveryError="";
     bool recoveryChecking;
+    Dictionary<string,object> homeSaveResult;
     bool drawingBackups, resolutionApplying, resolutionNeeded, drawingTimeline, fillingHost;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
@@ -918,6 +919,7 @@ public sealed class DesktopWindow
     }
     void DrawRecoveryNotice() {
         var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var icon=Get<TextBlock>("HomeRecoveryIcon");
+        if(homeSaveResult!=null) DrawHomeSaves(homeSaveResult); // the card hides backup numbers while blocked
         if(recoveryStatus=="clear" || recoveryStatus.Length==0) { notice.Visibility=Visibility.Collapsed; return; }
         bool safe=recoveryStatus=="safe", blocked=recoveryStatus=="blocked";
         Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复可以继续核验":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
@@ -948,9 +950,18 @@ public sealed class DesktopWindow
         var local=time.ToLocalTime().DateTime; int days=(DateTime.Today-local.Date).Days;
         return (days==0 ? "今天 ":days==1 ? "昨天 ":local.ToString("MM-dd "))+local.ToString("HH:mm");
     }
+    // The card shows the newest launch/pre-restore BACKUP, i.e. progress before the last
+    // session, never the current save. While something blocks the save it shows no numbers,
+    // so an old backup is not mistaken for the player's current progress.
     void DrawHomeSaves(Dictionary<string,object> result) {
         if(closed) return;
+        homeSaveResult=result;
         var panel=Get<StackPanel>("HomeCharacters"); panel.Children.Clear();
+        if(recoveryStatus=="blocked") {
+            Get<TextBlock>("HomeSaveSource").Text="";
+            Get<TextBlock>("HomeSaveNote").Text="存档有待确认的事项。为免误会，这里先不显示开玩前备份里的旧进度；当前进度请到存档页查看。";
+            return;
+        }
         Dictionary<string,object> latest=null; DateTimeOffset latestTime=DateTimeOffset.MinValue;
         foreach(var row in Rows(result,"backups")) {
             string kind=Str(row,"kind"); DateTimeOffset time;
@@ -958,7 +969,7 @@ public sealed class DesktopWindow
         }
         var note=Get<TextBlock>("HomeSaveNote"); var source=Get<TextBlock>("HomeSaveSource");
         if(latest==null) { source.Text=""; note.Text="还没有备份。存档非空时，启动游戏前会自动备份。"; return; }
-        source.Text="截至 "+Friendly(latestTime)+" · "+(Str(latest,"kind")=="launch" ? "游戏启动前备份":"恢复前备份");
+        source.Text=Friendly(latestTime)+(Str(latest,"kind")=="launch" ? " 开玩前自动备份":" 恢复前自动备份")+" · 不含之后的游戏进度";
         var all=Rows(latest,"character_preview").ToArray();
         var roles=all.Where(r=>Str(r,"source")!="backup" || !all.Any(o=>Str(o,"slot")==Str(r,"slot") && Str(o,"source")!="backup")).ToArray();
         Func<string,double,string,int,TextBlock> cell=(text,size,color,column)=>{ var t=new TextBlock {Text=text,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis}; Grid.SetColumn(t,column); return t; };
@@ -972,7 +983,7 @@ public sealed class DesktopWindow
             g.Children.Add(cell(Str(r,"echoes").Length>0 ? "回响 "+Number(r,"echoes"):"",12.5,"#C9C3B6",3));
             panel.Children.Add(new Border {Child=g,BorderBrush=Brush("#29272C"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(0,8,0,8)});
         }
-        note.Text=roles.Length==0 ? "这份备份中没有可显示的角色。":(roles.Length>4 ? "另有 "+(roles.Length-4)+" 名角色。":"")+"来自最近一次自动备份，下次启动游戏前会更新。";
+        note.Text=roles.Length==0 ? "这份备份中没有可显示的角色。":(roles.Length>4 ? "另有 "+(roles.Length-4)+" 名角色。":"")+"这是开玩前自动备份里的进度。之后在游戏里获得的进度保存在当前存档中，不会显示在这里。";
     }
     void DrawHomeTrophies(Dictionary<string,object>[] rows,int count) {
         Get<ProgressBar>("HomeTrophyProgress").Value=count;
