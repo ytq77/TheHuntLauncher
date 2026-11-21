@@ -30,11 +30,16 @@ def quit_seal(token):
     # The worker owns this mapping until it observes the game exit. The game
     # can revoke a quit without rewriting a file, and a restarted worker
     # cannot inherit the previous worker's authorization.
-    return mmap.mmap(-1, 8, tagname='Local\\TheHuntRecovery-'+token)
+    return mmap.mmap(-1, 8 + 64, tagname='Local\\TheHuntRecovery-'+token)
 
 
 def read_quit_seal(seal):
-    return struct.unpack('<Q', seal[:])[0]
+    return struct.unpack('<Q', seal[:8])[0]
+
+
+def read_title_seal(seal):
+    digest = seal[8:72]
+    return digest.decode('ascii') if re.fullmatch(b'[0-9a-f]{64}', digest) else None
 
 
 def sha(data):
@@ -775,6 +780,8 @@ def confirm_complete(root, path, *, write=True, running_token=None):
     if ack.exists() and stable(ack) == struct.pack('<Q', request['seq']):
         # Import may already have backed up the retired .restored file.
         return
+    if request['mode'] == TITLE_RECORDS:
+        raise ValueError('本轮标题读档缺少最终完成回执，保留现场供复核。')
     if stable(journal.with_suffix('.bin.restored')) != request['journal_bytes']:
         raise ValueError('旧归档状态与实际世界记录不符，已保留。')
     # Only finish() publishes these proofs after saved_matches verifies both saves.
@@ -847,15 +854,15 @@ def unmatched_jobs(folder, requested, *, supersede=False):
         yield job.name, slot
 
 
-def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
+def finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None, title_receipt=None):
     from save_resolution import require_launch_clear
     with installation_guard(root):
         require_launch_clear(root, strict=True)
         return _finalize(root, token, quit_sequence=quit_sequence, observed_exit=observed_exit,
-                         exit_record_failure=exit_record_failure)
+                         exit_record_failure=exit_record_failure, title_receipt=title_receipt)
 
 
-def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None):
+def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_failure=None, title_receipt=None):
     folder, _ = layout(root)
     results = []
     waiting = set()
@@ -892,6 +899,8 @@ def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_f
                          exit_record_failure.token == token and exit_record_failure.exit_code == 0)
             if mode == TITLE_RECORDS and run_token == token and observed_exit not in (None, 0):
                 raise ValueError('游戏进程未正常结束，保留本轮标题读档凭据供复核。')
+            if mode == TITLE_RECORDS and clean_exit and type(observed_exit) is int and observed_exit == 0:
+                request['live_title_receipt'] = title_receipt
             result = complete_stopped(request, compare_only=run_token != token,
                                       current_token=token, observed_exit=observed_exit,
                                       can_write=live_quit or (clean_exit and (mode == APPLIED or

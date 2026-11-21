@@ -473,12 +473,18 @@ def finish_game(user, token, seal, exit_code, started, log_name):
     except Exception as error:
         recovery_error = error
         report_failure('game exit evidence', error)
+    live_evidence = {}
     try:
         quit_sequence = world_recovery.read_quit_seal(seal)
+        if exit_code == 0 and recovery_error is None and exit_record_failure is None:
+            digest = world_recovery.read_title_seal(seal)
+            if digest:
+                # The engine wrapper may finish before the native game process.
+                world_recovery.require_stopped()
+                live_evidence['title_receipt'] = world_recovery.read_title_seal(seal)
     except Exception as error:
         recovery_error = recovery_error or error
         report_failure('game quit seal', error)
-    live_evidence = {}
     if exit_record_failure is not None:
         if type(exit_code) is int and exit_code == 0 and type(quit_sequence) is int and quit_sequence > 0:
             live_evidence['exit_record_failure'] = exit_record_failure

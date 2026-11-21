@@ -13,12 +13,15 @@ def verify_title(request, value, current):
     import world_recovery as wr
     slot, token = request['slot'], request['token']
     run = json.loads(wr.stable(request['folder']/'runs'/f'{token}.json'))
-    if (request['mode'] != wr.TITLE_RECORDS or set(current) != set(value['files']) or
+    if (not request.get('live_title_receipt') or request['mode'] != wr.TITLE_RECORDS or
+            set(current) != set(value['files']) or
             not eligible_run(run, token, request['context']['root'], slot, value['identity'], None)):
         return None
     folder = request['folder']/'title-save-proof'/request['id']
     try:
         log = wr.stable(folder/'native.jsonl')
+        if wr.sha(log) != request['live_title_receipt']:
+            return None
         raw = wr.stable(folder/'input-save.bin')
         original = wr.stable(folder/'quit-bank.bin')
     except FileNotFoundError as error:
@@ -83,7 +86,8 @@ def verify_title(request, value, current):
     request['native_save_receipt'] = log
     request['native_title_input'] = raw
     request['native_quit_bank'] = original
-    return {'schema': 3, 'origin': 'same-role-title-input', 'run_token': token, 'slot': slot,
+    return {'schema': 4, 'origin': 'same-role-title-input', 'run_token': token, 'slot': slot,
+            'final_worker_sha256': request['live_title_receipt'],
             'recovery_sequence': request['seq'], 'generation': generation, 'pid': records[0]['pid'],
             'input_sha256': records[0]['sha256'], 'quit_bank_sha256': wr.sha(original),
             'native_receipt_sha256': wr.sha(log), 'files': files}

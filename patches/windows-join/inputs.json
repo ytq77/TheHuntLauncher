@@ -38,7 +38,7 @@
     },
     "emulator/src/core/bbsc_guest_quit_save.inc": {
       "before": null,
-      "after": "b6fe7b80b87ef654f90815c5bba9526f071352ccd2be77faa770eceb91e6b0a7"
+      "after": "6ea7ea3e387a8a889de4dba02fee436fd2e756542f013a90f413f97bbeb3689b"
     },
     "emulator/src/core/bbsc_guest_title_world.h": {
       "before": null,
@@ -50,7 +50,7 @@
     },
     "emulator/src/core/bbsc_world_recovery.inc": {
       "before": "8f4c9af7aba8156d2b2299f7c7910e8d31a6397a301abde3797c10179b358b51",
-      "after": "4ec223d98aa572cddb5ed9a6ae28a9385b19a67d1d0b63273090c848a1a96abb"
+      "after": "49a14c1aa68b24d2a428435b8eb2df4cdf0e8e1f3e26382f8e4e8a452d06cd1f"
     },
     "emulator/src/core/bloodborne_re_zh_cn.cpp": {
       "before": "19561a9a20c32194becc748bdcdad61a3cb1a542b5516f1e4213f6e8ed1fbb44",

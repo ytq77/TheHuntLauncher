@@ -37,8 +37,29 @@ class TitleTests(RecoveryTests):
         self.exited()
 
     def write(self):
-        (self.proof/'native.jsonl').write_bytes(b''.join(
-            json.dumps(r).encode()+b'\n' for r in self.rows))
+        raw = b''.join(json.dumps(r).encode()+b'\n' for r in self.rows)
+        (self.proof/'native.jsonl').write_bytes(raw)
+        self.req['live_title_receipt'] = wr.sha(raw)
+
+    def finalize(self):
+        return wr.finalize(self.root, self.token, observed_exit=0, title_receipt=self.req['live_title_receipt'])
+
+    def test_title_unsealed_or_superseded_transcript_cannot_finish_after_restart(self):
+        for token, digest in ((self.token, None), (self.token, '0'*64), (None, self.req['live_title_receipt'])):
+            with self.subTest(token=token, digest=digest), self.assertRaisesRegex(ValueError, '尚未核实'):
+                wr.finalize(self.root, token, observed_exit=0, title_receipt=digest)
+        self.assertTrue(self.journal.exists())
+        self.assertFalse((self.folder/'acks/0.ack').exists())
+
+    def test_title_missing_final_ack_remains_pending_on_restart(self):
+        from unittest.mock import patch
+        with patch.object(wr, 'confirm', side_effect=PermissionError('final ack unavailable')):
+            with self.assertRaises(PermissionError):
+                self.finalize()
+        with self.assertRaisesRegex(ValueError, '缺少最终完成回执'):
+            wr.finalize(self.root, None)
+        self.assertEqual(wr.review_items(self.root)[0]['state'], 'review-required')
+        self.assertFalse((self.folder/'acks/0.ack').exists())
 
     def test_title_archives_both_full_outputs_and_first_input(self):
         self.assertEqual(self.finalize(), ['verified'])
@@ -47,6 +68,7 @@ class TitleTests(RecoveryTests):
         self.assertEqual((job/'native-title-input.bin').read_bytes(), GOOD)
         result = json.loads((job/'job.json').read_bytes())
         self.assertEqual(result['native_save_proof']['origin'], 'same-role-title-input')
+        self.assertEqual(result['native_save_proof']['final_worker_sha256'], self.req['live_title_receipt'])
         self.assertEqual(result['state'], 'complete')
         self.assertEqual(self.files, {k:(self.saves/k).read_bytes() for k in self.files})
 

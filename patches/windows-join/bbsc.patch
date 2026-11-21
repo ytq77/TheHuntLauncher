@@ -1155,7 +1155,7 @@ diff --git a/emulator/src/core/bbsc_guest_quit_save.inc b/emulator/src/core/bbsc
 new file mode 100644
 --- /dev/null
 +++ b/emulator/src/core/bbsc_guest_quit_save.inc
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,467 @@
 +// A confirmed guest exit may finish saving after the active-load token is retired.
 +// Keep this permission only from the accepted summon to the very next character read.
 +std::string BbscSaveProofHash(std::span<const u8> bytes);
@@ -1164,6 +1164,7 @@ new file mode 100644
 +bool BbscHomeForOwnWorld();
 +bool BbscRecoverySetMode(u32 mode);
 +void BbscRecoverySealQuit(u64 sequence);
++void BbscRecoverySealTitle(std::string_view digest);
 +
 +namespace GuestQuitSave {
 +using item2::title_record::CharacterIdentity;
@@ -1199,11 +1200,11 @@ new file mode 100644
 +    u64 quit{}, generation{}, manager{}, player{};
 +    s32 slot{-1};
 +    CharacterIdentity identity{};
-+    std::string output, previous, token, bank_hash;
++    std::string output, previous, token, bank_hash, transcript;
 +    std::filesystem::path folder;
 +    std::vector<u8> input, quit_bank;
 +    u32 records{};
-+    bool reading{}, closing{}, world_complete{};
++    bool reading{}, closing{}, world_complete{}, saving{};
 +};
 +TitleProof title;
 +u64 required_sequence{}; // Keep this guard even when the selected character changes.
@@ -1237,13 +1238,16 @@ new file mode 100644
 +
 +bool append_record(const char* stage, const std::string& hash, u64 epoch) {
 +    if (title.records >= 64 || hash.empty() || title.folder.empty()) return false;
-+    std::ofstream out(title.folder/"native.jsonl", std::ios::app);
-+    out << fmt::format("{{\"sequence\":{},\"pid\":{},\"stage\":\"{}\",\"recovery_sequence\":{},"
++    const auto line = fmt::format("{{\"sequence\":{},\"pid\":{},\"stage\":\"{}\",\"recovery_sequence\":{},"
 +                       "\"generation\":{},\"slot\":{},\"epoch_ms\":{},\"monotonic_ms\":{},"
 +                       "\"token\":\"{}\",\"quit_bank_sha256\":\"{}\",\"sha256\":\"{}\"}}\n",
 +                       title.records+1,GetCurrentProcessId(),stage,title.quit,title.generation,
 +                       title.slot,epoch,SteadyNowMs(),title.token,title.bank_hash,hash);
-+    if (!out.flush()) return false;
++    std::ofstream out(title.folder/"native.jsonl",std::ios::binary | std::ios::app);
++    out << line;
++    out.close();
++    if (!out) return false;
++    title.transcript += line;
 +    ++title.records;
 +    return true;
 +}
@@ -1332,6 +1336,7 @@ new file mode 100644
 +
 +void discard_title_locked() {
 +    if (title.records) {
++        BbscRecoverySealTitle({});
 +        // Retain the first input and every output, but the verifier must not reuse
 +        // receipts from a selection or join that has since been interrupted.
 +        std::error_code ec;
@@ -1491,7 +1496,7 @@ new file mode 100644
 +    }
 +    departure->load = bbsc_active_save;
 +    departure->quit = sequence;
-+    title = {};
++    discard_title_locked();
 +    try {
 +        if (BbscRecoverySetMode(item2::title_world::proof_mode)) {
 +            required_sequence = sequence;
@@ -1517,10 +1522,18 @@ new file mode 100644
 +    std::scoped_lock lock{bbsc_active_save_mutex};
 +    const auto slot = static_cast<s32>(r->r13);
 +    if (departure && r->rdi == departure->load.manager && slot == departure->load.slot) {
-+        if (departure->quit) title = {};
++        if (departure->quit) discard_title_locked();
 +        serializing = {departure->baseline,r->rdi,r->rbp,r->r15,slot};
-+    } else if (title.player && r->rdi == title.manager && slot == title.slot)
++    } else if (title.player && r->rdi == title.manager && slot == title.slot) {
++        // A failed, overlapping or incomplete save must not leave an older signature live.
++        BbscRecoverySealTitle({});
++        if (title.saving) {
++            discard_title_locked();
++            return;
++        }
++        title.saving = true;
 +        serializing = {title.quit,r->rdi,r->rbp,r->r15,slot,static_cast<u64>(epoch_ms())};
++    }
 +}
 +
 +void PS4_SYSV_ABI save_result(u64, const GuestRegisterSnapshot* r) {
@@ -1548,7 +1561,7 @@ new file mode 100644
 +                    // The caller owns this generated buffer until the submit routine takes its copy.
 +                    placement->release_without_restore();
 +                    exit = departure->quit;
-+                    title = {}; // Only the latest successful bound output can be the first input.
++                    discard_title_locked(); // Only the latest successful bound output can be the first input.
 +                    if (!departure->world.empty()) {
 +                        std::span<u8> bytes{reinterpret_cast<u8*>(data),role_bytes};
 +                        const auto bank = item2::title_record::detail::word(bytes,0x34);
@@ -1572,7 +1585,16 @@ new file mode 100644
 +                const std::span<const u8> bytes{reinterpret_cast<const u8*>(data),role_bytes};
 +                if (read_identity(bytes) == title.identity) {
 +                    const auto hash = BbscSaveProofHash(bytes);
-+                    if (hash != title.previous && append_record("save-entry",hash,frame.started_ms)) title.previous = hash;
++                    if (hash.empty()) return;
++                    if (hash != title.previous) {
++                        if (!append_record("save-entry",hash,frame.started_ms)) return;
++                        title.previous = hash;
++                    }
++                    const auto* first = reinterpret_cast<const u8*>(title.transcript.data());
++                    const auto digest = BbscSaveProofHash({first,title.transcript.size()});
++                    if (digest.size() != 64) return;
++                    BbscRecoverySealTitle(digest);
++                    title.saving = false;
 +                }
 +            }
 +        }
@@ -1703,7 +1725,58 @@ diff --git a/emulator/src/core/bbsc_menu_quit.inc b/emulator/src/core/bbsc_menu_
 diff --git a/emulator/src/core/bbsc_world_recovery.inc b/emulator/src/core/bbsc_world_recovery.inc
 --- a/emulator/src/core/bbsc_world_recovery.inc
 +++ b/emulator/src/core/bbsc_world_recovery.inc
-@@ -257,6 +257,20 @@
+@@ -96,22 +96,37 @@
+     return ok;
+ }
+
++#ifdef _WIN32
++void* BbscRecoveryMap(size_t bytes) {
++    const char* token = std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN");
++    if (!token || std::strlen(token) != 32) return nullptr;
++    const auto name = fmt::format("Local\\TheHuntRecovery-{}", token);
++    constexpr unsigned long write_access = 0x0002; // FILE_MAP_WRITE
++    const auto mapping = OpenFileMappingA(write_access, 0, name.c_str());
++    if (!mapping) return nullptr;
++    const auto address = MapViewOfFile(mapping, write_access, 0, 0, bytes);
++    CloseHandle(mapping);
++    return address;
++}
++#endif
++
+ void BbscRecoverySealQuit(u64 sequence) {
+ #ifdef _WIN32
+-    // Keep the mapping open once resolved so title reload can clear the seal
+-    // without any filesystem operation. It belongs to this run's live worker.
+-    static auto* view = []() -> u64* {
+-        const char* token = std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN");
+-        if (!token || std::strlen(token) != 32) return nullptr;
+-        const auto name = fmt::format("Local\\TheHuntRecovery-{}", token);
+-        constexpr unsigned long write_access = 0x0002; // FILE_MAP_WRITE
+-        const auto mapping = OpenFileMappingA(write_access, 0, name.c_str());
+-        if (!mapping) return nullptr;
+-        const auto address = MapViewOfFile(mapping, write_access, 0, 0, sizeof(u64));
+-        CloseHandle(mapping);
+-        return static_cast<u64*>(address);
+-    }();
++    static auto* view = static_cast<u64*>(BbscRecoveryMap(sizeof(u64)));
+     if (view) std::atomic_ref<u64>(*view).store(sequence, std::memory_order_release);
++#endif
++}
++
++void BbscRecoverySealTitle(std::string_view digest) {
++#ifdef _WIN32
++    // The original launcher owns this mapping until the process has exited.
++    // The first word remains reserved for a direct quit without a title reload.
++    constexpr size_t size = 64;
++    static auto* view = static_cast<char*>(BbscRecoveryMap(sizeof(u64) + size));
++    if (!view) return;
++    auto* target = view + sizeof(u64);
++    if (digest.size() == size) std::memcpy(target,digest.data(),size);
++    else std::memset(target,0,size);
+ #endif
+ }
+
+@@ -257,6 +272,20 @@
          return;
      BbscRecoverySealQuit(0);
      if (bbsc_own_world.empty()) return;

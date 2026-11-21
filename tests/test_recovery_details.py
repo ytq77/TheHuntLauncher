@@ -243,6 +243,7 @@ class RecoveryDetailsTests(unittest.TestCase):
         user.mkdir(parents=True)
         with (patch.object(client,'ROOT',self.root), patch.object(client,'state') as state,
               patch.object(world,'process_exited'),patch.object(world,'read_quit_seal',return_value=0),
+              patch.object(world,'read_title_seal',return_value=None),
               patch.object(details,'exit_disk_progress',return_value='槽位 1 当前主档读到猎人，0 回响。')):
             for outcomes,code,expected,result in ((['waiting-backup-save'],0,'等待游戏',0),
                     (['verified'],0,'已完成核对',0),([],23,'打开日志',23)):
