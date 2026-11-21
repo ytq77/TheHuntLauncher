@@ -30,9 +30,9 @@
     "sha256": "24acafb9b7e4bbaab0830b0828d22ad6d816c2b8f2eb1331feb296af087fada4"
   },
   "icon-bell.png": {
-    "source": "User-generated icon artwork by iytq supplied 2026-11-21; corners masked to the rounded tile and resampled to 1024px",
-    "original_file": "古金宽体手铃图标.png",
-    "original_sha256": "c347d87b61e60574464b68dbd5e1ccb35fe8a146a6867ffbddb48b7b138f30df",
-    "sha256": "8a72d811074dc6f817550a29960e6a5980c0a72b83b28792cd64b06d77e84be7"
+    "source": "User-generated transparent icon artwork by iytq supplied 2026-11-21; faint alpha noise (<56) cleared, trimmed to content, centred and resampled to 1024px",
+    "original_file": "金色手铃徽章透明抠图.png",
+    "original_sha256": "4414811debc4a918a69286852f23cea8d5adc06dd4dbe3a7c2f3b22a7aa7c7db",
+    "sha256": "456ab1b737df9908baad5593dcfa12218148bf64ad94eb1c6020e4099e6b89fb"
   }
 }
