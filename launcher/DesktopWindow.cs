@@ -36,7 +36,7 @@ public sealed class DesktopWindow
     Process worker;
     bool operation, featuresDirty, closed;
     Task<bool> trophyRead;
-    string iconGame, version="0.1.0-preview.17";
+    string iconGame, version="0.1.0-preview.26";
     DateTime startedAt;
     string noticeSession;
     string recoveryDigest;

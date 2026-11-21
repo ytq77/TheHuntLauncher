@@ -495,7 +495,7 @@
                            TextWrapping="Wrap" LineHeight="23" Margin="0,14,0,12"/>
                 <WrapPanel>
                   <Button x:Name="ImportSaves" Content="从普通版导入" Style="{StaticResource PrimaryButton}" Margin="0,0,10,10"/>
-                  <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
+                  <Button x:Name="RefreshSaves" Content="检查导入状态" ToolTip="重新查找普通版存档，检查现在能否导入；不会改动存档" Margin="0,0,10,10"/>
                   <Button x:Name="PickSaveFolder" Content="手动选择存档文件夹" Margin="0,0,10,10"/>
                   <Button x:Name="ClearSaveFolder" Content="清除手动来源，自动查找" Margin="0,0,10,10"/>
                 </WrapPanel>
