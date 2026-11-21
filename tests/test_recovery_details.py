@@ -116,6 +116,32 @@ class RecoveryDetailsTests(unittest.TestCase):
         self.assertEqual(row['primary']['state'], 'absent')
         self.assertEqual(transfer.snapshot(self.root),before)
 
+    def test_home_world_notice_only_reports_readable_progress_for_its_slot(self):
+        review = {'state': 'review-required', 'slot': 0, 'reason': '诊断详情'}
+        slot = {'primary': {'state': 'readable', 'issue': None}}
+        message = details._home_world_reason(review, [slot])['message']
+        self.assertIn('个人世界', message)
+        self.assertIn('角色名、等级和回响', message)
+        self.assertNotIn(review['reason'], message)
+        for primary in ({'state': 'unreadable', 'issue': 'unrecognized'},
+                        {'state': 'readable', 'issue': 'stats_unavailable'}):
+            text = details._home_world_reason(review, [{'primary': primary}])['message']
+            self.assertNotIn('已读到', text)
+        self.assertNotIn('已读到', details._home_world_reason(dict(review, slot=None), [])['message'])
+        for state in ('verified', 'waiting-backup'):
+            result = details._home_world_reason(dict(review, state=state), [slot])
+            self.assertEqual(result['message'], review['reason'])
+
+    def test_restore_buttons_show_local_date_time_and_selected_backup_kind(self):
+        from datetime import datetime
+        created = '2026-11-18T23:45:01+00:00'
+        stamp = datetime.fromisoformat(created).astimezone().strftime('%Y-%m-%d %H:%M')
+        for kind, expected in (('launch', f'恢复到 {stamp} 启动前'),
+                               ('pre-restore', f'回到 {stamp} 恢复备份前'),
+                               ('resolution-before', f'撤销处理，回到 {stamp} 处理前')):
+            with self.subTest(kind=kind):
+                self.assertEqual(resolution._restore_label({'kind': kind, 'time': created}), expected)
+
     def test_existing_plan_is_the_only_source_of_current_action(self):
         f.create(self.root, marker=False)
         gate = self.root/resolution.GATE

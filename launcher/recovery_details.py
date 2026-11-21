@@ -39,6 +39,19 @@ def _reason(code, message, slot=None, state='blocked'):
     return {'code': code, 'state': state, 'slot': slot, 'message': message}
 
 
+def _home_world_reason(item, slots):
+    state = item['state']
+    slot = item.get('slot')
+    message = item['reason']
+    if state == 'review-required':
+        message = '上次联机后，你的个人世界还有记录需要核对。'
+        if slot is not None:
+            primary = slots[slot]['primary']
+            if primary['state'] == 'readable' and primary['issue'] is None:
+                message += '当前主档里的角色名、等级和回响已读到。'
+    return _reason('world-recovery', message, slot, state)
+
+
 def _transaction_reason(path, expected):
     info, raw = resolution._control(path)
     if info != expected:
@@ -92,9 +105,7 @@ def recovery_details(root):
         for slot in bad:
             reasons.append(_reason('primary-check-failed', f'槽位 {slot+1} 的当前主档未通过结构检查。', slot))
         items = world.review_items(root)
-        for item in items:
-            state = item['state']
-            reasons.append(_reason('world-recovery', item['reason'], item.get('slot'), state))
+        reasons.extend(_home_world_reason(item, slots) for item in items)
         status = ('blocked' if any(r['state'] not in ('verified', 'waiting-backup') for r in reasons)
                   else 'safe' if reasons else 'clear')
         action = None

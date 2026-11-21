@@ -482,6 +482,15 @@ def _impact(before, after):
     return '；'.join(parts) + '。这些是文件差异，不代表已核实每个角色的游戏进度时间。'
 
 
+def _restore_label(source):
+    stamp = datetime.fromisoformat(source['time']).astimezone().strftime('%Y-%m-%d %H:%M')
+    if source['kind'] == 'resolution-before':
+        return f'撤销处理，回到 {stamp} 处理前'
+    if source['kind'] == 'pre-restore':
+        return f'回到 {stamp} 恢复备份前'
+    return f'恢复到 {stamp} 启动前'
+
+
 def _option(action, label, description, recommended=False):
     return {'id': action, 'label': label, 'description': description, 'recommended': recommended}
 
@@ -609,7 +618,7 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
         source_quality = _readability(source['_folder']/'original/savedata')
         source_notice = ('其中有当前版本无法完整核对的角色或角色列表。' + source_quality['reason'] if not source_quality['valid'] else
                          '该版本各角色代次已通过当前结构检查，旧联机记录仍须重新选择。')
-        options.append(_option('restore-case', '换回这份处理前的存档',
+        options.append(_option('restore-case', _restore_label(source),
             f"来源时间：{source['time']}。会切回此时的全部角色和联机记录。" + source_notice +
             '现在的版本会先完整另存为“换回前的存档”。' + reversible + '换回后仍需重新选择，不会自动启动。'))
     elif needed:
@@ -624,7 +633,7 @@ def _plan(root, selection_kind=None, selection_id=None, selection_fingerprint=No
                 '存档文件不改，但所有旧联机待补记录不再补入，可能保留房主世界变化，也可能放弃尚未保存的拾取、购买或共享进度。处理前版本会先完整保全，可在列表换回后重新选择。', True))
         if source is not None:
             recommended = not options and source['kind'] == 'launch' and not incomplete
-            title = ('恢复所选可用的自动备份' if source['kind'] == 'launch' else '恢复所选整套备份')
+            title = _restore_label(source)
             options.append(_option('restore-all', title + ('（推荐）' if recommended else ''),
                 f"备份时间：{source['time']}。全部角色采用这份备份的进度，待补联机进度作废。" +
                 _impact(contents['trees']['savedata'], source['_inventory']) +
