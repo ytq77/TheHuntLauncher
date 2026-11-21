@@ -905,7 +905,7 @@ public sealed class DesktopWindow
     // {ok, status: clear|safe|blocked}; any failure means "not checked", never "damaged".
     // Launch still rechecks on its own, so this only decides what the home page suggests.
     async Task RefreshRecoveryStatus() {
-        if(closed || Busy || recoveryChecking) return; // The query requires the game to be closed.
+        if(closed || Busy || recoveryChecking || GameRunning()) return; // The query requires the game to be closed.
         recoveryChecking=true;
         try {
             var result=await Request("world_recovery.py",null,"recovery-status");
@@ -920,8 +920,8 @@ public sealed class DesktopWindow
         var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var icon=Get<TextBlock>("HomeRecoveryIcon");
         if(recoveryStatus=="clear" || recoveryStatus.Length==0) { notice.Visibility=Visibility.Collapsed; return; }
         bool safe=recoveryStatus=="safe", blocked=recoveryStatus=="blocked";
-        Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复还差最后一步":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
-        Get<TextBlock>("HomeRecoveryText").Text=safe ? "点「核验并启动」进入游戏，用同一角色正常保存并退出，即可完成恢复。":
+        Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复可以继续核验":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
+        Get<TextBlock>("HomeRecoveryText").Text=safe ? "启动时会重新核验存档。若仍提示等待备档，请用同一角色正常保存并退出。":
             blocked ? "处理完成前不能开始游戏，具体原因见存档页。":"这不代表存档有问题，可以稍后重试。";
         action.Content=safe ? "核验并启动":blocked ? "去存档页处理":"重试";
         notice.ToolTip=recoveryStatus=="unknown" && recoveryError.Length>0 ? recoveryError:null;
