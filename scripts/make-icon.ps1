@@ -2,8 +2,8 @@ param(
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\.build')
 )
 
-# Original The Hunt bell mark by iytq. Draw each icon size independently so
-# the small Windows title-bar image remains a clear silhouette.
+# The Hunt bell mark by iytq. Uses the artwork master when present; otherwise draws
+# the original vector bell per size so the small title-bar image stays a clear silhouette.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationCore, WindowsBase
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -22,7 +22,28 @@ $dark = Brush '#141517'
 $edge = Brush '#64665F'
 $sizes = @(16, 24, 32, 48, 64, 128, 256)
 $images = @()
+# The gold hand-bell artwork by iytq (assets/artwork/icon-bell.png) is preferred; this
+# script is shared by the launcher and the server builds, so look in both layouts.
+$master = @('..\assets\artwork\icon-bell.png', '..\..\assets\artwork\icon-bell.png', 'gui\assets\artwork\icon-bell.png') |
+    ForEach-Object { [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $_)) } |
+    Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 foreach ($size in $sizes) {
+    if ($master) {
+        # One high-quality (Fant) decode per size, straight from the 1024px master.
+        $frame = [Windows.Media.Imaging.BitmapImage]::new()
+        $frame.BeginInit()
+        $frame.UriSource = [Uri]::new($master)
+        $frame.DecodePixelWidth = $size
+        $frame.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $frame.EndInit()
+        $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
+        $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($frame))
+        $stream = [IO.MemoryStream]::new()
+        $encoder.Save($stream)
+        $images += ,$stream.ToArray()
+        $stream.Dispose()
+        continue
+    }
     $visual = [Windows.Media.DrawingVisual]::new()
     $drawing = $visual.RenderOpen()
     $drawing.PushTransform([Windows.Media.ScaleTransform]::new($size / 256.0, $size / 256.0))

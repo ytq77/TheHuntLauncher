@@ -2,7 +2,6 @@
 using System;
 using System.IO;
 using System.Windows;
-using System.Windows.Documents;
 using System.Windows.Media;
 
 public static class HuntTypography
@@ -13,15 +12,15 @@ public static class HuntTypography
         string shared=parent==null ? local:Path.Combine(parent,"assets");
         return Directory.Exists(shared) ? shared:local;
     }
-    static FontFamily Family(string root,string name) {
+    static FontFamily Family(string root,string name,string fallback) {
         string fonts=Path.Combine(Assets(root),"fonts")+Path.DirectorySeparatorChar;
-        return Directory.Exists(fonts) ? new FontFamily(new Uri(Path.GetFullPath(fonts)),"./#"+name):new FontFamily("Microsoft YaHei UI");
+        return Directory.Exists(fonts) ? new FontFamily(new Uri(Path.GetFullPath(fonts)),"./#"+name):new FontFamily(fallback);
     }
-    public static FontFamily Body(string root) { return Family(root,"Noto Sans CJK SC"); }
-    public static FontFamily Home(string root) { return Family(root,"LXGW WenKai Screen"); }
+    // Body text, forms and navigation: Noto Sans CJK. Titles and figures: Noto Serif CJK (Regular only, no synthetic bold).
+    public static FontFamily Body(string root) { return Family(root,"Noto Sans CJK SC","Microsoft YaHei UI"); }
+    public static FontFamily Display(string root) { return Family(root,"Noto Serif CJK SC","SimSun"); }
     public static void Bind(Window window,string root) {
         window.FontFamily=Body(root); window.FontSize=14;
-        var home=window.FindName("HomePage") as DependencyObject;
-        if(home!=null) TextElement.SetFontFamily(home,Home(root));
+        window.Resources["DisplayFont"]=Display(root);
     }
 }

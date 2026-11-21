@@ -71,8 +71,9 @@ try {
     Assert ($window.Title -eq 'The Hunt') 'Extra title attribution remains'
     Assert ($null -eq $window.FindName('FontStylePicker')) 'Font selection option remains'
     Assert ($window.FontFamily.Source -eq ([HuntTypography]::Body($fixture)).Source) 'Default font is not fixed Sans'
-    Assert ([Windows.Documents.TextElement]::GetFontFamily($window.FindName('HomePage')).Source -eq ([HuntTypography]::Home($fixture)).Source) 'Home page is not fixed WenKai'
-    Assert ($window.FindName('HomeTrophies').FontFamily.Source -eq ([HuntTypography]::Home($fixture)).Source) 'Home button did not inherit WenKai'
+    Assert ($window.Resources['DisplayFont'].Source -eq ([HuntTypography]::Display($fixture)).Source) 'Display font is not fixed Serif'
+    Assert ($window.FindName('HomeTrophies').FontFamily.Source -eq ([HuntTypography]::Display($fixture)).Source) 'Home trophy tile did not use the Serif display font'
+    Assert ([Windows.Documents.TextElement]::GetFontFamily($window.FindName('HomePage')).Source -eq ([HuntTypography]::Body($fixture)).Source) 'Home body text did not inherit Sans'
     Assert ($window.FindName('SaveSettings').FontFamily.Source -eq ([HuntTypography]::Body($fixture)).Source) 'Settings did not inherit Sans'
     $toast=$desktop.GetType().GetField('toast',$flags).GetValue($desktop)
     $toast.Validate((Join-Path $fixture 'toast.png'))

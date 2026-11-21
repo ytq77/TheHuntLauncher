@@ -1,12 +1,38 @@
 {
-  "home-hunter.png": {
-    "source": "User-selected supplied crop, 2026-10-29",
-    "original_file": "codex-clipboard-ddc6ed67-130b-43a2-84c6-87a0e616e861.png",
-    "sha256": "ccf6d8e1a1ccee693a2da6cdc36f4186836f8b0cbf7bf6794ca53ec6bc496bd1"
+  "home-hero.jpg": {
+    "source": "User-generated artwork supplied 2026-11-21 for the UI redesign",
+    "original_file": "雾夜孤猎与黑马车.png",
+    "original_sha256": "2b5044c7f69b65cdfe8487cf4bfeb7b9b2f877e53999c072ba1907c092ef06ce",
+    "sha256": "608cc3283189fe3d122d009479602fa86ff34387207ec15840abbf3125dba091"
   },
-  "hosting-messengers.png": {
-    "source": "User-selected supplied crop, 2026-10-29",
-    "original_file": "codex-clipboard-7f83bd40-8f71-4a10-84f1-133269d22ec7.png",
-    "sha256": "1b113d31dcaec28aaa267f5d492929954c1bcf3c16b25dacb25a86b8a6afd9bb"
+  "banner-online.jpg": {
+    "source": "User-generated artwork supplied 2026-11-21 for the UI redesign",
+    "original_file": "暮雾石桥，三客提灯.png",
+    "original_sha256": "88b5e029ffd3838a43617babe17fca8621fea714d6342d957e3b5a084f54a6bb",
+    "sha256": "8008034a985b0dea9532dabbff58f8f79640860abd33c0edd5863a2a2eae2b48"
+  },
+  "banner-hosting.jpg": {
+    "source": "User-generated artwork supplied 2026-11-21 for the UI redesign",
+    "original_file": "雾岭孤灯.png",
+    "original_sha256": "09dabc076adcef30dea9ccadd33ec491c808ed9e0839a11ed32b7185b14f824f",
+    "sha256": "64b93eaee89369cce6b9f5afd88d500f92889bf5d2f9acbe13090d951371dca1"
+  },
+  "banner-saves.jpg": {
+    "source": "User-generated artwork supplied 2026-11-21 for the UI redesign",
+    "original_file": "烛光下的静谧档案室.png",
+    "original_sha256": "9b3dbfbc942a9305dabcae79995ab8b43c4eb548d92c3fb41d9b0d4f4ff6ad46",
+    "sha256": "8d602c40fab65b64555825c82d68cece1c008414f927f1f2fa59c15b0748aa57"
+  },
+  "banner-features.jpg": {
+    "source": "User-generated artwork supplied 2026-11-21 for the UI redesign",
+    "original_file": "雾夜猎人工作台.png",
+    "original_sha256": "ea63685e1a1be71fc19b1ac3701230a26afde772f205db4cdb3be1849a613527",
+    "sha256": "24acafb9b7e4bbaab0830b0828d22ad6d816c2b8f2eb1331feb296af087fada4"
+  },
+  "icon-bell.png": {
+    "source": "User-generated icon artwork by iytq supplied 2026-11-21; corners masked to the rounded tile and resampled to 1024px",
+    "original_file": "古金宽体手铃图标.png",
+    "original_sha256": "c347d87b61e60574464b68dbd5e1ccb35fe8a146a6867ffbddb48b7b138f30df",
+    "sha256": "8a72d811074dc6f817550a29960e6a5980c0a72b83b28792cd64b06d77e84be7"
   }
 }

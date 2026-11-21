@@ -43,7 +43,7 @@ public sealed class DesktopWindow
     int noticeSequence;
     int resolutionGeneration;
     string currentPage;
-    bool drawingBackups, resolutionApplying, resolutionNeeded;
+    bool drawingBackups, resolutionApplying, resolutionNeeded, drawingTimeline, fillingHost;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
     T Get<T>(string name) where T:FrameworkElement {
@@ -59,6 +59,7 @@ public sealed class DesktopWindow
     public void Page(string name) {
         if(currentPage!=name) InvalidateResolution();
         currentPage=name;
+        if(name=="Home") UpdateReadiness();
         foreach(string n in new [] {"Home","Settings","Feature","Server","Save","Trophy"}) {
             Get<Grid>(n+"Page").Visibility=n==name ? Visibility.Visible:Visibility.Collapsed;
             Get<RadioButton>(n+"Nav").IsChecked=n==name;
@@ -69,6 +70,32 @@ public sealed class DesktopWindow
     void Error(string message) { Say(message); MessageBox.Show(Window,message,"The Hunt",MessageBoxButton.OK,MessageBoxImage.Warning); }
     bool Confirm(string message,string title) { return MessageBox.Show(Window,message,title,MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)==MessageBoxResult.Yes; }
     string PathAt(string name) { return Path.Combine(root,name); }
+    // Desktop entry named "The Hunt Launcher" (Windows wraps it as "The Hunt / Launcher");
+    // the exe keeps its name so automatic updates keep working.
+    void CreateDesktopShortcut() {
+        string exe=Path.GetFullPath(PathAt("TheHuntLauncher.exe"));
+        if(!File.Exists(exe)) throw new InvalidOperationException("没有找到 TheHuntLauncher.exe，请从完整包目录运行启动器后再创建。");
+        string link=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"The Hunt Launcher.lnk");
+        var shellType=Type.GetTypeFromProgID("WScript.Shell"); object shell=Activator.CreateInstance(shellType), shortcut=null;
+        var invoke=System.Reflection.BindingFlags.InvokeMethod; var get=System.Reflection.BindingFlags.GetProperty; var set=System.Reflection.BindingFlags.SetProperty;
+        try {
+            shortcut=shellType.InvokeMember("CreateShortcut",invoke,null,shell,new object[] {link});
+            var type=shortcut.GetType();
+            if(File.Exists(link)) {
+                string target=Convert.ToString(type.InvokeMember("TargetPath",get,null,shortcut,null));
+                if(!String.Equals(target,exe,StringComparison.OrdinalIgnoreCase) && !Confirm("桌面上已有「The Hunt Launcher」快捷方式，指向：\n"+target+"\n\n改为指向当前这份启动器吗？","桌面快捷方式")) return;
+            }
+            type.InvokeMember("TargetPath",set,null,shortcut,new object[] {exe});
+            type.InvokeMember("WorkingDirectory",set,null,shortcut,new object[] {Path.GetDirectoryName(exe)});
+            type.InvokeMember("IconLocation",set,null,shortcut,new object[] {exe+",0"});
+            type.InvokeMember("Description",set,null,shortcut,new object[] {"The Hunt 无缝联机启动器"});
+            type.InvokeMember("Save",invoke,null,shortcut,null);
+        } finally {
+            if(shortcut!=null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+        }
+        Say("已在桌面创建「The Hunt Launcher」快捷方式。");
+    }
     Dictionary<string,object> ReadJson(string path) {
         using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
         using(var reader=new StreamReader(stream,Encoding.UTF8))
@@ -93,6 +120,9 @@ public sealed class DesktopWindow
             Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
         }
         Click("HomeTrophies",delegate { Page("Trophy"); RefreshInBackground(); });
+        Click("HomeFeatureLink",delegate { Page("Feature"); });
+        Click("HomeTrophiesAll",delegate { Page("Trophy"); RefreshInBackground(); });
+        AsyncClick("HomeSavesLink",async delegate { Page("Save"); if(!Busy) await RefreshSaveBackups(); });
         AsyncClick("RefreshTrophies",async delegate { await RefreshTrophies(); });
         Click("TestTrophyToast",delegate {
             bool gameActive=worker!=null && !worker.HasExited;
@@ -118,6 +148,7 @@ public sealed class DesktopWindow
         AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
         Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
+        Click("CreateShortcut",CreateDesktopShortcut);
         Click("OpenLogs",delegate { OpenFolder(Directory.Exists(PathAt(@"data\user")) ? PathAt(@"data\user"):root); });
         Click("OpenSaveBackups",delegate { if(!OpenFolder(PathAt("save-backups"))) Get<TextBlock>("SaveSummary").Text="还没有存档备份。启动前备份、恢复前备份和导入备份都保存在此目录。"; });
         AsyncClick("RefreshSaveBackups",RefreshSaveBackups);
@@ -145,7 +176,18 @@ public sealed class DesktopWindow
         Click("ConversionOpen",delegate { OpenFolder(Str(conversionJob,"directory")); });
         Click("ConversionOpenOrdinaryBackup",delegate { OpenFolder(ConversionBackup()); });
         Click("CheckUpdates",delegate { HuntUpdates.Show(Window,root,"TheHuntLauncher",version,CanUpdate); });
-        LoadProfile(); BuildFeatures(); LoadAdmin(); LoadConversion();
+        if(File.Exists(PathAt("BUILD-INFO.json"))) Get<TextBlock>("VersionLabel").Text=version;
+        foreach(string n in new [] {"ReadyGameAction","ReadyServerAction","ReadyAccountAction","ReadyPublicAction"}) Click(n,delegate { Page("Settings"); });
+        Get<TextBox>("ServerHost").TextChanged+=delegate { FillServerHost(); };
+        foreach(string n in new [] {"Shadnet","Webapi","Community","Relay","Account"}) Get<TextBox>(n).TextChanged+=delegate { UpdateReadiness(); };
+        Get<CheckBox>("PublicOnline").Checked+=delegate { UpdateReadiness(); };
+        Get<CheckBox>("PublicOnline").Unchecked+=delegate { UpdateReadiness(); };
+        Get<ListBox>("SaveBackupTimeline").SelectionChanged+=delegate {
+            if(drawingTimeline) return;
+            var list=Get<ComboBox>("SaveBackupList"); int index=Get<ListBox>("SaveBackupTimeline").SelectedIndex;
+            if(index>=0 && index<list.Items.Count && list.SelectedIndex!=index) list.SelectedIndex=index;
+        };
+        LoadProfile(); BuildFeatures(); LoadAdmin(); LoadConversion(); UpdateReadiness();
         Get<TextBlock>("DestinationSavePath").Text=PathAt(@"data\user\savedata");
         timer.Tick+=delegate { Poll(); };
         Window.Closing+=delegate(object sender,System.ComponentModel.CancelEventArgs e) {
@@ -159,7 +201,7 @@ public sealed class DesktopWindow
         try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
         catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         Window.Loaded+=async delegate {
-            timer.Start(); await RefreshTrophies();
+            timer.Start(); await RefreshTrophies(); await RefreshHomeSaves();
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
@@ -248,19 +290,68 @@ public sealed class DesktopWindow
             Get<TextBox>("InstallPath").Text=Path.Combine(Str(p,"install"),"Bloodborne.exe");
             Get<TextBox>("GamePath").Text=Path.Combine(Str(p,"game"),"eboot.bin"); Get<TextBox>("GraphicsPath").Text=Str(p,"graphics_source");
             if(p.ContainsKey("network")) { var net=(Dictionary<string,object>)p["network"]; foreach(string n in new [] {"Shadnet","Webapi","Community","Relay"}) Get<TextBox>(n).Text=Str(net,n.ToLowerInvariant()); }
+            ShowServerHost();
             if(File.Exists(PathAt(@".private\account.clixml"))) Get<TextBox>("Account").Text=DesktopCredentials.Read(PathAt(@".private\account.clixml"))[0];
             Get<CheckBox>("PublicOnline").IsChecked=!p.ContainsKey("public_online") || Flag(p,"public_online");
             Summary(); Say("已加载本机配置，可以启动游戏。");
         } catch { Say("配置或本机凭据无法读取，请重新填写；存档仍在 data 目录。"); }
     }
     void Summary() {
-        Get<TextBlock>("AccountSummary").Text=Text("Account").Length>0 ? Text("Account"):"尚未设置";
-        Get<TextBlock>("ServerSummary").Text=Text("Shadnet");
+        graphicsText="";
         if(File.Exists(Text("GraphicsPath"))) {
             var values=new Dictionary<string,string>();
             foreach(string line in File.ReadAllLines(Text("GraphicsPath"))) { var m=Regex.Match(line,@"^\s*(output_res|upscaler)\s*=(.*)$"); if(m.Success) values[m.Groups[1].Value]=m.Groups[2].Value.Trim(); }
-            Get<TextBlock>("GraphicsSummary").Text=String.Join(" · ",values.Values.ToArray());
+            graphicsText=String.Join(" · ",values.Values.ToArray());
         }
+        UpdateReadiness();
+    }
+    string graphicsText="";
+    void Ready(string row,int state,string detail) {
+        // state: 1 ready, 0 needs action, -1 optional / off.
+        var icon=Get<TextBlock>("Ready"+row+"Icon");
+        icon.Text=state>0 ? "":state==0 ? "":"";
+        icon.Foreground=Brush(state>0 ? "#8FAE8A":state==0 ? "#E0B66E":"#7D7A73");
+        Get<Button>("Ready"+row+"Action").Content=state==0 ? "去设置  →":"查看  →";
+        Get<Button>("Ready"+row+"Action").Foreground=Brush(state==0 ? "#E0B66E":"#BBA47A");
+        var target=Get<TextBlock>(row=="Game" ? "GraphicsSummary":row=="Server" ? "ServerSummary":row=="Account" ? "AccountSummary":"ReadyPublicDetail");
+        target.Text=detail; target.Foreground=Brush(state==0 ? "#D9BE8A":"#A8A397");
+    }
+    void UpdateReadiness() {
+        if(Window==null) return;
+        var missing=new [] {new [] {"InstallPath","Bloodborne.exe"},new [] {"GamePath","eboot.bin"},new [] {"GraphicsPath","bbport.ini"}}.Where(p=>!File.Exists(Text(p[0]))).Select(p=>p[1]).ToArray();
+        Ready("Game",missing.Length==0 ? 1:0,missing.Length==0 ? "CUSA03173 1.09 已选择"+(graphicsText.Length>0 ? " · 画质 "+graphicsText:""):"缺少 "+String.Join("、",missing));
+        bool network=new [] {"Shadnet","Webapi","Community","Relay"}.All(n=>Text(n).Length>0);
+        string host=Text("ServerHost").Length>0 ? Text("ServerHost"):Text("Shadnet");
+        Ready("Server",network ? 1:0,network ? host:"尚未填写服务器地址");
+        string account=Text("Account"), saved="";
+        try { string path=PathAt(@".private\account.clixml"); if(File.Exists(path)) saved=DesktopCredentials.Read(path)[0]; } catch { saved=""; }
+        Ready("Account",account.Length>0 && saved==account ? 1:0,account.Length==0 ? "尚未设置":saved==account ? account+" · 已加密保存":account+" · 保存设置后生效");
+        bool publicOn=Get<CheckBox>("PublicOnline").IsChecked==true, publicSaved=File.Exists(PathAt(@".private\public-online.clixml"));
+        Ready("Public",!publicOn ? -1:publicSaved ? 1:0,!publicOn ? "已关闭 · 使用私服的独立内容":publicSaved ? Text("PublicAccount")+" · 启动时自动登录":"已开启，但还没有保存公共账号");
+    }
+    static readonly Regex HostPattern=new Regex(@"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$");
+    void FillServerHost() {
+        if(fillingHost) return;
+        string host=Text("ServerHost"); var note=Get<TextBlock>("AddressNote");
+        if(host.Length==0) { note.Text="只填主机名或 IP，四项端口会自动补全：31413 / 31415 / 20443 / 20444。"; note.Foreground=Brush("#9A958A"); UpdateReadiness(); return; }
+        if(!HostPattern.IsMatch(host)) { note.Text="只填主机名或 IP，不要带 http:// 或端口；需要特殊端口时请在「高级」里分别填写。"; note.Foreground=Brush("#E0B66E"); return; }
+        Get<TextBox>("Shadnet").Text=host+":31413"; Get<TextBox>("Webapi").Text="http://"+host+":31415";
+        Get<TextBox>("Community").Text="http://"+host+":20443"; Get<TextBox>("Relay").Text=host+":20444";
+        note.Text="已按默认端口填好四项地址，可在「高级」里查看或修改。"; note.Foreground=Brush("#9A958A");
+        UpdateReadiness();
+    }
+    void ShowServerHost() {
+        // Show one host only when all four addresses are exactly that host's default endpoints.
+        var m=Regex.Match(Text("Shadnet"),@"^(.+):31413$"); string host=m.Success ? m.Groups[1].Value:"";
+        bool standard=host.Length>0 && HostPattern.IsMatch(host) && Text("Webapi")=="http://"+host+":31415" && Text("Community")=="http://"+host+":20443" && Text("Relay")==host+":20444";
+        fillingHost=true;
+        try { Get<TextBox>("ServerHost").Text=standard ? host:""; } finally { fillingHost=false; }
+        bool any=new [] {"Shadnet","Webapi","Community","Relay"}.Any(n=>Text(n).Length>0);
+        Get<Expander>("AdvancedAddresses").IsExpanded=any && !standard;
+        var note=Get<TextBlock>("AddressNote");
+        note.Text=any && !standard ? "当前四项地址不是同一主机的默认端口，已在「高级」中保留原值。":"只填主机名或 IP，四项端口会自动补全：31413 / 31415 / 20443 / 20444。";
+        note.Foreground=Brush("#9A958A");
+        UpdateReadiness();
     }
     void SetBusy() {
         foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
@@ -309,7 +400,7 @@ public sealed class DesktopWindow
         }
     }
     async Task ReviewWorldRecovery() {
-        RequireIdle(); Page("Save"); InvalidateResolution(); recoveryDigest=null; operation=true; SetBusy();
+        RequireIdle(); Page("Save"); Get<RadioButton>("SaveTabAdvanced").IsChecked=true; InvalidateResolution(); recoveryDigest=null; operation=true; SetBusy();
         int generation=resolutionGeneration;
         var summary=Get<TextBlock>("WorldRecoverySummary"); summary.Text="正在只读核对世界恢复记录…";
         try {
@@ -407,7 +498,7 @@ public sealed class DesktopWindow
         trophies.Exited();
         try { await RefreshTrophies(true); }
         finally {
-            operation=false; SetBusy(); Get<Button>("Launch").Content="启动游戏  →";
+            operation=false; SetBusy(); Get<Button>("Launch").Content="开始游戏  →";
         }
         // The production worker can discover an anomaly after the UI's lightweight check.
         if(resolutionRequired || File.Exists(PathAt(@"data\user\save-resolution-review.json")) || File.Exists(PathAt(".save-import.lock"))) {
@@ -564,6 +655,11 @@ public sealed class DesktopWindow
         if(generation!=resolutionGeneration || closed || currentPage!="Save") return;
         resolutionPlan=plan; pendingResolution=plan.ContainsKey("pending") ? plan["pending"] as Dictionary<string,object>:null;
         resolutionNeeded=Flag(plan,"needed");
+        DrawCurrentSlots(plan);
+        if(pendingResolution!=null) ShowSaveState(0,"上次的存档选择还没有完成，请在下方继续或另存后放弃；完成前不会启动游戏。");
+        else if(Flag(plan,"show_choices")) ShowSaveState(0,"这份存档需要先确认处理方式，选择前不会启动游戏。处理方式见下方。");
+        else if(Flag(plan,"startable")) ShowSaveState(1,"当前存档已通过只读检查，可以开始游戏。");
+        else ShowSaveState(2,Str(plan,"summary").Length>0 ? Str(plan,"summary"):"当前存档已读取。");
         Get<Border>("SaveResolutionPanel").Visibility=Flag(plan,"show_choices") ? Visibility.Visible:Visibility.Collapsed;
         Get<TextBlock>("SaveResolutionSummary").Text=Str(plan,"summary");
         string current=CharacterSummary(plan);
@@ -600,6 +696,7 @@ public sealed class DesktopWindow
                 Get<Border>("SaveResolutionPanel").Visibility=Visibility.Visible;
                 Get<StackPanel>("SaveResolutionOptions").Children.Clear();
                 Get<TextBlock>("SaveResolutionSummary").Text="本次检查未完成；没有据此判定存档损坏。";
+                DrawCurrentSlots(null); ShowSaveState(-1,"本次检查未完成；没有据此判定存档损坏。原因见下方。");
                 Get<TextBlock>("SaveResolutionCharacters").Text=""; Get<TextBlock>("SaveResolutionPending").Text="";
                 Get<Button>("ResumeSaveResolution").Visibility=Visibility.Collapsed;
                 Get<Button>("AbandonSaveResolution").Visibility=Visibility.Collapsed;
@@ -705,6 +802,89 @@ public sealed class DesktopWindow
         Get<Button>("RestoreSaveBackup").Content=special ? "换回处理前状态":"恢复到这个备份";
         string characters=CharacterSummary(row);
         Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n会成套换回存档和联机记录；现在的版本会另存，不会合并，换回后须重新选择，不自动启动。":characters;
+        int drawn=DrawBackupTable(row);
+        Get<TextBlock>("SelectedSaveBackup").Visibility=special || drawn==0 || Str(row,"readability_note").Length>0 ? Visibility.Visible:Visibility.Collapsed;
+        drawingTimeline=true;
+        try { Get<ListBox>("SaveBackupTimeline").SelectedIndex=Get<ComboBox>("SaveBackupList").SelectedIndex; } finally { drawingTimeline=false; }
+    }
+    static string TimelineTitle(Dictionary<string,object> row) {
+        string kind=Str(row,"kind");
+        return kind=="launch" ? "游戏启动前":kind=="pre-restore" ? "恢复前":kind=="resolution-before" ? (Str(row,"label").Length>0 ? Str(row,"label"):"处理前"):"未知类型（不可恢复）";
+    }
+    static string BackupKind(Dictionary<string,object> row) {
+        string kind=Str(row,"kind");
+        return kind=="resolution-before" ? "处理前":kind=="pre-restore" ? "恢复前":kind=="launch" ? "启动前":"未知类型";
+    }
+    static string Number(Dictionary<string,object> row,string key) { long n; return Int64.TryParse(Str(row,key),out n) ? n.ToString("N0"):Str(row,key); }
+    void DrawBackupTimeline() {
+        var timeline=Get<ListBox>("SaveBackupTimeline"); drawingTimeline=true;
+        try {
+            timeline.Items.Clear();
+            foreach(ComboBoxItem source in Get<ComboBox>("SaveBackupList").Items) {
+                var row=source.Tag as Dictionary<string,object>;
+                DateTimeOffset time; string stamp=Str(row,"time");
+                if(DateTimeOffset.TryParse(stamp,out time)) stamp=time.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+                // Row: gold kind title, then a muted "time · characters" line.
+                var roles=Rows(row,"character_preview").Where(r=>Str(r,"source")!="backup" || !Rows(row,"character_preview").Any(o=>Str(o,"slot")==Str(r,"slot") && Str(o,"source")!="backup")).ToArray();
+                string line=roles.Length==0 ? "没有可显示的角色":String.Join(" · ",roles.Take(2).Select(r=>(Str(r,"name").Length>0 ? Str(r,"name"):"未识别")+(Str(r,"level").Length>0 ? " Lv"+Str(r,"level"):"")))+(roles.Length>2 ? " 等 "+roles.Length+" 名":"");
+                var body=new StackPanel();
+                body.Children.Add(new TextBlock {Text=TimelineTitle(row),Style=(Style)Window.FindResource("RowTitle"),TextTrimming=TextTrimming.CharacterEllipsis});
+                var meta=new TextBlock {FontSize=12,Foreground=Brush("#948F84"),Margin=new Thickness(0,4,0,0),TextTrimming=TextTrimming.CharacterEllipsis};
+                meta.Inlines.Add(new System.Windows.Documents.Run(stamp) {FontFamily=(FontFamily)Window.FindResource("MonoFont"),Foreground=Brush("#C9C4B8")});
+                meta.Inlines.Add(new System.Windows.Documents.Run("  ·  "+line));
+                body.Children.Add(meta);
+                timeline.Items.Add(new ListBoxItem {Content=body,IsEnabled=source.IsEnabled,ToolTip=Convert.ToString(source.Content)});
+            }
+            timeline.SelectedIndex=Get<ComboBox>("SaveBackupList").SelectedIndex;
+        } finally { drawingTimeline=false; }
+    }
+    int DrawBackupTable(Dictionary<string,object> row) {
+        var table=Get<StackPanel>("SelectedBackupTable"); table.Children.Clear();
+        var rows=Rows(row,"character_preview").ToArray();
+        if(rows.Length==0) return 0;
+        Func<string,double,string,int,TextBlock> cell=(text,size,color,column)=>{ var t=new TextBlock {Text=text,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis}; Grid.SetColumn(t,column); return t; };
+        Func<Grid> line=()=>{ var g=new Grid {Margin=new Thickness(0,0,0,0)}; foreach(var w in new [] {64.0,0,80,110,110}) g.ColumnDefinitions.Add(new ColumnDefinition {Width=w==0 ? new GridLength(1,GridUnitType.Star):new GridLength(w)}); return g; };
+        var header=line(); int c=0;
+        foreach(string h in new [] {"槽位","角色","等级","回响","来源"}) header.Children.Add(cell(h,12,"#7D7A73",c++));
+        table.Children.Add(new Border {Child=header,BorderBrush=Brush("#2E2C31"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(0,0,0,7)});
+        foreach(var r in rows) {
+            var g=line(); string issue=Str(r,"issue"), source=Str(r,"source");
+            g.Children.Add(cell(SlotLabel(Str(r,"slot")),13,"#A8A397",0));
+            var name=cell(issue=="unrecognized" ? "无法识别":issue=="read_failed" ? "读取失败":Str(r,"name").Length>0 ? Str(r,"name"):"姓名未识别",14.5,issue.Length>0 && issue!="name_unavailable" ? "#D9BE8A":"#EDE6D6",1);
+            name.FontFamily=(FontFamily)Window.FindResource("DisplayFont"); g.Children.Add(name);
+            g.Children.Add(cell(Str(r,"level").Length>0 ? Str(r,"level"):"—",13,"#D2CCBF",2));
+            g.Children.Add(cell(Str(r,"echoes").Length>0 ? Number(r,"echoes"):"—",13,"#D2CCBF",3));
+            g.Children.Add(cell((source=="both" ? "主档+备档":source=="primary" ? "仅主档":"仅备档")+(Flag(r,"identity_conflict") ? " · 身份不一致":""),12,Flag(r,"identity_conflict") ? "#E0B66E":"#9A958A",4));
+            table.Children.Add(new Border {Child=g,BorderBrush=Brush("#242226"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(0,7,0,7)});
+        }
+        return rows.Length;
+    }
+    void DrawCurrentSlots(Dictionary<string,object> plan) {
+        var panel=Get<WrapPanel>("CurrentSlots"); panel.Children.Clear();
+        if(plan==null) return;
+        var preview=Rows(plan,"character_preview").ToArray();
+        foreach(var row in Rows(plan,"characters").Where(r=>!EmptyGeneration(Str(r,"primary")) || !EmptyGeneration(Str(r,"backup")))) {
+            string slot=Str(row,"slot"), primary=Str(row,"primary"), backup=Str(row,"backup");
+            bool both=Readability(primary)=="可读" && Readability(backup)=="可读", bad=Flag(row,"identity_conflict") || primary=="unreadable" || backup=="unreadable" || primary=="invalid" || backup=="invalid";
+            string tag=bad ? "需核对":both ? "主档+备档":Readability(primary)=="可读" ? "仅主档":Readability(backup)=="可读" ? "仅备档":"未确认";
+            var detail=preview.FirstOrDefault(p=>Str(p,"slot")==slot && Str(p,"level").Length>0);
+            var head=new DockPanel();
+            var badge=new Border {Style=(Style)Window.FindResource("Tag"),BorderBrush=Brush(bad ? "#8A5A50":"#3A383D"),Child=new TextBlock {Text=tag,FontSize=11,Foreground=Brush(bad ? "#D58A80":"#A8A397")}};
+            DockPanel.SetDock(badge,Dock.Right); head.Children.Add(badge);
+            head.Children.Add(new TextBlock {Text=Str(row,"name").Length>0 ? Str(row,"name"):"姓名未识别",FontFamily=(FontFamily)Window.FindResource("DisplayFont"),FontSize=17,Foreground=Brush(bad ? "#D9BE8A":"#EDE6D6"),VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis});
+            var body=new StackPanel(); body.Children.Add(head);
+            body.Children.Add(new TextBlock {Text="槽位 "+SlotLabel(slot)+"  ·  "+(detail!=null ? "等级 "+Str(detail,"level")+" · 回响 "+Number(detail,"echoes"):"主档"+Readability(primary)+" · 备档"+Readability(backup)),FontSize=12,Foreground=Brush("#948F84"),Margin=new Thickness(0,5,0,0),TextTrimming=TextTrimming.CharacterEllipsis});
+            panel.Children.Add(new Border {Style=(Style)Window.FindResource("Card"),Width=276,Margin=new Thickness(0,0,10,10),Padding=new Thickness(16,11,14,11),BorderBrush=Brush(bad ? "#6E4A44":"#2E2C31"),Child=body});
+        }
+    }
+    void ShowSaveState(int state,string message) {
+        // state: 1 ok, 0 needs a decision, -1 check failed, 2 neutral.
+        var strip=Get<Border>("SaveStateStrip"); var icon=Get<TextBlock>("SaveStateIcon");
+        string color=state==1 ? "#8FAE8A":state==0 ? "#E0B66E":state==-1 ? "#D58A80":"#A8A397";
+        icon.Text=state==1 ? "":state==0 ? "":state==-1 ? "":""; icon.Foreground=Brush(color);
+        strip.BorderBrush=Brush(state==1 ? "#3C4A3A":state==0 ? "#6E5A38":state==-1 ? "#6E4A44":"#3A383D");
+        strip.Background=Brush(state==1 ? "#161A16":state==0 ? "#1D1A16":state==-1 ? "#1E1716":"#18171A");
+        Get<TextBlock>("SaveStateText").Text=message;
     }
     async Task LoadSaveBackups() {
         var ordinary=await Request("save_backups.py",Map("action","list"),"");
@@ -713,7 +893,62 @@ public sealed class DesktopWindow
         ordinary["warnings"]=Warnings(ordinary).Concat(Warnings(special)).ToArray();
         ShowSaveBackups(ordinary);
     }
+    // Home "角色" card: read-only list of verified backups; shows the newest launch/pre-restore snapshot.
+    async Task RefreshHomeSaves() {
+        try { DrawHomeSaves(await Request("save_backups.py",Map("action","list"),"")); }
+        catch { if(!closed) Get<TextBlock>("HomeSaveNote").Text="暂时无法读取备份；打开「存档」页可重新检查。"; }
+    }
+    static string Friendly(DateTimeOffset time) {
+        var local=time.ToLocalTime().DateTime; int days=(DateTime.Today-local.Date).Days;
+        return (days==0 ? "今天 ":days==1 ? "昨天 ":local.ToString("MM-dd "))+local.ToString("HH:mm");
+    }
+    void DrawHomeSaves(Dictionary<string,object> result) {
+        if(closed) return;
+        var panel=Get<StackPanel>("HomeCharacters"); panel.Children.Clear();
+        Dictionary<string,object> latest=null; DateTimeOffset latestTime=DateTimeOffset.MinValue;
+        foreach(var row in Rows(result,"backups")) {
+            string kind=Str(row,"kind"); DateTimeOffset time;
+            if((kind=="launch" || kind=="pre-restore") && DateTimeOffset.TryParse(Str(row,"time"),out time) && time>latestTime) { latest=row; latestTime=time; }
+        }
+        var note=Get<TextBlock>("HomeSaveNote"); var source=Get<TextBlock>("HomeSaveSource");
+        if(latest==null) { source.Text=""; note.Text="还没有备份。存档非空时，启动游戏前会自动备份。"; return; }
+        source.Text="截至 "+Friendly(latestTime)+" · "+(Str(latest,"kind")=="launch" ? "游戏启动前备份":"恢复前备份");
+        var all=Rows(latest,"character_preview").ToArray();
+        var roles=all.Where(r=>Str(r,"source")!="backup" || !all.Any(o=>Str(o,"slot")==Str(r,"slot") && Str(o,"source")!="backup")).ToArray();
+        Func<string,double,string,int,TextBlock> cell=(text,size,color,column)=>{ var t=new TextBlock {Text=text,FontSize=size,Foreground=Brush(color),VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis}; Grid.SetColumn(t,column); return t; };
+        foreach(var r in roles.Take(4)) {
+            var g=new Grid(); foreach(var w in new [] {64.0,0,90,120}) g.ColumnDefinitions.Add(new ColumnDefinition {Width=w==0 ? new GridLength(1,GridUnitType.Star):new GridLength(w)});
+            string issue=Str(r,"issue");
+            g.Children.Add(cell("槽位 "+SlotLabel(Str(r,"slot")),12,"#948F84",0));
+            var name=cell(issue=="unrecognized" ? "无法识别":issue=="read_failed" ? "读取失败":Str(r,"name").Length>0 ? Str(r,"name"):"姓名未识别",15,issue.Length>0 && issue!="name_unavailable" ? "#D9BE8A":"#EDE6D6",1);
+            name.FontFamily=(FontFamily)Window.FindResource("DisplayFont"); g.Children.Add(name);
+            g.Children.Add(cell(Str(r,"level").Length>0 ? "Lv "+Str(r,"level"):"—",12.5,"#C9C3B6",2));
+            g.Children.Add(cell(Str(r,"echoes").Length>0 ? "回响 "+Number(r,"echoes"):"",12.5,"#C9C3B6",3));
+            panel.Children.Add(new Border {Child=g,BorderBrush=Brush("#29272C"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(0,8,0,8)});
+        }
+        note.Text=roles.Length==0 ? "这份备份中没有可显示的角色。":(roles.Length>4 ? "另有 "+(roles.Length-4)+" 名角色。":"")+"来自最近一次自动备份，下次启动游戏前会更新。";
+    }
+    void DrawHomeTrophies(Dictionary<string,object>[] rows,int count) {
+        Get<ProgressBar>("HomeTrophyProgress").Value=count;
+        var panel=Get<StackPanel>("HomeRecentTrophies"); panel.Children.Clear();
+        var recent=rows.Where(r=>r["unlocked"]!=null).OrderByDescending(r=>Convert.ToDouble(r["unlocked"])).Take(3).ToArray();
+        if(recent.Length==0) { panel.Children.Add(new TextBlock {Text="还没有解锁的奖杯。",FontSize=12.5,Foreground=Brush("#948F84"),Margin=new Thickness(0,8,0,0)}); return; }
+        foreach(var row in recent) {
+            var grid=new Grid {Margin=new Thickness(0,9,0,0)};
+            grid.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(42)}); grid.ColumnDefinitions.Add(new ColumnDefinition());
+            BitmapSource source; FrameworkElement icon;
+            if(images.TryGetValue(Convert.ToInt32(row["id"]),out source)) icon=new Image {Source=source,Width=32,Height=32,HorizontalAlignment=HorizontalAlignment.Left};
+            else icon=new TextBlock {Text="♜",FontSize=20,Foreground=Brush("#BBA47A"),VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(6,0,0,0)};
+            grid.Children.Add(icon);
+            string when=""; try { when=new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddSeconds(Convert.ToDouble(row["unlocked"])).ToLocalTime().ToString("yyyy-MM-dd HH:mm"); } catch(ArgumentOutOfRangeException) {}
+            var body=new StackPanel {VerticalAlignment=VerticalAlignment.Center}; Grid.SetColumn(body,1);
+            body.Children.Add(new TextBlock {Text=Str(row,"name"),FontSize=13,Foreground=Brush("#E4DFD4"),TextTrimming=TextTrimming.CharacterEllipsis});
+            if(when.Length>0) body.Children.Add(new TextBlock {Text=when,FontSize=11.5,Foreground=Brush("#948F84"),FontFamily=(FontFamily)Window.FindResource("MonoFont"),Margin=new Thickness(0,2,0,0)});
+            grid.Children.Add(body); panel.Children.Add(grid);
+        }
+    }
     void ShowSaveBackups(Dictionary<string,object> result) {
+        DrawHomeSaves(result);
         var list=Get<ComboBox>("SaveBackupList"); string selected="";
         var previous=list.SelectedItem as ComboBoxItem;
         if(previous!=null) selected=Str(previous.Tag as Dictionary<string,object>,"id");
@@ -734,6 +969,7 @@ public sealed class DesktopWindow
         var warnings=((System.Collections.IEnumerable)result["warnings"]).Cast<object>().Select(x=>Convert.ToString(x)).ToArray();
         Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已读取 "+list.Items.Count+" 份备份。正常恢复普通备份只替换 savedata；异常处理页的整套恢复还会停止旧联机待补记录。处理前存档按专用事务换回联机记录，不代表可直接启动。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
         Get<TextBlock>("PendingSaveRestore").Text=Str(pendingSaveRestore,"message");
+        DrawBackupTimeline();
         ShowSelectedBackup();
     }
     async Task RefreshSaveBackups() {
@@ -743,7 +979,7 @@ public sealed class DesktopWindow
             try { await LoadSaveBackups(); }
             catch(Exception e) {
                 listFailure=e; drawingBackups=true;
-                try { Get<ComboBox>("SaveBackupList").Items.Clear(); pendingSaveRestore=null; ShowSelectedBackup(); }
+                try { Get<ComboBox>("SaveBackupList").Items.Clear(); pendingSaveRestore=null; DrawBackupTimeline(); ShowSelectedBackup(); }
                 finally { drawingBackups=false; }
                 Get<TextBlock>("SaveBackupStatus").Text="备份列表读取失败："+e.Message+"\n仍会单独检查能否继续上次的选择。";
             }
@@ -877,7 +1113,7 @@ public sealed class DesktopWindow
         if(File.Exists(PathAt(@"server\server.json"))) address=Str(ReadJson(PathAt(@"server\server.json")),"address");
         IPAddress ip; if(!IPAddress.TryParse(address,out ip) || ip.AddressFamily!=AddressFamily.InterNetwork || address=="0.0.0.0") throw new InvalidOperationException("请先在开服窗口配置有效的本机 IPv4 地址。");
         Get<TextBox>("Shadnet").Text=address+":31413"; Get<TextBox>("Webapi").Text="http://"+address+":31415";
-        Get<TextBox>("Community").Text="http://"+address+":20443"; Get<TextBox>("Relay").Text=address+":20444"; Page("Settings");
+        Get<TextBox>("Community").Text="http://"+address+":20443"; Get<TextBox>("Relay").Text=address+":20444"; ShowServerHost(); Page("Settings");
         Say("已填入本地服务地址；请填写本服务创建的账号并保存。127.0.0.1 仅限同机，同伴使用局域网或 VPN 地址。");
     }
     void LoadAdmin() {
@@ -947,13 +1183,13 @@ public sealed class DesktopWindow
         try { if(File.Exists(PathAt("features.json"))) { var d=ReadJson(PathAt("features.json")); if(Convert.ToInt32(d["schema"])!=1) throw new InvalidDataException(); savedFeatures=ValidateFeatures((Dictionary<string,object>)d["values"]); } }
         catch { Get<TextBlock>("FeatureStatus").Text="功能配置无法读取，请恢复推荐后保存。游戏启动仍会核对配置。"; }
         foreach(string group in (System.Collections.IEnumerable)catalog["groups"]) {
-            var panel=new StackPanel(); var expander=new Expander {Header=group,Content=panel,Margin=new Thickness(0,0,0,14),Foreground=Brushes.Beige,FontSize=16}; expanders.Add(expander);
+            var panel=new StackPanel {Margin=new Thickness(14,0,14,4)}; var expander=new Expander {Header=group,Content=panel,Margin=new Thickness(0,0,0,10),Foreground=Brush("#E6DFCF"),FontSize=14.5}; expanders.Add(expander);
             foreach(Dictionary<string,object> item in ((System.Collections.IEnumerable)catalog["settings"]).Cast<Dictionary<string,object>>().Where(i=>Str(i,"category")==group)) {
                 string id=Str(item,"id"), type=Str(item,"type"); var body=new StackPanel();
-                if(type=="bool") { var c=new CheckBox {Content=Str(item,"title"),IsEnabled=Flag(item,"editable"),IsChecked=Convert.ToBoolean(savedFeatures[id]),FontSize=15}; featureControls[id]=c; body.Children.Add(c); c.Checked+=FeatureChanged; c.Unchecked+=FeatureChanged; }
-                else { body.Children.Add(Block(Str(item,"title"),15)); if(type=="int") { var c=new TextBox {Text=Convert.ToString(savedFeatures[id]),Width=90,HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(0,8,0,0)}; featureControls[id]=c; body.Children.Add(c); c.TextChanged+=FeatureChanged; } }
+                if(type=="bool") { var c=new CheckBox {Content=Str(item,"title"),IsEnabled=Flag(item,"editable"),IsChecked=Convert.ToBoolean(savedFeatures[id]),FontSize=14}; featureControls[id]=c; body.Children.Add(c); c.Checked+=FeatureChanged; c.Unchecked+=FeatureChanged; }
+                else { body.Children.Add(Block(Str(item,"title"),14)); if(type=="int") { var c=new TextBox {Text=Convert.ToString(savedFeatures[id]),Width=90,HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(0,8,0,0)}; featureControls[id]=c; body.Children.Add(c); c.TextChanged+=FeatureChanged; } }
                 body.Children.Add(Block(Str(item,"description"),12)); body.Children.Add(Block(Str(item,"scope"),11));
-                panel.Children.Add(new Border {Child=body,Background=Brush("#191A1C"),BorderBrush=Brush("#37383A"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(6),Padding=new Thickness(16),Margin=new Thickness(0,10,0,0)});
+                panel.Children.Add(new Border {Child=body,BorderBrush=Brush("#29272C"),BorderThickness=new Thickness(0,0,0,1),Padding=new Thickness(4,12,4,12)});
             }
             Get<StackPanel>("FeatureItems").Children.Add(expander);
         }
@@ -974,7 +1210,7 @@ public sealed class DesktopWindow
         return resolved;
     }
     void FeatureChanged(object sender,RoutedEventArgs e) { featuresDirty=true; Get<TextBlock>("FeatureStatus").Text="有未保存的功能变更。"; FeatureSummary(); }
-    void FeatureSummary() { if(featureControls.ContainsKey("shared_progress")) Get<TextBlock>("FeatureSummary").Text="共享进度："+(((CheckBox)featureControls["shared_progress"]).IsChecked==true?"开":"关")+" · 敌人强化："+(((CheckBox)featureControls["scaling"]).IsChecked==true?"开":"关")+" · 队友互伤由纷争之铃控制"; }
+    void FeatureSummary() { if(featureControls.ContainsKey("shared_progress")) Get<TextBlock>("FeatureSummary").Text="共享进度："+(((CheckBox)featureControls["shared_progress"]).IsChecked==true?"开":"关")+"\n敌人强化："+(((CheckBox)featureControls["scaling"]).IsChecked==true?"开":"关")+"\n队友互伤由纷争之铃控制"; }
     void SaveFeatures() {
         RequireIdle(); var values=new Dictionary<string,object>();
         foreach(var p in featureControls) { if(p.Value is CheckBox) values[p.Key]=((CheckBox)p.Value).IsChecked==true; else { int n; if(!Regex.IsMatch(((TextBox)p.Value).Text,@"^\d+$") || !Int32.TryParse(((TextBox)p.Value).Text,out n)) throw new InvalidDataException("需要填写整数百分比。"); values[p.Key]=n; } }
@@ -983,7 +1219,7 @@ public sealed class DesktopWindow
         WriteJson(PathAt("features.json"),Map("schema",1,"values",values)); savedFeatures=values; featuresDirty=false; Get<TextBlock>("FeatureStatus").Text="功能配置已保存，下次启动生效。"; FeatureSummary();
     }
     static SolidColorBrush Brush(string color) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)); }
-    static TextBlock Block(string text,int size) { return new TextBlock {Text=text,FontSize=size,Foreground=Brush("#A6AAA8"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0),LineHeight=size+9}; }
+    static TextBlock Block(string text,int size) { return new TextBlock {Text=text,FontSize=size,Foreground=Brush("#9A958A"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,5,0,0),LineHeight=size+8}; }
     async void RefreshInBackground() { await RefreshTrophies(); }
     public async Task<bool> RefreshTrophies(bool fresh=false) {
         if(trophyRead!=null && !trophyRead.IsCompleted) { bool ok=await trophyRead; if(!fresh) return ok; }
@@ -1004,11 +1240,11 @@ public sealed class DesktopWindow
     void DrawTrophies() {
         var panel=Get<StackPanel>("TrophyItems"); panel.Children.Clear();
         var data=trophies.Snapshot;
-        if(data==null) { Get<TextBlock>("TrophySummary").Text="记录暂不可用"; Get<TextBlock>("TrophyNotice").Text=trophies.Warning; Get<Button>("HomeTrophies").Content="奖杯 · 记录暂不可用"; return; }
+        if(data==null) { Get<TextBlock>("TrophySummary").Text="记录暂不可用"; Get<TextBlock>("TrophyNotice").Text=trophies.Warning; Get<Button>("HomeTrophies").Content="奖杯 · 记录暂不可用"; var recentPanel=Get<StackPanel>("HomeRecentTrophies"); recentPanel.Children.Clear(); recentPanel.Children.Add(new TextBlock {Text="奖杯记录暂不可用。",FontSize=12.5,Foreground=Brush("#948F84"),Margin=new Thickness(0,8,0,0)}); return; }
         var rows=((System.Collections.IEnumerable)data["trophies"]).Cast<Dictionary<string,object>>().ToArray();
         int count=rows.Count(r=>r["unlocked"]!=null), baseCount=rows.Count(r=>Str(r,"group")=="base" && r["unlocked"]!=null);
         Get<TextBlock>("TrophySummary").Text="已解锁 "+count+" / 40    本体 "+baseCount+" / 34    老猎人 "+(count-baseCount)+" / 6";
-        Get<Button>("HomeTrophies").Content="奖杯 · "+count+" / 40"; Get<ProgressBar>("TrophyProgress").Value=count;
+        Get<Button>("HomeTrophies").Content="奖杯 · "+count+" / 40"; Get<ProgressBar>("TrophyProgress").Value=count; DrawHomeTrophies(rows,count);
         Get<TextBlock>("TrophyNotice").Text=trophies.Warning!=null ? "读取失败，当前显示上次成功结果。"+trophies.Warning :
             (Flag(data,"missing") ? "尚无奖杯记录。":"最近读取："+DateTime.Now.ToString("HH:mm:ss"))+" · "+Str(data,"path")+
             (Convert.ToInt32(data["ignored"])>0 ? " · 已忽略 "+data["ignored"]+" 行无效记录":"")+(Flag(data,"platinum_due") ? "\n白金条件已满足，尚无解锁记录。":"");
@@ -1018,16 +1254,16 @@ public sealed class DesktopWindow
             bool earned=row["unlocked"]!=null;
             if(Get<RadioButton>("TrophyEarned").IsChecked==true && !earned || Get<RadioButton>("TrophyLocked").IsChecked==true && earned) continue;
             string group=Str(row,"group"); if(prior!=group) { panel.Children.Add(Block(group=="base"?"BLOODBORNE · 本体":"THE OLD HUNTERS · 老猎人",14)); prior=group; }
-            var grid=new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(76)}); grid.ColumnDefinitions.Add(new ColumnDefinition());
+            var grid=new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(64)}); grid.ColumnDefinitions.Add(new ColumnDefinition());
             BitmapSource source; FrameworkElement icon;
-            if(images.TryGetValue(Convert.ToInt32(row["id"]),out source)) icon=new Image {Source=source,Width=60,Height=60,Opacity=earned?1:.30};
-            else icon=new TextBlock {Text="♜",FontSize=34,Foreground=Brush("#BBA47A"),VerticalAlignment=VerticalAlignment.Center,HorizontalAlignment=HorizontalAlignment.Center,Opacity=earned?1:.35};
+            if(images.TryGetValue(Convert.ToInt32(row["id"]),out source)) icon=new Image {Source=source,Width=48,Height=48,Opacity=earned?1:.30,HorizontalAlignment=HorizontalAlignment.Left};
+            else icon=new TextBlock {Text="♜",FontSize=28,Foreground=Brush("#BBA47A"),VerticalAlignment=VerticalAlignment.Center,HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(8,0,0,0),Opacity=earned?1:.35};
             grid.Children.Add(icon); var body=new StackPanel(); Grid.SetColumn(body,1); grid.Children.Add(body);
             string grade=Str(row,"grade"); var grades=new Dictionary<string,string>{{"platinum","白金"},{"gold","金"},{"silver","银"},{"bronze","铜"}};
-            body.Children.Add(new TextBlock {Text=Str(row,"name")+"  ·  "+grades[grade],FontSize=16,Foreground=Brush(earned?"#EAE5DA":"#A09D96"),TextWrapping=TextWrapping.Wrap});
+            body.Children.Add(new TextBlock {Text=Str(row,"name")+"  ·  "+grades[grade],FontSize=14,Foreground=Brush(earned?"#EDE6D6":"#8F8A7F"),TextWrapping=TextWrapping.Wrap});
             body.Children.Add(Block(Str(row,"description").Replace("\n",""),12));
             string when="未解锁"; if(earned) { try { when="已解锁 · "+new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddSeconds(Convert.ToDouble(row["unlocked"])).ToLocalTime().ToString("yyyy-MM-dd HH:mm"); } catch(ArgumentOutOfRangeException) { when="已解锁 · 时间超出显示范围"; } }
-            body.Children.Add(Block(when,11)); panel.Children.Add(new Border {Child=grid,Padding=new Thickness(16),Margin=new Thickness(0,10,0,0),Background=Brush("#191A1C"),BorderBrush=Brush(earned?"#514534":"#303133"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(6)});
+            body.Children.Add(Block(when,11)); panel.Children.Add(new Border {Child=grid,Padding=new Thickness(8,12,8,12),BorderBrush=Brush("#29272C"),BorderThickness=new Thickness(0,0,0,1)});
         }
     }
     public void Validate(string capture,string page) {

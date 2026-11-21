@@ -1,359 +1,583 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="The Hunt" Width="1160" Height="800" MinWidth="1000" MinHeight="740"
-        WindowStartupLocation="CenterScreen" Background="#111214" Foreground="#D7D5CE"
-        FontSize="14">
+        WindowStartupLocation="CenterScreen" Background="#121113" Foreground="#E4DFD4"
+        FontSize="13.5">
   <Window.Resources/>
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="208"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-    <Border Background="#17181A" BorderBrush="#343436" BorderThickness="0,0,1,0">
-      <DockPanel Margin="24,30">
+
+    <!-- Sidebar -->
+    <Border Background="{StaticResource SidebarBrush}" BorderBrush="#252328" BorderThickness="0,0,1,0">
+      <DockPanel Margin="18,30,18,22">
         <StackPanel DockPanel.Dock="Top">
-          <TextBlock Text="THE HUNT" FontSize="23" Foreground="#BDBBB3"/>
-          <TextBlock Text="无缝联机启动器" FontSize="9" Foreground="#7F8284" Margin="0,10,0,36"/>
-          <RadioButton x:Name="HomeNav" GroupName="Navigation" Content="开始游戏" Style="{StaticResource NavigationButton}" IsChecked="True" Margin="0,0,0,8"/>
-          <RadioButton x:Name="SettingsNav" GroupName="Navigation" Content="游戏与联机" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
-          <RadioButton x:Name="FeatureNav" GroupName="Navigation" Content="功能与玩法" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
-          <RadioButton x:Name="ServerNav" GroupName="Navigation" Content="本地与云端开服" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
-          <RadioButton x:Name="TrophyNav" GroupName="Navigation" Content="奖杯" Style="{StaticResource NavigationButton}" Margin="0,0,0,8"/>
-          <RadioButton x:Name="SaveNav" GroupName="Navigation" Content="存档" Style="{StaticResource NavigationButton}"/>
+          <TextBlock Text="THE HUNT" Style="{StaticResource Display}" FontSize="23" Foreground="#D2BE93" HorizontalAlignment="Center"/>
+          <Grid Margin="8,10,8,0">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Border Height="1" Background="#5E5340" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text="◆" FontSize="7" Foreground="#BBA47A" Margin="8,0"/>
+            <Border Grid.Column="2" Height="1" Background="#5E5340" VerticalAlignment="Center"/>
+          </Grid>
+          <TextBlock Text="无 缝 联 机 启 动 器" FontSize="11" Foreground="#8F8A7F" HorizontalAlignment="Center" Margin="0,8,0,24"/>
+          <RadioButton x:Name="HomeNav" GroupName="Navigation" Content="开始游戏" Tag="&#xE768;" Style="{StaticResource NavigationButton}" IsChecked="True" Margin="0,0,0,2"/>
+          <RadioButton x:Name="SettingsNav" GroupName="Navigation" Content="游戏与联机" Tag="&#xE7FC;" Style="{StaticResource NavigationButton}" Margin="0,0,0,2"/>
+          <RadioButton x:Name="FeatureNav" GroupName="Navigation" Content="功能与玩法" Tag="&#xE9E9;" Style="{StaticResource NavigationButton}" Margin="0,0,0,2"/>
+          <RadioButton x:Name="ServerNav" GroupName="Navigation" Content="开服" Tag="&#xE968;" Style="{StaticResource NavigationButton}" Margin="0,0,0,2"/>
+          <RadioButton x:Name="TrophyNav" GroupName="Navigation" Content="奖杯" Tag="&#xE734;" Style="{StaticResource NavigationButton}" Margin="0,0,0,2"/>
+          <RadioButton x:Name="SaveNav" GroupName="Navigation" Content="存档" Tag="&#xE8B7;" Style="{StaticResource NavigationButton}"/>
         </StackPanel>
-        <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
-          <Border Height="1" Background="#343B3F" Margin="0,0,0,20"/>
-          <TextBlock Text="iytq" FontStyle="Italic" FontSize="21" Foreground="#BDBBB3" Margin="0,0,0,14"/>
-          <TextBlock Text="BBport 1.9.7" Foreground="#A8B1B4"/>
-          <TextBlock Text="中文 · 独立运行环境" Style="{StaticResource Caption}" Margin="0,8,0,8"/>
-          <TextBlock Text="0.1.0-preview.25" FontSize="11" Foreground="#68767D"/>
-          <Button x:Name="OpenGuide" Content="使用文档 ↗" ToolTip="在默认浏览器打开使用文档"
-                  HorizontalAlignment="Left" Padding="10,6" Margin="0,14,0,0" FontSize="12"/>
+        <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Margin="6,0">
+          <Border Style="{StaticResource Divider}" Margin="0,0,0,16"/>
+          <TextBlock Text="iytq" Style="{StaticResource Display}" FontStyle="Italic" FontSize="19" Foreground="#BDB6A6" Margin="0,0,0,10"/>
+          <TextBlock x:Name="VersionLabel" Text="0.1.0-preview.26" FontSize="11.5" Foreground="#8F8A7F"/>
+          <TextBlock Text="BBport 1.9.7 · 中文独立环境" FontSize="11.5" Foreground="#6F6B64" Margin="0,4,0,0"/>
+          <Button x:Name="OpenGuide" Content="使用文档 ↗" ToolTip="在默认浏览器打开使用文档" Style="{StaticResource LinkButton}"
+                  HorizontalAlignment="Left" Margin="0,12,0,0" FontSize="12.5"/>
+          <Button x:Name="CreateShortcut" Content="创建桌面快捷方式" ToolTip="在桌面创建「The Hunt Launcher」快捷方式，指向这份启动器" Style="{StaticResource LinkButton}"
+                  HorizontalAlignment="Left" Margin="0,8,0,0" FontSize="12.5"/>
         </StackPanel>
         <Grid/>
       </DockPanel>
     </Border>
-    <Grid Grid.Column="1" Margin="34,28,34,24">
+
+    <Grid Grid.Column="1" Margin="32,26,32,20" MaxWidth="1200">
       <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+      <!-- ============ Home ============ -->
       <Grid x:Name="HomePage">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+        <!-- Borderless hero header: bleeds to the window edge and fades into the page. -->
+        <Border Height="226" Margin="-32,-26,-32,4" ClipToBounds="True" Background="#121113">
+          <Grid>
+            <Grid.Background><ImageBrush ImageSource="@assets/artwork/home-hero.jpg" Stretch="UniformToFill" AlignmentX="Right" AlignmentY="Center"/></Grid.Background>
+            <Border Background="{StaticResource BannerShade}"/>
+            <Border Background="{StaticResource BannerFloor}"/>
+            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,22">
+              <TextBlock Text="B L O O D B O R N E" Foreground="#A99F8A" FontSize="11"/>
+              <TextBlock Text="THE HUNT" Style="{StaticResource Display}" FontSize="44" Foreground="#E3D3AE" Margin="0,6,0,2"/>
+              <TextBlock Text="无缝联机 · 两位猎人使用不同的账号，连接同一个服务器。" Foreground="#A39D90" FontSize="12.5"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="244"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-<Border CornerRadius="9" BorderBrush="#434048" BorderThickness="1" ClipToBounds="True">
-<Grid><Grid.Background><ImageBrush ImageSource="@assets/artwork/home-hunter.png" Stretch="UniformToFill" Viewbox="0,0,1,1"/></Grid.Background>
-<Border><Border.Background><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#F2111214" Offset="0"/><GradientStop Color="#B2111214" Offset="0.45"/><GradientStop Color="#10111214" Offset="1"/></LinearGradientBrush></Border.Background></Border>
-<StackPanel VerticalAlignment="Center" Margin="30,0"><TextBlock Text="B L O O D B O R N E" Foreground="#B0A895" FontSize="11"/>
-<TextBlock Text="THE HUNT" FontSize="44" Foreground="#EEE7D9" Margin="0,18,0,12"/>
-<TextBlock Text="无缝联机" Foreground="#CBC1AD" FontSize="16"/>
-</StackPanel></Grid></Border>
-        <Grid Grid.Row="1" Margin="0,22,0,0">
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
-          <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" CornerRadius="6" Padding="20">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="1.6*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <Border Style="{StaticResource Card}" Padding="20,14,20,12" Margin="0,0,0,14">
             <StackPanel>
-              <TextBlock Text="画面与操作" Style="{StaticResource Caption}"/>
-              <TextBlock x:Name="GraphicsSummary" Text="选择本机普通版配置" FontSize="19" Margin="0,10,0,9"/>
-              <TextBlock Text="同步本机画质、帧率与按键设置" Style="{StaticResource Caption}"/>
+              <TextBlock Text="出发前检查" Style="{StaticResource SectionTitle}" Margin="0,0,0,6"/>
+              <Grid x:Name="ReadyRows">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="92"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="42"/><RowDefinition Height="42"/><RowDefinition Height="42"/></Grid.RowDefinitions>
+                <Border Grid.Row="0" Grid.ColumnSpan="4" BorderBrush="#29272C" BorderThickness="0,0,0,1"/>
+                <Border Grid.Row="1" Grid.ColumnSpan="4" BorderBrush="#29272C" BorderThickness="0,0,0,1"/>
+                <Border Grid.Row="2" Grid.ColumnSpan="4" BorderBrush="#29272C" BorderThickness="0,0,0,1"/>
+
+                <TextBlock x:Name="ReadyGameIcon" Grid.Row="0" Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="#E0B66E" VerticalAlignment="Center"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="游戏文件" VerticalAlignment="Center"/>
+                <TextBlock x:Name="GraphicsSummary" Grid.Row="0" Grid.Column="2" Text="选择本机普通版、游戏文件和画质配置" Style="{StaticResource Caption}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+                <Button x:Name="ReadyGameAction" Grid.Row="0" Grid.Column="3" Content="去设置  →" Style="{StaticResource LinkButton}"/>
+
+                <TextBlock x:Name="ReadyServerIcon" Grid.Row="1" Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="#E0B66E" VerticalAlignment="Center"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="联机服务器" VerticalAlignment="Center"/>
+                <TextBlock x:Name="ServerSummary" Grid.Row="1" Grid.Column="2" Text="填写自己的 BBSC 服务器" Style="{StaticResource Caption}" FontSize="12.5" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+                <Button x:Name="ReadyServerAction" Grid.Row="1" Grid.Column="3" Content="去设置  →" Style="{StaticResource LinkButton}"/>
+
+                <TextBlock x:Name="ReadyAccountIcon" Grid.Row="2" Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="#E0B66E" VerticalAlignment="Center"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="私服账号" VerticalAlignment="Center"/>
+                <TextBlock x:Name="AccountSummary" Grid.Row="2" Grid.Column="2" Text="尚未设置" Style="{StaticResource Caption}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+                <Button x:Name="ReadyAccountAction" Grid.Row="2" Grid.Column="3" Content="去设置  →" Style="{StaticResource LinkButton}"/>
+
+                <TextBlock x:Name="ReadyPublicIcon" Grid.Row="3" Text="&#xE946;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="#7D7A73" VerticalAlignment="Center"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="公共在线" VerticalAlignment="Center"/>
+                <TextBlock x:Name="ReadyPublicDetail" Grid.Row="3" Grid.Column="2" Text="可选 · 笔记、血迹与游魂" Style="{StaticResource Caption}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"/>
+                <Button x:Name="ReadyPublicAction" Grid.Row="3" Grid.Column="3" Content="查看  →" Style="{StaticResource LinkButton}"/>
+              </Grid>
+              <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Style="{StaticResource Caption}" Margin="0,10,0,0" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
           </Border>
-          <Border Grid.Column="2" Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" CornerRadius="6" Padding="20">
+
+          <!-- Characters, as recorded in the newest verified backup (read-only list). -->
+          <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20,14,20,12" Margin="0">
             <StackPanel>
-              <TextBlock Text="联机身份" Style="{StaticResource Caption}"/>
-              <TextBlock x:Name="AccountSummary" Text="尚未设置" FontSize="19" Margin="0,10,0,9"/>
-              <TextBlock x:Name="ServerSummary" Text="填写自己的 BBSC 服务器" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis"/>
+              <DockPanel Margin="0,0,0,4">
+                <Button x:Name="HomeSavesLink" DockPanel.Dock="Right" Content="管理存档 ›" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
+                <TextBlock Text="角色" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="HomeSaveSource" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,3,12,0" TextTrimming="CharacterEllipsis"/>
+              </DockPanel>
+              <StackPanel x:Name="HomeCharacters"/>
+              <TextBlock x:Name="HomeSaveNote" Text="正在读取最近的备份…" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
             </StackPanel>
           </Border>
-        </Grid>
-        <StackPanel Grid.Row="2" Margin="2,26,2,0">
-          <Button x:Name="HomeTrophies" Content="奖杯 · 正在读取" HorizontalAlignment="Left" Margin="0,0,0,18"/>
-          <TextBlock Text="准备事项" Foreground="#B4B0A6" Margin="0,0,0,10"/>
-          <TextBlock Text="首次启动会复制本机存档。之后无缝版的进度独立保存。&#x0a;两位猎人使用不同的账号，并连接同一个 BBSC 服务。"
-                     Foreground="#9CA9AF" TextWrapping="Wrap" LineHeight="24"/>
-          <TextBlock x:Name="KitStatus" Text="猎具将在游戏启动时提前准备。" Foreground="#8B8E86" Margin="0,16,0,0" TextWrapping="Wrap"/>
-          <TextBlock x:Name="FeatureSummary" Foreground="#8B8E86" Margin="0,10,0,0" TextWrapping="Wrap"/>
-        </StackPanel>
+          </Grid>
+
+          <!-- Right column: the trophy card fills down to the bottom of the left column. -->
+          <Grid Grid.Column="2">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Border Style="{StaticResource Card}" Padding="20,14,20,14" Margin="0,0,0,14">
+              <StackPanel>
+                <DockPanel Margin="0,0,0,10">
+                  <Button x:Name="HomeFeatureLink" DockPanel.Dock="Right" Content="调整 ›" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
+                  <TextBlock Text="本次玩法" Style="{StaticResource SectionTitle}"/>
+                </DockPanel>
+                <TextBlock x:Name="FeatureSummary" Foreground="#C9C3B6" FontSize="12.5" LineHeight="23" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20,14,20,12" Margin="0">
+              <StackPanel>
+                <DockPanel>
+                  <Button x:Name="HomeTrophiesAll" DockPanel.Dock="Right" Content="全部 ›" Style="{StaticResource LinkButton}" VerticalAlignment="Center"/>
+                  <Button x:Name="HomeTrophies" Content="奖杯 · 正在读取" Style="{StaticResource LinkButton}" HorizontalAlignment="Left"
+                          FontFamily="{DynamicResource DisplayFont}" FontSize="16.5" Foreground="#E6DFCF" ToolTip="查看全部 40 项奖杯"/>
+                </DockPanel>
+                <ProgressBar x:Name="HomeTrophyProgress" Maximum="40" Height="4" Foreground="#BBA47A" Background="#2A282D" Margin="0,10,0,6"/>
+                <TextBlock Text="最近解锁" Style="{StaticResource Caption}" Margin="0,4,0,0"/>
+                <StackPanel x:Name="HomeRecentTrophies"/>
+              </StackPanel>
+            </Border>
+          </Grid>
         </Grid>
         </ScrollViewer>
       </Grid>
 
-<Grid x:Name="TrophyPage" Visibility="Collapsed">
-<Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-<StackPanel Margin="0,0,0,18">
-<DockPanel><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="TestTrophyToast" Content="测试提示" ToolTip="预览右上角提示，不修改奖杯记录；游戏运行时返回游戏即可看到。" Margin="0,0,8,0"/><Button x:Name="RefreshTrophies" Content="刷新奖杯"/></StackPanel><TextBlock Text="奖杯" FontSize="28"/></DockPanel>
-<TextBlock Text="当前无缝环境 · 包含此环境的所有角色" Style="{StaticResource Caption}" Margin="0,8,0,16"/>
-<TextBlock x:Name="TrophySummary" Text="正在读取记录…" FontSize="18" Foreground="#BBA47A"/>
-<ProgressBar x:Name="TrophyProgress" Maximum="40" Height="4" Foreground="#BBA47A" Background="#292826" Margin="0,14,0,14"/>
-<WrapPanel><RadioButton x:Name="TrophyAll" Content="全部" GroupName="TrophyFilter" IsChecked="True" Margin="0,0,24,0"/>
-<RadioButton x:Name="TrophyEarned" Content="已解锁" GroupName="TrophyFilter" Margin="0,0,24,0"/>
-<RadioButton x:Name="TrophyLocked" Content="未解锁" GroupName="TrophyFilter"/></WrapPanel>
-<TextBlock x:Name="TrophyNotice" TextWrapping="Wrap" Foreground="#A6AAA8" Margin="0,12,0,0"/>
-<TextBlock x:Name="TrophySession" Foreground="#CDB789" TextWrapping="Wrap" Margin="0,8,0,0"/>
-</StackPanel>
-<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="TrophyItems" Margin="0,0,14,0"/></ScrollViewer>
-</Grid>
+      <!-- ============ Trophies ============ -->
+      <Grid x:Name="TrophyPage" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,16">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="TestTrophyToast" Content="测试提示" ToolTip="预览右上角提示，不修改奖杯记录；游戏运行时返回游戏即可看到。" Margin="0,0,8,0"/>
+              <Button x:Name="RefreshTrophies" Content="刷新奖杯"/>
+            </StackPanel>
+            <TextBlock Text="奖杯" Style="{StaticResource PageTitle}"/>
+          </DockPanel>
+          <TextBlock Text="当前无缝环境 · 包含此环境的所有角色" Style="{StaticResource PageSubtitle}"/>
+          <Border Style="{StaticResource Card}" Margin="0,16,0,0" Padding="22,16">
+            <StackPanel>
+              <TextBlock x:Name="TrophySummary" Text="正在读取记录…" Style="{StaticResource Display}" FontSize="21" Foreground="#E3D3AE"/>
+              <ProgressBar x:Name="TrophyProgress" Maximum="40" Height="5" Foreground="#BBA47A" Background="#2A282D" Margin="0,12,0,14"/>
+              <WrapPanel>
+                <RadioButton x:Name="TrophyAll" Content="全部" GroupName="TrophyFilter" IsChecked="True" Style="{StaticResource FilterChip}"/>
+                <RadioButton x:Name="TrophyEarned" Content="已解锁" GroupName="TrophyFilter" Style="{StaticResource FilterChip}"/>
+                <RadioButton x:Name="TrophyLocked" Content="未解锁" GroupName="TrophyFilter" Style="{StaticResource FilterChip}"/>
+              </WrapPanel>
+              <TextBlock x:Name="TrophyNotice" TextWrapping="Wrap" Style="{StaticResource Caption}" Margin="0,12,0,0"/>
+              <TextBlock x:Name="TrophySession" Foreground="#D9C7A0" TextWrapping="Wrap" Margin="0,6,0,0"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="TrophyItems" Margin="0,0,12,0"/></ScrollViewer>
+      </Grid>
+
+      <!-- ============ Game & network ============ -->
       <Grid x:Name="SettingsPage" Visibility="Collapsed">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
-        <Border CornerRadius="8" BorderBrush="#3D3B40" BorderThickness="1" Margin="0,0,0,18" Height="128" ClipToBounds="True">
-<Grid><Grid.Background><ImageBrush ImageSource="@assets/artwork/hosting-messengers.png" Stretch="UniformToFill" Viewbox="0,0,1,1"/></Grid.Background>
-<Border><Border.Background><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#F8111214" Offset="0"/><GradientStop Color="#CA111214" Offset="0.5"/><GradientStop Color="#20111214" Offset="1"/></LinearGradientBrush></Border.Background></Border>
-<StackPanel VerticalAlignment="Center" Margin="24,0"><TextBlock Text="游戏与联机" FontSize="28" Foreground="#E4DDD0"/><TextBlock Text="选择本机游戏与配置，连接同一个无缝服务。" Foreground="#ADA9A0" FontSize="12" Margin="0,10,0,0" TextWrapping="Wrap"/></StackPanel></Grid></Border>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+        <Border Style="{StaticResource Banner}">
+          <Grid>
+            <Grid.Background><ImageBrush ImageSource="@assets/artwork/banner-online.jpg" Stretch="UniformToFill" ViewboxUnits="RelativeToBoundingBox" Viewbox="0,0.31,1,0.47"/></Grid.Background>
+            <Border Background="{StaticResource BannerShade}"/><Border Background="{StaticResource BannerFloor}"/>
+            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,20"><TextBlock Text="游戏与联机" Style="{StaticResource PageTitle}"/><TextBlock Text="选择本机游戏，连接同一个无缝服务。" Style="{StaticResource PageSubtitle}"/></StackPanel>
+          </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0">
           <StackPanel>
-            <TextBlock Text="普通版启动程序  ·  Bloodborne.exe" Style="{StaticResource FieldLabel}"/>
-            <DockPanel><Button x:Name="PickInstall" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="InstallPath" IsReadOnly="True"/></DockPanel>
-            <TextBlock Text="游戏文件  ·  CUSA03173 1.09 / eboot.bin" Style="{StaticResource FieldLabel}"/>
-            <DockPanel><Button x:Name="PickGame" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="GamePath" IsReadOnly="True"/></DockPanel>
-            <TextBlock Text="本机画质配置  ·  普通版 bbport.ini" Style="{StaticResource FieldLabel}"/>
-            <DockPanel><Button x:Name="PickGraphics" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="GraphicsPath" IsReadOnly="True"/></DockPanel>
-            <TextBlock Text="在普通版「高级 → bbport.ini」中找到此文件。" Style="{StaticResource Caption}" Margin="0,6,0,8"/>
-            <Border Height="1" Background="#30383C" Margin="0,10,0,0"/>
-            <Grid>
-              <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Border Style="{StaticResource Card}">
               <StackPanel>
-                <TextBlock Text="shadNet 合作服务器  ·  主机:端口" Style="{StaticResource FieldLabel}"/>
-                <TextBox x:Name="Shadnet"/>
-                <TextBlock Text="BBSC 游戏服务  ·  http(s)://主机:端口" Style="{StaticResource FieldLabel}"/>
-                <TextBox x:Name="Community"/>
-                <TextBlock Text="联机账号" Style="{StaticResource FieldLabel}"/>
-                <TextBox x:Name="Account"/>
+                <TextBlock Text="游戏文件" Style="{StaticResource SectionTitle}" Margin="0,0,0,4"/>
+                <Grid Margin="0,10,0,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="10"/><RowDefinition/><RowDefinition Height="10"/><RowDefinition/></Grid.RowDefinitions>
+                  <StackPanel VerticalAlignment="Center"><TextBlock Text="普通版启动程序"/><TextBlock Text="Bloodborne.exe" Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}" FontSize="11.5"/></StackPanel>
+                  <TextBox x:Name="InstallPath" Grid.Column="1" IsReadOnly="True" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                  <Button x:Name="PickInstall" Grid.Column="2" Content="选择…" Margin="10,0,0,0"/>
+                  <StackPanel Grid.Row="2" VerticalAlignment="Center"><TextBlock Text="游戏文件"/><TextBlock Text="eboot.bin · 1.09" Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}" FontSize="11.5"/></StackPanel>
+                  <TextBox x:Name="GamePath" Grid.Row="2" Grid.Column="1" IsReadOnly="True" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                  <Button x:Name="PickGame" Grid.Row="2" Grid.Column="2" Content="选择…" Margin="10,0,0,0"/>
+                  <StackPanel Grid.Row="4" VerticalAlignment="Center"><TextBlock Text="本机画质配置"/><TextBlock Text="普通版 bbport.ini" Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}" FontSize="11.5"/></StackPanel>
+                  <TextBox x:Name="GraphicsPath" Grid.Row="4" Grid.Column="1" IsReadOnly="True" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                  <Button x:Name="PickGraphics" Grid.Row="4" Grid.Column="2" Content="选择…" Margin="10,0,0,0"/>
+                </Grid>
+                <TextBlock Text="画质配置在普通版「高级 → bbport.ini」中找到；每次启动都会重新读取。" Style="{StaticResource Caption}" Margin="0,10,0,0"/>
               </StackPanel>
-              <StackPanel Grid.Column="2">
-                <TextBlock Text="shadNet WebAPI  ·  http(s)://主机:端口" Style="{StaticResource FieldLabel}"/>
-                <TextBox x:Name="Webapi"/>
-                <TextBlock Text="BBSC Relay  ·  主机:端口" Style="{StaticResource FieldLabel}"/>
-                <TextBox x:Name="Relay"/>
-                <TextBlock Text="密码  ·  已保存时留空即可" Style="{StaticResource FieldLabel}"/>
-                <PasswordBox x:Name="Password"/>
+            </Border>
+
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <DockPanel>
+                  <Button x:Name="UseLocalServer" DockPanel.Dock="Right" Content="填入本机服务地址" ToolTip="读取开服窗口已保存的监听地址；127.0.0.1 仅限同机。"/>
+                  <TextBlock Text="联机服务器" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Grid Margin="0,14,0,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                  <TextBlock Text="服务器地址" VerticalAlignment="Center"/>
+                  <TextBox x:Name="ServerHost" Grid.Column="1" FontFamily="{StaticResource MonoFont}" FontSize="13" ToolTip="只填主机名或 IP，例如 192.168.1.20"/>
+                </Grid>
+                <TextBlock x:Name="AddressNote" Text="只填主机名或 IP，四项端口会自动补全：31413 / 31415 / 20443 / 20444。" Style="{StaticResource Caption}" Margin="150,7,0,0" TextWrapping="Wrap"/>
+                <Expander x:Name="AdvancedAddresses" Header="高级：分别填写四项地址" Margin="0,14,0,0" FontSize="13">
+                  <Grid Margin="16,4,16,14">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="shadNet 合作服务器 · 主机:端口" Style="{StaticResource FieldLabel}"/>
+                      <TextBox x:Name="Shadnet" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                      <TextBlock Text="BBSC 游戏服务 · http(s)://主机:端口" Style="{StaticResource FieldLabel}"/>
+                      <TextBox x:Name="Community" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Text="shadNet WebAPI · http(s)://主机:端口" Style="{StaticResource FieldLabel}"/>
+                      <TextBox x:Name="Webapi" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                      <TextBlock Text="BBSC Relay · 主机:端口" Style="{StaticResource FieldLabel}"/>
+                      <TextBox x:Name="Relay" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/>
+                    </StackPanel>
+                  </Grid>
+                </Expander>
+                <Border Style="{StaticResource Divider}" Margin="0,18,0,4"/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                  <StackPanel><TextBlock Text="私服账号" Style="{StaticResource FieldLabel}"/><TextBox x:Name="Account"/></StackPanel>
+                  <StackPanel Grid.Column="2"><TextBlock Text="密码 · 已保存时留空即可" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="Password"/></StackPanel>
+                </Grid>
+                <TextBlock Text="地址和账号由服务器管理员提供，每位玩家使用不同账号。密码使用当前 Windows 用户加密保存在本机。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,10,0,0"/>
               </StackPanel>
-            </Grid>
-            <TextBlock Text="以上地址由服务器管理员提供。密码使用当前 Windows 用户加密保存在本机。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,8"/>
-            <Border BorderBrush="#37383A" BorderThickness="1" Padding="18" Margin="0,16,0,8">
+            </Border>
+
+            <Border Style="{StaticResource Card}">
               <StackPanel x:Name="PublicFields">
-                <CheckBox x:Name="PublicOnline" Content="使用 SuperMedo 公共在线内容" IsChecked="True" Foreground="#D3D0C5" FontSize="17"/>
-                <TextBlock Text="笔记、血迹与游魂使用公共服；无缝合作仍使用上方私服。首次填写后自动登录，无需打开普通版启动器。关闭此项后使用私服的独立内容。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="23" Margin="0,10,0,4"/>
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <TextBlock Text="公共在线内容（可选）" Style="{StaticResource SectionTitle}"/>
+                <CheckBox x:Name="PublicOnline" Content="使用 SuperMedo 公共在线内容" IsChecked="True" Style="{StaticResource Switch}" Margin="0,14,0,0"/>
+                <TextBlock Text="笔记、血迹与游魂使用公共服；无缝合作仍使用上方私服。关闭后使用私服的独立内容。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
                   <StackPanel><TextBlock Text="公共账号 · SuperMedo Online ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PublicAccount"/></StackPanel>
                   <StackPanel Grid.Column="2"><TextBlock Text="公共密码 · 已保存时留空" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="PublicPassword"/></StackPanel>
                 </Grid>
-                <WrapPanel Margin="0,12,0,0"><Button x:Name="PublicVerify" Content="验证并保存账号" Margin="0,0,10,6"/><Button x:Name="PublicForget" Content="忘记公共账号" Margin="0,0,0,6"/></WrapPanel>
-                <TextBlock x:Name="PublicStatus" Text="使用已有 SuperMedo 账号；没有账号可先在普通版启动器创建。两套账号分别加密保存。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,6,0,0"/>
+                <DockPanel Margin="0,14,0,0">
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="PublicForget" Content="忘记公共账号" Margin="0,0,8,0"/>
+                    <Button x:Name="PublicVerify" Content="验证并保存账号"/>
+                  </StackPanel>
+                  <TextBlock x:Name="PublicStatus" Text="使用已有 SuperMedo 账号；没有账号可先在普通版启动器创建。两套账号分别加密保存。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,16,0"/>
+                </DockPanel>
               </StackPanel>
             </Border>
-            <Button x:Name="SaveSettings" Content="保存设置" HorizontalAlignment="Left" Margin="0,8,0,18"/>
+            <Button x:Name="SaveSettings" Content="保存设置" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right" MinWidth="140" Margin="0,2,0,18"/>
           </StackPanel>
         </ScrollViewer>
       </Grid>
+
+      <!-- ============ Features ============ -->
       <Grid x:Name="FeaturePage" Visibility="Collapsed">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
-        <StackPanel Margin="0,0,0,18">
-          <TextBlock Text="功能与玩法" FontSize="26"/>
-          <TextBlock Text="保存后下次启动生效。难度数值跟随房主；进度合并会写入客机存档。"
-                     Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+        <Border Style="{StaticResource Banner}">
+          <Grid>
+            <Grid.Background><ImageBrush ImageSource="@assets/artwork/banner-features.jpg" Stretch="UniformToFill" ViewboxUnits="RelativeToBoundingBox" Viewbox="0,0.36,1,0.47"/></Grid.Background>
+            <Border Background="{StaticResource BannerShade}"/><Border Background="{StaticResource BannerFloor}"/>
+            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,20"><TextBlock Text="功能与玩法" Style="{StaticResource PageTitle}"/><TextBlock Text="保存后下次启动生效。难度数值跟随房主。" Style="{StaticResource PageSubtitle}"/></StackPanel>
+          </Grid>
+        </Border>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20,14">
+          <StackPanel>
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="ExpandFeatures" Content="展开全部" Margin="0,0,8,0"/>
+                <Button x:Name="RecommendFeatures" Content="恢复推荐" Margin="0,0,8,0"/>
+                <Button x:Name="SaveFeatures" Content="保存功能设置" Style="{StaticResource PrimaryButton}"/>
+              </StackPanel>
+              <TextBlock x:Name="FeatureStatus" Text="推荐保留完整合作功能，暂时关闭永久共享进度与敌对 NPC 猎人强化。"
+                         Foreground="#D2CCBF" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0"/>
+            </DockPanel>
             <TextBlock Text="无缝版暂不支持人偶洗点。请在普通版完成洗点及全部等级分配，正常保存退出后，再导入普通版存档；导入会替换无缝版全部角色进度。"
-                       Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,12"/>
-          <WrapPanel>
-            <Button x:Name="SaveFeatures" Content="保存功能设置" Margin="0,0,10,8"/>
-            <Button x:Name="RecommendFeatures" Content="恢复推荐" Margin="0,0,10,8"/>
-            <Button x:Name="ExpandFeatures" Content="展开全部" Margin="0,0,0,8"/>
-          </WrapPanel>
-          <TextBlock x:Name="FeatureStatus" Text="推荐保留完整合作功能，暂时关闭永久共享进度与敌对 NPC 猎人强化。"
-                     Foreground="#B8B2A2" TextWrapping="Wrap" LineHeight="22"/>
-        </StackPanel>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+                       Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+          </StackPanel>
+        </Border>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0">
           <StackPanel x:Name="FeatureItems"/>
         </ScrollViewer>
       </Grid>
+
+      <!-- ============ Hosting ============ -->
       <Grid x:Name="ServerPage" Visibility="Collapsed">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
-        <Border CornerRadius="8" BorderBrush="#3D3B40" BorderThickness="1" Margin="0,0,0,18" Height="128" ClipToBounds="True">
-<Grid><Grid.Background><ImageBrush ImageSource="@assets/artwork/hosting-messengers.png" Stretch="UniformToFill" Viewbox="0,0,1,1"/></Grid.Background>
-<Border><Border.Background><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#F8111214" Offset="0"/><GradientStop Color="#CA111214" Offset="0.5"/><GradientStop Color="#20111214" Offset="1"/></LinearGradientBrush></Border.Background></Border>
-<StackPanel VerticalAlignment="Center" Margin="24,0"><TextBlock Text="本地与云端开服" FontSize="28" Foreground="#E4DDD0"/><TextBlock Text="本机使用内置管理窗口，云端使用已有 SSH 连接。" Foreground="#ADA9A0" FontSize="12" Margin="0,10,0,0" TextWrapping="Wrap"/></StackPanel></Grid></Border>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+        <Border Style="{StaticResource Banner}">
+          <Grid>
+            <Grid.Background><ImageBrush ImageSource="@assets/artwork/banner-hosting.jpg" Stretch="UniformToFill" ViewboxUnits="RelativeToBoundingBox" Viewbox="0,0.33,1,0.47"/></Grid.Background>
+            <Border Background="{StaticResource BannerShade}"/><Border Background="{StaticResource BannerFloor}"/>
+            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,20"><TextBlock Text="开服" Style="{StaticResource PageTitle}"/><TextBlock Text="本机使用内置管理窗口，云端使用已有 SSH 连接。" Style="{StaticResource PageSubtitle}"/></StackPanel>
+          </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0">
           <StackPanel>
-            <Border BorderBrush="#474644" BorderThickness="1" Padding="18" Margin="0,0,0,18">
-              <StackPanel>
-                <TextBlock Text="本地无缝开服" FontSize="20" Foreground="#D4D0C2"/>
-                <TextBlock Text="打开内置管理窗口，选择本机地址、启动服务并创建账号。退出游戏或关闭启动器不会自动停服；结束开服请在管理窗口停止服务。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,10,0,0"/>
-                <WrapPanel Margin="0,14,0,0">
-                  <Button x:Name="OpenLocalServer" Content="打开本地开服管理" Margin="0,0,10,8"/>
-                  <Button x:Name="UseLocalServer" Content="填入本机服务地址" Margin="0,0,0,8"/>
-                </WrapPanel>
-                <TextBlock Text="按钮读取开服窗口已保存的监听地址。127.0.0.1 仅限同机；同伴使用局域网或 VPN 地址，并使用自己的账号。" Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22"/>
-              </StackPanel>
+            <Border Style="{StaticResource Card}">
+              <DockPanel>
+                <Button x:Name="OpenLocalServer" DockPanel.Dock="Right" Content="打开本地开服管理" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center" Margin="16,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="本地开服" Style="{StaticResource SectionTitle}"/>
+                  <TextBlock Text="在管理窗口选择本机地址、启动服务并为每位玩家创建账号。退出游戏或关闭启动器不会停服；关闭管理窗口才会停止服务。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                  <TextBlock Text="同机游玩：在「游戏与联机」点击「填入本机服务地址」。同伴需要放行 TCP 31413 / 31415 / 20443 / 20444 与 UDP 31414。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                </StackPanel>
+              </DockPanel>
             </Border>
-            <TextBlock Text="云端服务器管理" FontSize="20"/>
-            <Button x:Name="AdminRefresh" Content="刷新云端状态与账号" HorizontalAlignment="Left" Margin="0,12,0,0"/>
-            <StackPanel x:Name="AdminFields">
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>
-                <StackPanel><TextBlock Text="SSH 别名或 用户@主机" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminTarget"/></StackPanel>
-                <StackPanel Grid.Column="2"><TextBlock Text="SSH 端口" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminPort" Text="22"/></StackPanel>
-              </Grid>
-              <TextBlock Text="BBSC Compose 部署目录 · 服务器上的 /opt 路径" Style="{StaticResource FieldLabel}"/>
-              <TextBox x:Name="AdminDirectory"/>
-              <TextBlock Text="本机 SSH 私钥路径 · 留空使用 SSH 配置／代理" Style="{StaticResource FieldLabel}"/>
-              <DockPanel><Button x:Name="PickAdminIdentity" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="AdminIdentity"/></DockPanel>
-              <TextBlock Text="可信 known_hosts 文件 · 留空使用 SSH 默认记录" Style="{StaticResource FieldLabel}"/>
-              <DockPanel><Button x:Name="PickAdminKnownHosts" DockPanel.Dock="Right" Content="选择" Margin="8,0,0,0"/><TextBox x:Name="AdminKnownHosts"/></DockPanel>
-              <CheckBox x:Name="AdminSudo" Content="远端使用 sudo -n（root 通常无需勾选）" Foreground="#D7D5CE" Margin="0,12,0,4"/>
-              <TextBlock Text="首次使用请先在终端连接并核对主机指纹。加密私钥需先加入 ssh-agent。不会自动接受未知或变化的指纹。"
-                         Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22" Margin="0,6,0,0"/>
-              <TextBlock Text="账号名 · 3–16 位字母、数字、下划线或连字符" Style="{StaticResource FieldLabel}"/>
-              <TextBox x:Name="AdminName"/>
-              <TextBlock Text="密码 · 仅用于本次新建／验证，不保存" Style="{StaticResource FieldLabel}"/>
-              <PasswordBox x:Name="AdminPassword"/>
-              <TextBlock Text="邮箱标识 · 新建账号时填写，不能与已有账号重复" Style="{StaticResource FieldLabel}"/>
-              <TextBox x:Name="AdminEmail"/>
-            </StackPanel>
-            <WrapPanel Margin="0,18,0,0">
-              <Button x:Name="AdminCreate" Content="新建账号" Margin="0,0,10,8"/>
-              <Button x:Name="AdminVerify" Content="验证账号密码" Margin="0,0,0,8"/>
-            </WrapPanel>
-            <TextBlock Text="本版支持查看、新建和验证。暂不提供删号、改名或重置密码；验证前请退出该账号的所有游戏。"
-                       Style="{StaticResource Caption}" TextWrapping="Wrap" LineHeight="22"/>
-            <TextBlock x:Name="AdminStatus" Text="尚未连接服务器。查看状态不会修改服务或账号。"
-                       Foreground="#B8B2A2" TextWrapping="Wrap" LineHeight="22" Margin="0,18,0,12"/>
-            <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="16" Margin="0,0,0,14">
+
+            <Border Style="{StaticResource Card}">
               <StackPanel>
-                <TextBlock Text="联机账号 · ID / 名称 / 状态" Foreground="#D3D0C5" Margin="0,0,0,8"/>
-                <TextBlock x:Name="AdminAccounts" Text="刷新后显示；不读取密码、盐值或令牌。" TextWrapping="Wrap" Foreground="#A6AAA8" LineHeight="24"/>
+                <DockPanel>
+                  <Button x:Name="AdminRefresh" DockPanel.Dock="Right" Content="刷新云端状态与账号"/>
+                  <TextBlock Text="云端服务器管理" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                </DockPanel>
+                <StackPanel x:Name="AdminFields">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="110"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="SSH 别名或 用户@主机" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminTarget" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="SSH 端口" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminPort" Text="22" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/></StackPanel>
+                    <StackPanel Grid.Column="4"><TextBlock Text="部署目录 · 服务器上的 /opt 路径" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminDirectory" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/></StackPanel>
+                  </Grid>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="本机 SSH 私钥 · 留空使用 SSH 配置／代理" Style="{StaticResource FieldLabel}"/>
+                      <DockPanel><Button x:Name="PickAdminIdentity" DockPanel.Dock="Right" Content="选择…" Margin="8,0,0,0"/><TextBox x:Name="AdminIdentity" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/></DockPanel>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Text="可信 known_hosts · 留空使用默认记录" Style="{StaticResource FieldLabel}"/>
+                      <DockPanel><Button x:Name="PickAdminKnownHosts" DockPanel.Dock="Right" Content="选择…" Margin="8,0,0,0"/><TextBox x:Name="AdminKnownHosts" FontFamily="{StaticResource MonoFont}" FontSize="12.5"/></DockPanel>
+                    </StackPanel>
+                  </Grid>
+                  <CheckBox x:Name="AdminSudo" Content="远端使用 sudo -n（root 通常无需勾选）" Margin="0,14,0,4"/>
+                  <TextBlock Text="首次使用请先在终端连接并核对主机指纹。加密私钥需先加入 ssh-agent。不会自动接受未知或变化的指纹。"
+                             Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                  <Border Style="{StaticResource Divider}" Margin="0,16,0,2"/>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="账号名 · 3–16 位" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminName"/></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="密码 · 仅本次使用，不保存" Style="{StaticResource FieldLabel}"/><PasswordBox x:Name="AdminPassword"/></StackPanel>
+                    <StackPanel Grid.Column="4"><TextBlock Text="邮箱标识 · 新建时填写" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AdminEmail"/></StackPanel>
+                  </Grid>
+                </StackPanel>
+                <DockPanel Margin="0,16,0,0">
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="AdminVerify" Content="验证账号密码" Margin="0,0,8,0"/>
+                    <Button x:Name="AdminCreate" Content="新建账号" Style="{StaticResource PrimaryButton}"/>
+                  </StackPanel>
+                  <TextBlock Text="本版支持查看、新建和验证；暂不提供删号、改名或重置密码。验证前请退出该账号的所有游戏。"
+                             Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,16,0"/>
+                </DockPanel>
+                <TextBlock x:Name="AdminStatus" Text="尚未连接服务器。查看状态不会修改服务或账号。"
+                           Foreground="#D2CCBF" TextWrapping="Wrap" LineHeight="22" Margin="0,16,0,12"/>
+                <Border Background="#151417" BorderBrush="#2E2C31" BorderThickness="1" CornerRadius="6" Padding="16,12">
+                  <StackPanel>
+                    <TextBlock Text="联机账号 · ID / 名称 / 状态" Style="{StaticResource Caption}" Margin="0,0,0,6"/>
+                    <TextBlock x:Name="AdminAccounts" Text="刷新后显示；不读取密码、盐值或令牌。" TextWrapping="Wrap" Foreground="#C9C4B8" FontFamily="{StaticResource MonoFont}" FontSize="12.5" LineHeight="22"/>
+                  </StackPanel>
+                </Border>
               </StackPanel>
             </Border>
           </StackPanel>
         </ScrollViewer>
       </Grid>
+
+      <!-- ============ Saves ============ -->
       <Grid x:Name="SavePage" Visibility="Collapsed">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
-        <StackPanel Margin="0,0,0,20">
-          <TextBlock Text="存档" FontSize="26"/>
-          <TextBlock Text="导入普通版进度，或离线转换回普通版。" Style="{StaticResource Caption}" Margin="0,8,0,0"/>
-        </StackPanel>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,14,0">
+        <Border Style="{StaticResource Banner}">
+          <Grid>
+            <Grid.Background><ImageBrush ImageSource="@assets/artwork/banner-saves.jpg" Stretch="UniformToFill" ViewboxUnits="RelativeToBoundingBox" Viewbox="0,0.42,1,0.47"/></Grid.Background>
+            <Border Background="{StaticResource BannerShade}"/><Border Background="{StaticResource BannerFloor}"/>
+            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,20"><TextBlock Text="存档" Style="{StaticResource PageTitle}"/><TextBlock Text="备份与恢复、从普通版导入，以及转回普通版。" Style="{StaticResource PageSubtitle}"/></StackPanel>
+          </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0">
           <StackPanel>
-            <Expander Header="无缝版 → 普通版" Foreground="#D3D0C5" IsExpanded="True" Margin="0,0,0,24">
-              <StackPanel Margin="16,14,16,8">
-                <TextBlock Text="自动备份两边存档，在副本中离线转换并检查。可直接导出存档包，或完整备份旧原版后替换。"
-                           TextWrapping="Wrap" LineHeight="23" Foreground="#C2C6C5"/>
-                <TextBlock Text="当前范围：同一角色，无缝五件各一件。按原版备份逐件恢复原先持有的联机道具，未持有的不补发。已恢复的历史记录及已保存的客机拾取可核对；尚待恢复的世界记录、无可确认道具及仓库存放暂不支持。"
-                           TextWrapping="Wrap" LineHeight="22" Foreground="#A6AAA8" Margin="0,8,0,10"/>
-                <TextBlock Text="替换原版会回写整份存档目录，包含其他角色；不会合并两个分支的进度。旧原版会完整备份。"
-                           TextWrapping="Wrap" LineHeight="22" Foreground="#A6AAA8" Margin="0,0,0,8"/>
-                <CheckBox x:Name="ConversionSameRole" Foreground="#D3D0C5" Margin="0,8,0,8">
-                  <TextBlock Text="两份存档对应同一角色；本次只验证这个角色，不自动处理其他槽位。" TextWrapping="Wrap"/>
-                </CheckBox>
-                <WrapPanel>
-                  <Button x:Name="ConversionStartExport" Content="导出普通版存档" Margin="0,0,10,10"/>
-                  <Button x:Name="ConversionStartReplace" Content="转换并替换原版" Margin="0,0,10,10"/>
-                </WrapPanel>
-                <TextBlock Text="全程离线，不打开游戏。自动清理两栏中的无缝道具引用；恢复的原版联机道具只放背包，其他装备保持原样。"
-                           TextWrapping="Wrap" LineHeight="22" Foreground="#9DA5A8" Margin="0,2,0,8"/>
-                <TextBlock Text="导出包保留本次无缝版进度，联机道具已转换为普通版状态。"
-                           TextWrapping="Wrap" Foreground="#9DA5A8" Margin="0,0,0,10"/>
-                <WrapPanel>
-                  <Button x:Name="ConversionOpen" Content="打开本次转换目录" Margin="0,0,8,8"/>
-                  <Button x:Name="ConversionOpenOrdinaryBackup" Content="打开原版备份" Margin="0,0,8,8"/>
-                </WrapPanel>
-                <TextBlock x:Name="ConversionStatus" Text="请确认角色，再选择离线导出或替换。" TextWrapping="Wrap"
-                           LineHeight="23" Foreground="#C7C3B6" Margin="0,8,0,6"/>
-                <TextBlock x:Name="ConversionPath" TextWrapping="Wrap" FontSize="11" Foreground="#8B9CA4"/>
-                <Expander Header="分步诊断（旧任务／排错）" Foreground="#A6AAA8" Margin="0,16,0,0">
-                  <StackPanel>
-                <CheckBox x:Name="ConversionClearSlots" Foreground="#D3D0C5" Margin="0,6,0,10">
-                  <TextBlock Text="已在无缝检查副本中确认：五件道具没有装备在快捷栏或随身物品里。" TextWrapping="Wrap"/>
-                </CheckBox>
-                <WrapPanel>
-                  <Button x:Name="ConversionConvert" Content="4  转换副本" Margin="0,0,8,8"/>
-                </WrapPanel>
-                <CheckBox x:Name="ConversionConfirmed" Foreground="#D3D0C5" Margin="0,6,0,10">
-                  <TextBlock Text="已重载验证：五件无缝道具消失、四件原版道具正常，等级、装备和较新进度均正确。" TextWrapping="Wrap"/>
-                </CheckBox>
-                <WrapPanel>
-                  <Button x:Name="ConversionExport" Content="6  导出存档包" Margin="0,0,8,8"/>
-                </WrapPanel>
-                  <WrapPanel Margin="0,10,0,0">
-                    <Button x:Name="ConversionNew" Content="新建诊断任务" Margin="0,0,8,8"/>
-                    <Button x:Name="ConversionBaseline" Content="首次检查原版" Margin="0,0,8,8"/>
-                    <Button x:Name="ConversionInspect" Content="检查无缝副本" Margin="0,0,8,8"/>
-                    <Button x:Name="ConversionVerify" Content="普通版重载验证" Margin="0,0,8,8"/>
-                  </WrapPanel>
-                  </StackPanel>
-                </Expander>
-              </StackPanel>
-            </Expander>
-            <Border x:Name="SaveBackupsPanel" Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="20" Margin="0,0,0,20">
-              <StackPanel>
-                <TextBlock Text="启动备份与恢复" FontSize="18" Foreground="#D3D0C5"/>
-                <TextBlock Text="启动前自动备份非空存档，保留最近10份启动/恢复前备份。普通备份只恢复 savedata；处理前的存档另行保全，换回时会成套恢复联机记录，不合并进度。"
-                           Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,10,0,12"/>
-                <ComboBox x:Name="SaveBackupList" MinHeight="36" Margin="0,0,0,12"/>
-                <TextBlock x:Name="SelectedSaveBackup" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23" Margin="0,0,0,10"/>
-                <WrapPanel>
-                  <Button x:Name="RefreshSaveBackups" Content="刷新备份列表" Margin="0,0,10,10"/>
-                  <Button x:Name="RestoreSaveBackup" Content="恢复到这个备份" Margin="0,0,10,10"/>
-                </WrapPanel>
-                <TextBlock x:Name="SaveBackupStatus" Text="打开存档页后会读取已校验的备份。" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23"/>
-                <TextBlock x:Name="PendingSaveRestore" Foreground="#E3BC79" TextWrapping="Wrap" LineHeight="23" Margin="0,10,0,6"/>
-                <Button x:Name="ResumeSaveRestore" Content="处理未完成恢复" HorizontalAlignment="Left"/>
-              </StackPanel>
+            <ContentControl Style="{StaticResource SectionRule}" Content="当前无缝存档"/>
+            <Border x:Name="SaveStateStrip" CornerRadius="7" BorderThickness="1" BorderBrush="#3A383D" Background="#18171A" Padding="14,9" Margin="0,0,0,10">
+              <DockPanel>
+                <TextBlock x:Name="SaveStateIcon" Text="&#xE946;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="#A8A397" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock x:Name="SaveStateText" Text="打开存档页后会只读检查当前存档；检查本身不会改动存档。" Foreground="#D2CCBF" TextWrapping="Wrap" VerticalAlignment="Center"/>
+              </DockPanel>
             </Border>
-            <Border Background="#191A1C" BorderBrush="#37383A" BorderThickness="1" Padding="20">
+            <WrapPanel x:Name="CurrentSlots" Margin="0,0,-10,2"/>
+
+            <Border x:Name="SaveResolutionPanel" Visibility="Collapsed" Style="{StaticResource Card}" BorderBrush="#8A7045" Background="#1D1A16">
               <StackPanel>
-                <TextBlock Text="普通版 → 无缝版" FontSize="18" Foreground="#D3D0C5"/>
-                <TextBlock Text="首次启动会自动复制普通版存档；之后两边的进度独立保存。普通版进度增加后，可以在这里重新导入。"
-                           Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,12,0,0"/>
-              </StackPanel>
-            </Border>
-            <TextBlock Text="来源 · 普通版存档" Style="{StaticResource FieldLabel}"/>
-            <TextBlock x:Name="SourceSavePath" Text="请先在「游戏与联机」选择普通版启动程序。" Foreground="#B8BCB8" TextWrapping="Wrap" LineHeight="22"/>
-            <TextBlock Text="目标 · 无缝版独立存档" Style="{StaticResource FieldLabel}"/>
-            <TextBlock x:Name="DestinationSavePath" Text="等待读取无缝版存档位置。" Foreground="#B8BCB8" TextWrapping="Wrap" LineHeight="22"/>
-            <Border Height="1" Background="#30383C" Margin="0,22,0,20"/>
-            <TextBlock Text="导入前请退出两边游戏。" Foreground="#D3D0C5"/>
-            <TextBlock Text="导入会替换无缝版的全部角色与进度，不会合并。已有无缝存档会先自动备份，普通版存档保持原样。"
-                       Foreground="#A6AAA8" TextWrapping="Wrap" LineHeight="23" Margin="0,8,0,0"/>
-            <TextBlock x:Name="SaveSummary" Text="选择普通版程序后，将显示可导入的存档。" Foreground="#B8B5A9"
-                       TextWrapping="Wrap" LineHeight="23" Margin="0,18,0,12"/>
-            <WrapPanel Margin="0,4,0,12">
-              <Button x:Name="ImportSaves" Content="从普通版导入" Background="#7D2837" Foreground="#F4EBDF"
-                      BorderBrush="#A24B55" FontWeight="SemiBold" Margin="0,0,10,10"/>
-              <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
-              <Button x:Name="PickSaveFolder" Content="手动选择存档文件夹" Margin="0,0,10,10"/>
-              <Button x:Name="ClearSaveFolder" Content="清除手动来源，自动查找" Margin="0,0,10,10"/>
-              <Button x:Name="OpenSaveBackups" Content="打开备份目录" Margin="0,0,0,10"/>
-              <Button x:Name="CopyWorldRecoveryEvidence" Content="复制复核证据" Margin="0,0,0,10"/>
-            </WrapPanel>
-            <TextBlock x:Name="WorldRecoverySummary" Foreground="#B8B5A9" TextWrapping="Wrap" LineHeight="23"/>
-            <Border x:Name="SaveResolutionPanel" Visibility="Collapsed" Background="#191A1C" BorderBrush="#8A7045" BorderThickness="1" Padding="20" Margin="0,16,0,0">
-              <StackPanel>
-                <TextBlock Text="处理当前存档" FontSize="18" Foreground="#E3BC79"/>
-                <TextBlock x:Name="SaveResolutionSummary" TextWrapping="Wrap" LineHeight="23" Foreground="#D3D0C5" Margin="0,10,0,8"/>
-                <TextBlock x:Name="SaveResolutionCharacters" TextWrapping="Wrap" LineHeight="22" Foreground="#B8B5A9" Margin="0,0,0,8"/>
-                <TextBlock Text="任何选择都不会自动执行。确认后会先完整保全原件并核验，成功后才改变；不同版本的进度不会自动合并。" TextWrapping="Wrap" LineHeight="22" Foreground="#B8B5A9" Margin="0,0,0,12"/>
+                <TextBlock Text="处理当前存档" Style="{StaticResource SectionTitle}" Foreground="#E0B66E"/>
+                <TextBlock x:Name="SaveResolutionSummary" TextWrapping="Wrap" LineHeight="23" Foreground="#E4DFD4" Margin="0,10,0,8"/>
+                <TextBlock x:Name="SaveResolutionCharacters" TextWrapping="Wrap" LineHeight="22" Foreground="#B8B2A4" Margin="0,0,0,8"/>
+                <TextBlock Text="任何选择都不会自动执行。确认后会先完整保全原件并核验，成功后才改变；不同版本的进度不会自动合并。" TextWrapping="Wrap" Style="{StaticResource Caption}" Margin="0,0,0,12"/>
                 <StackPanel x:Name="SaveResolutionOptions"/>
-                <TextBlock x:Name="SaveResolutionPending" TextWrapping="Wrap" LineHeight="23" Foreground="#E3BC79"/>
+                <TextBlock x:Name="SaveResolutionPending" TextWrapping="Wrap" LineHeight="23" Foreground="#E0B66E"/>
                 <Button x:Name="ResumeSaveResolution" Content="继续上次的选择" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,8,0,10"/>
                 <Button x:Name="AbandonSaveResolution" Content="完整另存当前进度并放弃上次选择" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,10"/>
                 <WrapPanel>
                   <Button x:Name="RefreshSaveResolution" Content="重新检查" Margin="0,0,10,10"/>
                   <Button x:Name="CancelSaveResolution" Content="先不处理" Margin="0,0,10,10"/>
                 </WrapPanel>
-                <TextBlock x:Name="SaveResolutionStatus" TextWrapping="Wrap" LineHeight="23" Foreground="#B8B5A9"/>
+                <TextBlock x:Name="SaveResolutionStatus" TextWrapping="Wrap" LineHeight="23" Foreground="#B8B2A4"/>
+              </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Margin="2,14,0,0">
+              <RadioButton x:Name="SaveTabBackups" GroupName="SaveTabs" Content="备份与恢复" Style="{StaticResource PageTab}" IsChecked="True"/>
+              <RadioButton x:Name="SaveTabImport" GroupName="SaveTabs" Content="从普通版导入" Style="{StaticResource PageTab}"/>
+              <RadioButton x:Name="SaveTabConvert" GroupName="SaveTabs" Content="转回普通版" Style="{StaticResource PageTab}"/>
+              <RadioButton x:Name="SaveTabAdvanced" GroupName="SaveTabs" Content="高级与排错" Style="{StaticResource PageTab}"/>
+            </StackPanel>
+            <Border Style="{StaticResource Divider}" Margin="0,0,0,16"/>
+
+            <!-- Backups -->
+            <!-- Backups: one container; flat rows on the left, the selected backup on the right. -->
+            <Border x:Name="SaveBackupsPanel" Style="{StaticResource Card}" Padding="0" Visibility="{Binding IsChecked, ElementName=SaveTabBackups, Converter={StaticResource Visible}}">
+              <StackPanel>
+                <DockPanel Margin="20,14,16,12">
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="OpenSaveBackups" Content="打开备份目录" Margin="0,0,8,0"/>
+                    <Button x:Name="RefreshSaveBackups" Content="刷新"/>
+                  </StackPanel>
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="备份" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="启动前自动备份非空存档，保留最近 10 份启动／恢复前备份。" Style="{StaticResource Caption}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                </DockPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                  <Border BorderBrush="#29272C" BorderThickness="0,1,0,0">
+                    <ListBox x:Name="SaveBackupTimeline" MaxHeight="360" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                  </Border>
+                  <Border Grid.Column="1" Width="1" Background="#29272C"/>
+                  <Border Grid.Column="2" BorderBrush="#29272C" BorderThickness="0,1,0,0" Padding="20,14,20,16">
+                    <DockPanel>
+                      <DockPanel DockPanel.Dock="Bottom" Margin="0,16,0,0" LastChildFill="True">
+                        <Button x:Name="RestoreSaveBackup" DockPanel.Dock="Right" Content="恢复到这个备份" Style="{StaticResource DangerButton}" VerticalAlignment="Center"/>
+                        <TextBlock Text="恢复前会自动备份当前存档。普通恢复只替换无缝版 savedata，奖杯和联机记录不变。" Style="{StaticResource Caption}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                      </DockPanel>
+                      <StackPanel>
+                        <TextBlock Text="这份备份中的角色" Style="{StaticResource RowTitle}" Margin="0,0,0,8"/>
+                        <StackPanel x:Name="SelectedBackupTable"/>
+                        <TextBlock x:Name="SelectedSaveBackup" Foreground="#B8B2A4" TextWrapping="Wrap" LineHeight="22" Margin="0,8,0,0"/>
+                      </StackPanel>
+                    </DockPanel>
+                  </Border>
+                </Grid>
+                <ComboBox x:Name="SaveBackupList" Visibility="Collapsed"/>
+                <Border BorderBrush="#29272C" BorderThickness="0,1,0,0" Padding="20,10,20,12">
+                  <StackPanel>
+                    <TextBlock x:Name="SaveBackupStatus" Text="打开存档页后会读取已校验的备份。" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="PendingSaveRestore" Foreground="#E0B66E" TextWrapping="Wrap" LineHeight="22" Margin="0,6,0,0"/>
+                    <WrapPanel Margin="0,4,0,0">
+                      <Button x:Name="ResumeSaveRestore" Content="处理未完成恢复"/>
+                    </WrapPanel>
+                    <TextBlock Text="处理前的存档另行保全，换回时会成套恢复联机记录，不合并进度。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <!-- Ordinary -> seamless -->
+            <Border Style="{StaticResource Card}" Visibility="{Binding IsChecked, ElementName=SaveTabImport, Converter={StaticResource Visible}}">
+              <StackPanel>
+                <TextBlock Text="从普通版导入" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="首次启动会自动复制普通版存档，之后两边进度独立保存。普通版有了新进度，可以在这里重新导入。" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,14"/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="40"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                  <Border Background="#151417" BorderBrush="#2A282D" BorderThickness="1" CornerRadius="6" Padding="14,10">
+                    <StackPanel><TextBlock Text="来源 · 普通版存档" Style="{StaticResource Caption}"/>
+                      <TextBlock x:Name="SourceSavePath" Text="请先在「游戏与联机」选择普通版启动程序。" Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,6,0,0"/></StackPanel>
+                  </Border>
+                  <TextBlock Grid.Column="1" Text="→" Foreground="#BBA47A" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  <Border Grid.Column="2" Background="#151417" BorderBrush="#2A282D" BorderThickness="1" CornerRadius="6" Padding="14,10">
+                    <StackPanel><TextBlock Text="目标 · 无缝版独立存档" Style="{StaticResource Caption}"/>
+                      <TextBlock x:Name="DestinationSavePath" Text="等待读取无缝版存档位置。" Style="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,6,0,0"/></StackPanel>
+                  </Border>
+                </Grid>
+                <Border CornerRadius="6" BorderBrush="#6E5A38" BorderThickness="1" Background="#1D1A16" Padding="14,10" Margin="0,14,0,0">
+                  <TextBlock Text="导入前请退出两边游戏。导入会替换无缝版的全部角色与进度，不会合并；已有无缝存档会先自动备份，普通版存档保持原样。"
+                             Foreground="#E0C891" TextWrapping="Wrap" LineHeight="22"/>
+                </Border>
+                <TextBlock x:Name="SaveSummary" Text="选择普通版程序后，将显示可导入的存档。" Foreground="#D2CCBF"
+                           TextWrapping="Wrap" LineHeight="23" Margin="0,14,0,12"/>
+                <WrapPanel>
+                  <Button x:Name="ImportSaves" Content="从普通版导入" Style="{StaticResource PrimaryButton}" Margin="0,0,10,10"/>
+                  <Button x:Name="RefreshSaves" Content="刷新状态" Margin="0,0,10,10"/>
+                  <Button x:Name="PickSaveFolder" Content="手动选择存档文件夹" Margin="0,0,10,10"/>
+                  <Button x:Name="ClearSaveFolder" Content="清除手动来源，自动查找" Margin="0,0,10,10"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Seamless -> ordinary -->
+            <Border Style="{StaticResource Card}" Visibility="{Binding IsChecked, ElementName=SaveTabConvert, Converter={StaticResource Visible}}">
+              <StackPanel>
+                <TextBlock Text="转回普通版" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="自动备份两边存档，在副本中离线转换并检查，全程不打开游戏。可以只导出存档包，或完整备份旧原版后替换。"
+                           TextWrapping="Wrap" LineHeight="22" Foreground="#D2CCBF" Margin="0,8,0,0"/>
+                <TextBlock Text="当前范围：同一角色，无缝五件各一件。按原版备份逐件恢复原先持有的联机道具，未持有的不补发。已恢复的历史记录及已保存的客机拾取可核对；尚待恢复的世界记录、无可确认道具及仓库存放暂不支持。"
+                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                <TextBlock Text="替换原版会回写整份存档目录，包含其他角色；不会合并两个分支的进度。旧原版会完整备份。"
+                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <CheckBox x:Name="ConversionSameRole" Margin="0,14,0,12">
+                  <TextBlock Text="两份存档对应同一角色；本次只验证这个角色，不自动处理其他槽位。" TextWrapping="Wrap"/>
+                </CheckBox>
+                <WrapPanel>
+                  <Button x:Name="ConversionStartExport" Content="导出普通版存档" Style="{StaticResource PrimaryButton}" Margin="0,0,10,10"/>
+                  <Button x:Name="ConversionStartReplace" Content="转换并替换原版" Style="{StaticResource DangerButton}" Margin="0,0,10,10"/>
+                </WrapPanel>
+                <TextBlock Text="自动清理两栏中的无缝道具引用；恢复的原版联机道具只放背包，其他装备保持原样。导出包保留本次无缝版进度。"
+                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,2,0,10"/>
+                <WrapPanel>
+                  <Button x:Name="ConversionOpen" Content="打开本次转换目录" Margin="0,0,8,8"/>
+                  <Button x:Name="ConversionOpenOrdinaryBackup" Content="打开原版备份" Margin="0,0,8,8"/>
+                </WrapPanel>
+                <TextBlock x:Name="ConversionStatus" Text="请确认角色，再选择离线导出或替换。" TextWrapping="Wrap"
+                           LineHeight="23" Foreground="#D2CCBF" Margin="0,8,0,6"/>
+                <TextBlock x:Name="ConversionPath" TextWrapping="Wrap" Style="{StaticResource Mono}" FontSize="11.5" Foreground="#8F8A7F"/>
+                <Expander Header="分步诊断（旧任务／排错）" Margin="0,16,0,0" FontSize="13">
+                  <StackPanel Margin="16,8,16,10">
+                    <CheckBox x:Name="ConversionClearSlots" Margin="0,6,0,10">
+                      <TextBlock Text="已在无缝检查副本中确认：五件道具没有装备在快捷栏或随身物品里。" TextWrapping="Wrap"/>
+                    </CheckBox>
+                    <WrapPanel><Button x:Name="ConversionConvert" Content="4  转换副本" Margin="0,0,8,8"/></WrapPanel>
+                    <CheckBox x:Name="ConversionConfirmed" Margin="0,6,0,10">
+                      <TextBlock Text="已重载验证：五件无缝道具消失、四件原版道具正常，等级、装备和较新进度均正确。" TextWrapping="Wrap"/>
+                    </CheckBox>
+                    <WrapPanel><Button x:Name="ConversionExport" Content="6  导出存档包" Margin="0,0,8,8"/></WrapPanel>
+                    <WrapPanel Margin="0,10,0,0">
+                      <Button x:Name="ConversionNew" Content="新建诊断任务" Margin="0,0,8,8"/>
+                      <Button x:Name="ConversionBaseline" Content="首次检查原版" Margin="0,0,8,8"/>
+                      <Button x:Name="ConversionInspect" Content="检查无缝副本" Margin="0,0,8,8"/>
+                      <Button x:Name="ConversionVerify" Content="普通版重载验证" Margin="0,0,8,8"/>
+                    </WrapPanel>
+                  </StackPanel>
+                </Expander>
+              </StackPanel>
+            </Border>
+
+            <!-- Advanced -->
+            <Border Style="{StaticResource Card}" Visibility="{Binding IsChecked, ElementName=SaveTabAdvanced, Converter={StaticResource Visible}}">
+              <StackPanel>
+                <TextBlock Text="世界恢复复核" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="合作退出或崩溃后启动受阻时，点击窗口底部的「世界恢复复核」只读核对。证据不足时可复制一份校验过的副本留在本机，复制不会解除原档保护。"
+                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                <TextBlock x:Name="WorldRecoverySummary" Foreground="#D2CCBF" TextWrapping="Wrap" LineHeight="23"/>
+                <WrapPanel Margin="0,12,0,0">
+                  <Button x:Name="CopyWorldRecoveryEvidence" Content="复制复核证据"/>
+                </WrapPanel>
               </StackPanel>
             </Border>
           </StackPanel>
         </ScrollViewer>
       </Grid>
-      <Border Grid.Row="1" BorderBrush="#343D42" BorderThickness="0,1,0,0" Padding="0,20,0,0" Margin="0,20,0,0">
+
+      <!-- ============ Footer ============ -->
+      <Border Grid.Row="1" BorderBrush="#29272C" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-            <TextBlock x:Name="StatusText" Text="欢迎回来。请先完成游戏与联机设置。" TextWrapping="Wrap" Foreground="#B1BEC4"/>
-            <WrapPanel>
-              <Button x:Name="OpenLogs" Content="打开日志目录 ↗" Background="Transparent" BorderThickness="0" Padding="0,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
-              <Button x:Name="ReviewWorldRecovery" Content="世界恢复复核" Background="Transparent" BorderThickness="0" Padding="12,8,0,0" FontSize="11" Foreground="#8B9CA4"/>
+            <TextBlock x:Name="StatusText" Text="欢迎回来。请先完成游戏与联机设置。" TextWrapping="Wrap" Foreground="#D2CCBF"/>
+            <WrapPanel Margin="0,6,0,0">
+              <Button x:Name="OpenLogs" Content="打开日志目录 ↗" Style="{StaticResource LinkButton}" FontSize="12" Foreground="#8F8A7F"/>
+              <Button x:Name="ReviewWorldRecovery" Content="世界恢复复核" Style="{StaticResource LinkButton}" FontSize="12" Foreground="#8F8A7F" Margin="18,0,0,0"/>
             </WrapPanel>
           </StackPanel>
-          <Button x:Name="CheckUpdates" Grid.Column="1" Content="检查更新" Height="38" Padding="16,0" FontSize="13"
-                  Background="#282C30" BorderBrush="#727B80" Foreground="#E0E3E2" VerticalAlignment="Center" Margin="0,0,12,0"/>
-          <Button x:Name="Launch" Grid.Column="2" Content="启动游戏  →" Background="#7D2837" Foreground="#F4EBDF"
-                  BorderBrush="#A24B55" Padding="27,16" FontSize="16" FontWeight="SemiBold"/>
+          <Button x:Name="CheckUpdates" Grid.Column="1" Content="检查更新" Height="44" Padding="18,0" VerticalAlignment="Center" Margin="0,0,10,0"/>
+          <Button x:Name="Launch" Grid.Column="2" Content="开始游戏  →" Style="{StaticResource PrimaryButton}" Height="44" MinWidth="200" Padding="30,0" FontSize="16.5" FontFamily="{DynamicResource DisplayFont}"/>
         </Grid>
       </Border>
     </Grid>
