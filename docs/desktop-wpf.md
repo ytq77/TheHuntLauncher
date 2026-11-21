@@ -2,7 +2,7 @@
 
 该前台已纳入 preview.17。下文保留实现及分项验收边界，最新用户反馈见 validation-current.md。
 
-后续的固定字体分区、页面图片、游戏中奖杯浮层与 PC 菜单汉化见 [桌面候选 2](desktop-candidate2.md)。
+后续的固定字体分区、页面图片、游戏中奖杯浮层与 PC 菜单汉化见 [桌面候选 2](desktop-candidate2.md)；2026-11-21 的界面改版（字体、配色、首页角色与奖杯卡、图标、桌面快捷方式）见 [界面改版](desktop-redesign-20261121.md)。
 
 客户端现在由 `TheHuntLauncher.exe` 直接创建 WPF 窗口并启动 Python 后端，不再通过 PowerShell 加载界面。保留现有 .NET Framework / Windows 环境，不新增 .NET SDK 或单独安装的桌面运行时依赖。PowerShell 仅用于构建、测试及既有更新助手。
 

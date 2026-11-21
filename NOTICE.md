@@ -3,8 +3,8 @@
 BBSC Launcher is an independent community launcher and compatibility patch set.
 The Hunt launcher design, integration and compatibility work: iytq (2026).
 
-Private UI font assets: Noto Sans/Serif CJK (notofonts) and LXGW WenKai Screen
-(lxgw and upstream contributors), SIL Open Font License 1.1. Full copyright,
+Private UI font assets: Noto Sans/Serif CJK (notofonts and upstream contributors),
+SIL Open Font License 1.1. Full copyright,
 reserved-name notices and licenses accompany the unmodified fonts in assets/fonts/.
 Artwork in this local desktop candidate was supplied and selected by the user;
 source-file hashes are recorded in assets/artwork/provenance.json.
