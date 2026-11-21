@@ -30,12 +30,32 @@ $master = @('..\assets\artwork\icon-bell.png', '..\..\assets\artwork\icon-bell.p
 foreach ($size in $sizes) {
     if ($master) {
         # One high-quality (Fant) decode per size, straight from the 1024px master.
-        $frame = [Windows.Media.Imaging.BitmapImage]::new()
-        $frame.BeginInit()
-        $frame.UriSource = [Uri]::new($master)
-        $frame.DecodePixelWidth = $size
-        $frame.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-        $frame.EndInit()
+        # The transparent bell gets a thin dark-brown contour drawn per size (at least
+        # 1px) so its pale parts stay visible on light taskbars and title bars.
+        $line = [Math]::Max(1, [int][Math]::Round($size / 64.0))
+        $inner = $size - 2 * $line
+        $art = [Windows.Media.Imaging.BitmapImage]::new()
+        $art.BeginInit()
+        $art.UriSource = [Uri]::new($master)
+        $art.DecodePixelWidth = $inner
+        $art.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $art.EndInit()
+        $visual = [Windows.Media.DrawingVisual]::new()
+        $drawing = $visual.RenderOpen()
+        $silhouette = [Windows.Media.ImageBrush]::new($art)
+        for ($dy = -$line; $dy -le $line; $dy++) {
+            for ($dx = -$line; $dx -le $line; $dx++) {
+                if (($dx -eq 0 -and $dy -eq 0) -or ($dx * $dx + $dy * $dy) -gt ($line * $line + 1)) { continue }
+                $drawing.PushOpacityMask($silhouette)
+                $drawing.DrawRectangle((Brush '#D92A2015'), $null, [Windows.Rect]::new($line + $dx, $line + $dy, $inner, $inner))
+                $drawing.Pop()
+            }
+        }
+        $drawing.DrawImage($art, [Windows.Rect]::new($line, $line, $inner, $inner))
+        $drawing.Close()
+        $frame = [Windows.Media.Imaging.RenderTargetBitmap]::new(
+            $size, $size, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+        $frame.Render($visual)
         $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
         $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($frame))
         $stream = [IO.MemoryStream]::new()
