@@ -40,6 +40,12 @@ void BbscHomeProofRestored(){}
 struct ActiveLoad{int slot;u64 generation;};
 std::optional<ActiveLoad> reload_role;
 std::optional<ActiveLoad> BbscNativeActiveSaveToken(){return reload_role;}
+// This fixture exercises normal return and legacy title loads without a bound guest exit.
+namespace item2::title_world { constexpr u32 proof_mode=7; }
+namespace GuestQuitSave {
+bool needs_title_proof(u64){return false;}
+bool arm_title(const ActiveLoad&,u64){return false;}
+}
 bool BbscRecordHomeSaveProof(u64 title_generation);
 std::array<u8,125> temporary_group{};
 struct Slot{std::string user="save";int slot=0;};

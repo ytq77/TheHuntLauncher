@@ -30,7 +30,7 @@
     },
     "emulator/src/core/bbsc_active_save.inc": {
       "before": "574318e26008101be76bfdc05d9fe38e10303a7c0c08113dd1a47d26a189a817",
-      "after": "94cc3ec623942573db51d730feb9ebc658f650443fc1f48be9033e7d1d5be73d"
+      "after": "3b901ee22aa5606869c5388385415f82264867554e80fb49ae16e0451d399318"
     },
     "emulator/src/core/bbsc_guest_position_record.h": {
       "before": null,
@@ -38,15 +38,23 @@
     },
     "emulator/src/core/bbsc_guest_quit_save.inc": {
       "before": null,
-      "after": "2d8b94bdfdb24d1d49e6361001a106ed59e81177f2e1cfbed136b5021a727a3f"
+      "after": "30807ef393a2b539f75c50f15d565f47e15946a038f15dc0df7808e2c947b789"
+    },
+    "emulator/src/core/bbsc_guest_title_world.h": {
+      "before": null,
+      "after": "d0609dad5f7d6a937e5a0f26d18b9fa68ecc9197e9d97df8da49eb64eb307e7c"
     },
     "emulator/src/core/bbsc_menu_quit.inc": {
       "before": "4be8556930191c3653c882cc9c1301f9f428a6512f80ed3c082b77384331a76b",
-      "after": "3c21997ab932c2f5a410351eedf0df0c61eb3ff501ab7773d001c35ef54433e8"
+      "after": "528a2f7f760b29d3a4195c4f9463f58e8577cffeef95709aafa95a9e20040023"
+    },
+    "emulator/src/core/bbsc_world_recovery.inc": {
+      "before": "8f4c9af7aba8156d2b2299f7c7910e8d31a6397a301abde3797c10179b358b51",
+      "after": "4ec223d98aa572cddb5ed9a6ae28a9385b19a67d1d0b63273090c848a1a96abb"
     },
     "emulator/src/core/bloodborne_re_zh_cn.cpp": {
       "before": "19561a9a20c32194becc748bdcdad61a3cb1a542b5516f1e4213f6e8ed1fbb44",
-      "after": "d142b39a7cb2eb48a3e795f93febf36d7785e31836880da9c23b7a6f3a699b5d"
+      "after": "004d07f62e6d758ae7aebef9d4573ad9079061709c169b1488544e62594ffe58"
     },
     "emulator/src/core/host_claim_api.inc": {
       "before": null,

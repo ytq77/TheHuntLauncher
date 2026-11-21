@@ -21,8 +21,8 @@ from save_transfer import (plain_path, require_stopped, import_lock, snapshot, c
 HEADER = struct.Struct('<4sIQ32sIIIQ')
 ROW = struct.Struct('<II125s125s')
 LIMIT = 10000
-CAPTURE, RESTORE, APPLIED, QUIT, BLOCKED, RELOADED = range(1, 7)
-MODE_NAMES = ('CAPTURE', 'RESTORE', 'APPLIED', 'QUIT', 'BLOCKED', 'RELOADED')
+CAPTURE, RESTORE, APPLIED, QUIT, BLOCKED, RELOADED, TITLE_RECORDS = range(1, 8)
+MODE_NAMES = ('CAPTURE', 'RESTORE', 'APPLIED', 'QUIT', 'BLOCKED', 'RELOADED', 'TITLE_RECORDS')
 _next_poll = {}
 
 
@@ -187,7 +187,7 @@ def request_header(data):
     magic, version, seq, token, slot, mode, count, journal_hash = HEADER.unpack_from(data)
     token = token.decode('ascii')
     if (magic != b'THWR' or version != 2 or not re.fullmatch('[0-9a-f]{32}', token)
-            or not seq or not 0 <= slot < 10 or not CAPTURE <= mode <= RELOADED
+            or not seq or not 0 <= slot < 10 or not CAPTURE <= mode <= TITLE_RECORDS
             or not 0 < count <= LIMIT):
         raise ValueError('世界恢复请求格式不受支持。')
     return seq, token, slot, mode, count, journal_hash
@@ -386,6 +386,11 @@ def saved_matches(request, value, *, current=None, running_token=None):
     # Preserve strict baseline/identity validation even if a native descendant
     # can later explain legitimate changes to load-time event completion flags.
     strict = [file_matches(request, value, name, raw) for name,raw in current.items()]
+    if request['mode'] == TITLE_RECORDS:
+        proof = home_save_proof.verify_title(request, value, current)
+        if proof:
+            request['native_save_proof'] = proof
+        return proof is not None
     if all(strict):
         return True
     proof = (save_proof.verify(request, value, current, running_token=running_token) or
@@ -411,6 +416,9 @@ def finish(request, value, *, proof, current=None, running_token=None):
         if receipt is None or sha(receipt) != value['native_save_proof']['native_receipt_sha256']:
             raise ValueError('游戏保存凭据发生变化，保留恢复任务。')
         atomic(job/'native-save-proof.jsonl', receipt)
+        if value['native_save_proof'].get('origin') == 'same-role-title-input':
+            atomic(job/'native-title-input.bin', request['native_title_input'])
+            atomic(job/'native-quit-bank.bin', request['native_quit_bank'])
         if value['native_save_proof'].get('origin') == 'same-run-home-restore':
             bank = request.get('native_restored_bank')
             if bank is None or sha(bank) != value['native_save_proof']['restored_bank_sha256']:
@@ -479,7 +487,7 @@ def later_run_exited_cleanly(request, token, observed_exit):
 
 def can_wait_after_progress(request, value, token=None, observed_exit=None):
     return (value is not None and value['state'] == 'primary-ready' and
-            request['mode'] not in (BLOCKED, RELOADED) and
+            request['mode'] not in (BLOCKED, RELOADED, TITLE_RECORDS) and
             later_run_exited_cleanly(request, token, observed_exit))
 
 
@@ -494,6 +502,8 @@ def complete_stopped(request, *, can_write, compare_only=False, current_token=No
                 raise EvidenceChangedError('恢复请求在核对前发生变化，已保留原记录。')
             request = actual
             check_journal_location(request)
+            if request['mode'] == TITLE_RECORDS:
+                return check_stopped_without_replay(request)
             current, status = compare_generations(request)
             if 'different-character' in status.values():
                 raise ValueError('主存档或游戏备份与本次恢复的角色不一致，请保留两代存档与恢复记录。')
@@ -515,6 +525,18 @@ def require_no_conversion(root):
 
 def _complete_stopped(request, *, can_write):
     require_stopped()
+    if request['mode'] == TITLE_RECORDS:
+        if not can_write:
+            return check_stopped_without_replay(request)
+        # Only the original worker can still have the exact live quit seal.
+        # Any native load attempt or character creation irrevocably clears it.
+        # No re-entry took place: hand the unchanged plan back to the QUIT path.
+        packet = bytearray(stable(request['path']))
+        if sha(packet) != request['request_sha256']:
+            raise EvidenceChangedError('本次退出记录已变化，请重新核对。')
+        struct.pack_into('<I', packet, 52, QUIT)
+        atomic(request['path'], packet)
+        request = read_request(Path(request['context']['root']), request['path'], enroll=False)
     if request['mode'] in (BLOCKED, RELOADED):
         return check_stopped_without_replay(request)
     value = prepare(request)
@@ -607,7 +629,8 @@ def compare_generations(request):
         if value is not None:
             if image(stable(job/'before'/name), request) != stable(job/'expected'/name):
                 raise ValueError('恢复任务的目标与已核对的恢复计划不一致。')
-        matches = (image(raw, request) == raw if value is None else file_matches(request, value, name, raw))
+        matches = request['mode'] != TITLE_RECORDS and (
+            image(raw, request) == raw if value is None else file_matches(request, value, name, raw))
         status[name] = 'verified' if matches else 'unverified'
     if (value is not None and set(current) == set(status) and
             set(status.values()) <= {'verified', 'unverified'} and
@@ -646,6 +669,8 @@ def check_stopped_without_replay(request, *, current=None, later_progress=False)
     value = prepare(request, current=current)
     if finish(request, value, proof='both save generations verified without replay', current=current):
         return 'verified'
+    if request['mode'] == TITLE_RECORDS:
+        raise ValueError('同一角色从标题读回的记录或后续两代存档尚未核实。当前进度和个人世界记录已保留。')
     # Only an earlier, completed primary recovery may wait through later gameplay.
     if not (later_progress and value['state'] == 'primary-ready') and not file_matches(
             request, value, primary, current[primary]):
@@ -859,16 +884,18 @@ def _finalize(root, token, *, quit_sequence=0, observed_exit=None, exit_record_f
                           (observed_exit is None or observed_exit == 0))
             # A live worker may substitute only the exit-code write that failed,
             # for this exact sealed QUIT. Never substitute a recorded exit code.
-            live_quit = (run_token == token and mode == QUIT and
+            live_quit = (run_token == token and mode in (QUIT, TITLE_RECORDS) and
                          type(quit_sequence) is int and seq == quit_sequence and
                          type(observed_exit) is int and observed_exit == 0 and
                          'exit_code' not in request['context'] and
                          isinstance(exit_record_failure, ExitRecordWriteError) and
                          exit_record_failure.token == token and exit_record_failure.exit_code == 0)
+            if mode == TITLE_RECORDS and run_token == token and observed_exit not in (None, 0):
+                raise ValueError('游戏进程未正常结束，保留本轮标题读档凭据供复核。')
             result = complete_stopped(request, compare_only=run_token != token,
                                       current_token=token, observed_exit=observed_exit,
                                       can_write=live_quit or (clean_exit and (mode == APPLIED or
-                                                                 (mode == QUIT and seq == quit_sequence))))
+                                                                 (mode in (QUIT, TITLE_RECORDS) and seq == quit_sequence))))
             results.append(result)
             if 'waiting-backup-save' in result:
                 waiting.add(request['journal'].with_suffix('.bin.awaiting-save'))
