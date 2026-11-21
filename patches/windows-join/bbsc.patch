@@ -868,10 +868,488 @@ new file mode 100644
 +    actionBytes("act-bytes",id,actor);
 +    if (!origin) lost("act-maint-origin");
 +}
+diff --git a/emulator/src/core/bbsc_active_save.inc b/emulator/src/core/bbsc_active_save.inc
+--- a/emulator/src/core/bbsc_active_save.inc
++++ b/emulator/src/core/bbsc_active_save.inc
+@@ -15,19 +15,23 @@
+     return ReadablePointer(holder, 0x10) ? ReadValue<u64>(holder, 8) : 0;
+ }
+
+-void InvalidateBbscActiveSave() {
++#include "bbsc_guest_quit_save.inc"
++
++void InvalidateBbscActiveSave(bool new_character = false) {
+     std::scoped_lock lock{bbsc_active_save_mutex};
++    if (new_character || (GuestQuitSave::departure && !GuestQuitSave::departure->quit)) GuestQuitSave::drop_locked();
+     ++bbsc_active_save_generation;
+     bbsc_active_save = {};
+ }
+
+ void PS4_SYSV_ABI BbscActiveSaveNewCharacter(u64, const GuestRegisterSnapshot*) {
+-    InvalidateBbscActiveSave();
++    InvalidateBbscActiveSave(true);
+ }
+
+ void PS4_SYSV_ABI BbscActiveSaveLoadBegin(u64, const GuestRegisterSnapshot* registers) {
+     try {
+         std::scoped_lock lock{bbsc_active_save_mutex};
++        GuestQuitSave::begin_read_locked();
+         const auto previous = bbsc_active_save;
+         ++bbsc_active_save_generation;
+         bbsc_active_save = {};
+@@ -47,6 +51,7 @@
+                                    previous.manager == manager && previous.slot == slot ?
+                                        previous.lineage : bbsc_active_save_generation,
+                                    slot};
++        GuestQuitSave::read_input_locked(bbsc_active_save_loading,caller,registers->rsi);
+     } catch (...) { /* Missing evidence leaves this load unbound. */ }
+ }
+
+diff --git a/emulator/src/core/bbsc_guest_position_record.h b/emulator/src/core/bbsc_guest_position_record.h
+new file mode 100644
+--- /dev/null
++++ b/emulator/src/core/bbsc_guest_position_record.h
+@@ -0,0 +1,222 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <bit>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include <optional>
++#include <span>
++#include <utility>
++
++namespace item2::title_record {
++
++struct CharacterIdentity {
++    std::array<std::uint8_t, 32> name;
++    std::array<std::uint8_t, 235> appearance;
++    bool operator==(const CharacterIdentity&) const noexcept = default;
++};
++
++// Supply both complete native vectors captured at this character's own A.
++// The caller establishes the provenance of the map and all eight components.
++struct OriginPose {
++    std::uint32_t map;
++    std::array<float, 4> position;
++    std::array<float, 4> facing;
++};
++
++namespace detail {
++
++static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
++static_assert(std::endian::native == std::endian::little || std::endian::native == std::endian::big);
++
++inline std::uint32_t little_endian(std::uint32_t value) noexcept {
++    if constexpr (std::endian::native == std::endian::big)
++        return std::byteswap(value);
++    return value;
++}
++
++inline std::uint32_t word(std::span<const std::uint8_t> bytes, std::size_t offset) noexcept {
++    std::uint32_t value;
++    std::memcpy(&value, bytes.data() + offset, sizeof(value));
++    return little_endian(value);
++}
++
++inline bool usable_map(std::uint32_t map) noexcept {
++    return map != 0 && map != std::numeric_limits<std::uint32_t>::max();
++}
++
++inline bool usable_origin(const OriginPose& origin) noexcept {
++    const auto finite = [](float value) { return std::isfinite(value); };
++    if (!usable_map(origin.map) || !std::ranges::all_of(origin.position, finite) ||
++        !std::ranges::all_of(origin.facing, finite))
++        return false;
++    // Same XYZ checks as the own-world character transform capture.
++    const auto xyz = std::span{origin.position}.first<3>();
++    return std::ranges::all_of(xyz, [](float v) { return std::abs(v) <= 20000.0f; }) &&
++           std::ranges::any_of(xyz, [](float v) { return v != 0.0f; });
++}
++
++// The validated primary extent contains all six counted areas in offline_save.parse.
++inline bool valid_inventory(std::span<const std::uint8_t> bytes, std::size_t username) noexcept {
++    struct Area { std::size_t offset, slots; };
++    constexpr Area areas[] = {{453, 1984}, {32201, 64}, {33229, 64},
++                              {34737, 1984}, {66485, 64}, {67513, 64}};
++    for (const auto& [offset, slots] : areas) {
++        const auto count_at = username + offset;
++        std::uint32_t active = 0;
++        for (std::size_t slot = 0; slot < slots; ++slot) {
++            const auto entry = count_at + 4 + 16 * slot;
++            const auto handle = word(bytes, entry);
++            const auto code = word(bytes, entry + 4);
++            const auto quantity = word(bytes, entry + 8);
++            if (handle == 0) {
++                if ((code != 0 && code != 0xffffffffu) || quantity != 0)
++                    return false;
++            } else {
++                if (code == 0xffffffffu || quantity == 0)
++                    return false;
++                ++active;
++            }
++        }
++        if (word(bytes, count_at) != active)
++            return false;
++    }
++    return true;
++}
++
++struct Record {
++    CharacterIdentity identity;
++    std::size_t spatial;
++};
++
++inline std::optional<Record> inspect(std::span<const std::uint8_t> bytes) noexcept {
++    constexpr std::size_t header_size = 0x54;
++    if (bytes.size() != 0x140000 || word(bytes, 0) != 0x41 ||
++        word(bytes, 0x0c) != header_size || !usable_map(word(bytes, 4)))
++        return std::nullopt;
++
++    // Widen before adding untrusted offsets and lengths, including on 32-bit hosts.
++    const auto field = [&](std::size_t off) -> std::uint64_t { return word(bytes, off); };
++    const auto primary_end = field(0x24);
++    const auto flags = field(0x34);
++    const auto world = field(0x3c);
++    const auto spatial = field(0x44);
++    const auto end = field(0x4c);
++    if (field(0x14) != header_size || header_size + field(0x18) != primary_end ||
++        primary_end + field(0x28) != field(0x2c) || field(0x2c) + field(0x30) != field(0x1c) ||
++        field(0x1c) != field(0x10) + 1 || field(0x1c) > flags ||
++        field(0x38) != 150001 || flags + field(0x38) != world ||
++        world + field(0x40) != spatial || world + field(0x48) != end ||
++        spatial + 0x50 != end || end > bytes.size())
++        return std::nullopt;
++
++    // offline_save's 'username' is one byte before the 32 identity bytes.
++    constexpr std::size_t username_to_end = 68545 + 136;
++    if (primary_end <= header_size + username_to_end)
++        return std::nullopt;
++    const auto username = static_cast<std::size_t>(primary_end) - username_to_end;
++    const auto face = username + 34497;
++    constexpr std::array<std::uint8_t, 4> tag = {'F', 'A', 'C', 'E'};
++    const auto primary_last = bytes.data() + static_cast<std::size_t>(primary_end);
++    const auto find_face = [&](const std::uint8_t* first) {
++        return std::search(first, primary_last, tag.begin(), tag.end());
++    };
++    // offline_save.parse only counts complete anchors in [0xf000, primary_end).
++    if (face < 0xf000 || find_face(bytes.data() + 0xf000) != bytes.data() + face ||
++        find_face(bytes.data() + face + tag.size()) != primary_last || !valid_inventory(bytes, username))
++        return std::nullopt;
++
++    const auto start = static_cast<std::size_t>(spatial);
++    for (const auto pair : {start, start + 0x30}) {
++        for (std::size_t i = 0; i < 0x20; i += 4) {
++            if (!std::isfinite(std::bit_cast<float>(word(bytes, pair + i))))
++                return std::nullopt;
++        }
++    }
++    Record record{{}, start};
++    std::memcpy(record.identity.name.data(), bytes.data() + username + 1, record.identity.name.size());
++    std::memcpy(record.identity.appearance.data(), bytes.data() + face + 4, record.identity.appearance.size());
++    return record;
++}
++
++} // namespace detail
++
++[[nodiscard]] inline std::optional<CharacterIdentity>
++read_identity(std::span<const std::uint8_t> record) noexcept {
++    if (const auto checked = detail::inspect(record))
++        return checked->identity;
++    return std::nullopt;
++}
++
++class ScopedPlacement {
++public:
++    ScopedPlacement(const ScopedPlacement&) = delete;
++    ScopedPlacement& operator=(const ScopedPlacement&) = delete;
++    ScopedPlacement& operator=(ScopedPlacement&&) = delete;
++    ScopedPlacement(ScopedPlacement&& other) noexcept
++        : temporary_(std::exchange(other.temporary_, {})), spatial_(other.spatial_), before_(other.before_) {}
++
++    ~ScopedPlacement() noexcept { restore(); }
++
++    // Call before handing the patched private buffer to a reader that will
++    // consume and discard it. Detaching only clears this guard's borrowed span.
++    void release_without_restore() noexcept { temporary_ = {}; }
++
++    void restore() noexcept {
++        if (temporary_.empty())
++            return;
++        auto* data = temporary_.data();
++        std::memcpy(data + 4, before_.data(), 4);
++        std::memcpy(data + spatial_, before_.data() + 4, 32);
++        std::memcpy(data + spatial_ + 0x30, before_.data() + 36, 32);
++        temporary_ = {};
++    }
++
++private:
++    friend std::optional<ScopedPlacement>
++    apply_to_temporary(std::span<std::uint8_t>, const CharacterIdentity&, const OriginPose&) noexcept;
++
++    ScopedPlacement(std::span<std::uint8_t> temporary, std::size_t spatial) noexcept
++        : temporary_(temporary), spatial_(spatial) {
++        const auto* data = temporary.data();
++        std::memcpy(before_.data(), data + 4, 4);
++        std::memcpy(before_.data() + 4, data + spatial, 32);
++        std::memcpy(before_.data() + 36, data + spatial + 0x30, 32);
++    }
++
++    std::span<std::uint8_t> temporary_;
++    std::size_t spatial_;
++    std::array<std::uint8_t, 68> before_;
++};
++
++// Keep the private buffer exclusive and at a stable address until restore(),
++// guard destruction, or explicit release before transfer to a consuming reader.
++[[nodiscard]] inline std::optional<ScopedPlacement>
++apply_to_temporary(std::span<std::uint8_t> temporary,
++                   const CharacterIdentity& expected,
++                   const OriginPose& origin) noexcept {
++    if (!detail::usable_origin(origin))
++        return std::nullopt;
++    const auto checked = detail::inspect(temporary);
++    if (!checked || checked->identity != expected)
++        return std::nullopt;
++
++    const auto map = detail::little_endian(origin.map);
++    std::array<std::uint32_t, 8> pair;
++    for (std::size_t i = 0; i < 4; ++i) {
++        pair[i] = detail::little_endian(std::bit_cast<std::uint32_t>(origin.position[i]));
++        pair[4 + i] = detail::little_endian(std::bit_cast<std::uint32_t>(origin.facing[i]));
++    }
++    const auto start = checked->spatial;
++    ScopedPlacement guard(temporary, start);
++    std::memcpy(temporary.data() + 4, &map, 4);
++    std::memcpy(temporary.data() + start, pair.data(), 32);
++    std::memcpy(temporary.data() + start + 0x30, pair.data(), 32);
++    return guard;
++}
++
++} // namespace item2::title_record
+diff --git a/emulator/src/core/bbsc_guest_quit_save.inc b/emulator/src/core/bbsc_guest_quit_save.inc
+new file mode 100644
+--- /dev/null
++++ b/emulator/src/core/bbsc_guest_quit_save.inc
+@@ -0,0 +1,209 @@
++// A confirmed guest exit may finish saving after the active-load token is retired.
++// Keep this permission only from the accepted summon to the very next character read.
++std::string BbscSaveProofHash(std::span<const u8> bytes);
++
++namespace GuestQuitSave {
++using item2::title_record::CharacterIdentity;
++using item2::title_record::OriginPose;
++using item2::title_record::read_identity;
++constexpr size_t role_bytes = 0x140000;
++constexpr u64 title_reader_return = 0x01C2B453;
++
++struct Member {
++    u64 room, guest_joined, owner_joined;
++    u32 guest, owner;
++    bool operator==(const Member&) const = default;
++};
++
++struct Departure {
++    BbscActiveSaveLoad load;
++    CharacterIdentity identity;
++    OriginPose origin;
++    u64 baseline, quit{};
++    std::optional<Member> member;
++};
++
++std::optional<Departure> departure; // Protected by bbsc_active_save_mutex, including on the save thread.
++std::optional<CharacterIdentity> input_identity;
++u64 input_generation{};
++std::atomic<u64> awaiting_baseline{0};
++std::atomic<bool> hooks_ready{false};
++
++struct SaveFrame {
++    u64 baseline, manager, frame, buffer;
++    s32 slot;
++};
++thread_local SaveFrame serializing{};
++
++bool trace() {
++    static const bool enabled = EnvFlagEnabled("BB_SAVE_TRACE");
++    return enabled;
++}
++
++void drop_locked() {
++    departure.reset();
++    awaiting_baseline.store(0);
++}
++
++void new_join() {
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    drop_locked();
++}
++
++void begin_read_locked() {
++    // Until the native reader commits, even a same-looking record cannot authorize an exit.
++    input_generation = 0;
++    input_identity.reset();
++    if (departure && departure->quit) drop_locked();
++}
++
++void read_input_locked(const BbscActiveSaveLoad& load, u64 caller, u64 buffer) {
++    if (caller == image_base + title_reader_return) drop_locked();
++    if (!hooks_ready || !ReadablePointer(buffer, role_bytes)) return;
++    const std::span<const u8> bytes{reinterpret_cast<const u8*>(buffer), role_bytes};
++    input_identity = read_identity(bytes);
++    input_generation = load.generation;
++    if (departure && (!input_identity || departure->identity != *input_identity ||
++        departure->load.manager != load.manager || departure->load.lineage != load.lineage ||
++        departure->load.slot != load.slot)) drop_locked();
++    if (trace()) {
++        const auto hash = BbscSaveProofHash(bytes);
++        LOG_INFO(Debug, "BBSC guest quit save read: slot={} generation={} caller={:#x} map={:#x} sha256={}",
++                 load.slot, load.generation, caller-image_base, ReadValue<u32>(buffer,4), hash);
++        const char* folder = std::getenv("BBSC_SAVE_DIR");
++        if (caller == image_base + title_reader_return && folder && *folder && !hash.empty()) {
++            // Read-only observation. A match can include both files when their bytes agree.
++            for (const auto prefix : {"userdata", "backup"}) {
++                const auto name = fmt::format("{}{:04}",prefix,load.slot);
++                std::ifstream file(std::filesystem::path(folder)/name, std::ios::binary);
++                std::vector<u8> disk(role_bytes);
++                const bool complete = file.read(reinterpret_cast<char*>(disk.data()),disk.size()) &&
++                                      file.peek() == std::char_traits<char>::eof();
++                LOG_INFO(Debug, "BBSC guest quit title source: file={} readable={} matches_input={}",
++                         name, complete, complete && std::equal(disk.begin(),disk.end(),bytes.begin()));
++            }
++        }
++    }
++}
++
++void remember(const std::optional<BbscActiveSaveLoad>& active, const OriginPose& origin, u64 baseline) {
++    if (!hooks_ready || !active || !baseline || !item2::title_record::detail::usable_origin(origin)) return;
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    if (!active->lineage || !input_identity || active->generation != input_generation ||
++        active->generation != bbsc_active_save.generation) return;
++    departure = Departure{*active, *input_identity, origin, baseline, 0, {}};
++    awaiting_baseline.store(baseline);
++}
++
++std::optional<Member> guest_member() {
++    TheHuntVisibility::Context roster;
++    if (GetSessionState() != 6 || GetLocalPlayerType() != 1 ||
++        !BbscMod::RelayAuthVisibilityContext(roster) || !roster.room || roster.own == roster.owner)
++        return {};
++    const auto me = TheHuntVisibility::Find(roster,roster.own);
++    const auto host = TheHuntVisibility::Find(roster,roster.owner);
++    if (!me || !host || !me->joined || !host->joined) return {};
++    return Member{roster.room,me->joined,host->joined,roster.own,roster.owner};
++}
++
++void observe_guest() {
++    const auto baseline = awaiting_baseline.load();
++    if (!baseline) return;
++    // Roster access releases the transport mutex before taking the save mutex.
++    const auto member = guest_member();
++    if (!member) return;
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    if (!departure || departure->baseline != baseline || departure->member || !bbsc_active_save.generation ||
++        departure->load.lineage != bbsc_active_save.lineage ||
++        input_generation != bbsc_active_save.generation || input_identity != departure->identity) return;
++    departure->member = member;
++    awaiting_baseline.store(0);
++}
++
++void confirm(u64 sequence, s32 slot) {
++    const auto member = guest_member();
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    if (!departure || !sequence || !member || departure->member != member ||
++        !bbsc_active_save.generation || input_generation != bbsc_active_save.generation ||
++        bbsc_active_save.manager != departure->load.manager || bbsc_active_save.lineage != departure->load.lineage ||
++        bbsc_active_save.slot != slot || departure->load.slot != slot ||
++        input_identity != departure->identity || BbscActivePlayerData() != bbsc_active_save.player_data) {
++        if (trace()) LOG_INFO(Debug, "BBSC guest quit save unbound: exit={} slot={} origin={} roster_match={} input_load={} active_load={}",
++                              sequence,slot,departure.has_value(),departure && member && departure->member == member,
++                              input_generation,bbsc_active_save.generation);
++        drop_locked();
++        return;
++    }
++    departure->load = bbsc_active_save;
++    departure->quit = sequence;
++    LOG_INFO(Debug, "BBSC guest quit save confirmed: slot={} load={} baseline={} exit={} room={} map={:#x}",
++             slot, departure->load.generation, departure->baseline, sequence, member->room, departure->origin.map);
++}
++
++void parting() {
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    if (departure && departure->member && !departure->quit) drop_locked();
++}
++
++void PS4_SYSV_ABI save_begin(u64, const GuestRegisterSnapshot* r) {
++    serializing = {};
++    if (!hooks_ready || !r || r->r13 > 9) return;
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    if (!departure || r->rdi != departure->load.manager || static_cast<s32>(r->r13) != departure->load.slot)
++        return;
++    serializing = {departure->baseline, r->rdi, r->rbp, r->r15, static_cast<s32>(r->r13)};
++}
++
++void PS4_SYSV_ABI save_result(u64, const GuestRegisterSnapshot* r) {
++    const auto frame = std::exchange(serializing, {});
++    try {
++        if (!hooks_ready || !r || (!trace() && !frame.baseline) ||
++            r->r13 > 9 || r->rbp < 0x69 || !ReadablePointer(r->rbp-0x69,1) ||
++            !ReadValue<u8>(r->rbp-0x69,0) || !ReadablePointer(r->r15,role_bytes)) return;
++        const auto slot = static_cast<s32>(r->r13);
++        const auto manager = GetGlobalState();
++        const auto data = r->r15;
++        if (r->rbx != manager || !ReadablePointer(manager,0x1752) || ReadValue<u8>(manager,0x1751) < 100)
++            return;
++        u64 exit = 0;
++        {
++            std::scoped_lock lock{bbsc_active_save_mutex};
++            if (departure && departure->quit && frame.baseline == departure->baseline &&
++                frame.manager == manager && frame.frame == r->rbp && frame.buffer == data && frame.slot == slot &&
++                departure->load.slot == slot && ReadValue<s32>(manager,0x1490) == slot &&
++                departure->load.player_data == BbscActivePlayerData() &&
++                HasMemoryAccess(data,role_bytes,MemoryProt::CpuWrite)) {
++                auto placement = item2::title_record::apply_to_temporary(
++                    {reinterpret_cast<u8*>(data),role_bytes}, departure->identity, departure->origin);
++                if (placement) {
++                    // The caller owns this generated buffer until the submit routine takes its copy.
++                    placement->release_without_restore();
++                    exit = departure->quit;
++                }
++            }
++        }
++        if (exit || trace()) {
++            const std::span<const u8> bytes{reinterpret_cast<const u8*>(data),role_bytes};
++            LOG_INFO(Debug, "BBSC guest quit save output: slot={} exit={} map={:#x} sha256={}",
++                     slot, exit, ReadValue<u32>(data,4), trace() ? BbscSaveProofHash(bytes) : "-");
++        }
++    } catch (...) { /* The native serializer retains its result and original control flow. */ }
++}
++
++void install() {
++    // Normal serialization only. Clearing a slot bypasses both sites. The second
++    // hook replays the original bookkeeping store before the native success check.
++    static constexpr std::array<u8,15> begin{0xba,0x00,0x00,0x14,0x00,0x31,0xc9,0x4c,0x89,0xfe,0xe8,0xe9,0xd3,0xff,0xff};
++    static constexpr std::array<u8,22> result{0x48,0x89,0x83,0x60,0x15,0,0,0x80,0x7d,0x97,0,0x0f,0x84,0x80,0,0,0,0xe8,0x85,0x3e,0x2c,0};
++    static constexpr std::array<u8,11> submit{0x4c,0x89,0xfe,0x44,0x89,0xea,0xe8,0x91,0x40,0x2c,0};
++    const auto match = [](u64 at,const auto& signature) {
++        return ReadablePointer(image_base+at,signature.size()) &&
++            !std::memcmp(reinterpret_cast<const void*>(image_base+at),signature.data(),signature.size());
++    };
++    hooks_ready = bbsc_active_save_hooks && match(0x0156d658,begin) && match(0x0156d745,result) &&
++        match(0x0156d774,submit) &&
++        InstallGuestCodeHook(reinterpret_cast<void*>(image_base+0x0156d658),std::span{begin}.first<5>(),0,save_begin) &&
++        InstallGuestCodeHook(reinterpret_cast<void*>(image_base+0x0156d745),std::span{result}.first<7>(),0,save_result);
++    LOG_INFO(Debug, "BBSC guest quit save: ordinary role output hooks {}", hooks_ready.load() ? "ready" : "unavailable");
++}
++} // namespace GuestQuitSave
 diff --git a/emulator/src/core/bbsc_menu_quit.inc b/emulator/src/core/bbsc_menu_quit.inc
 --- a/emulator/src/core/bbsc_menu_quit.inc
 +++ b/emulator/src/core/bbsc_menu_quit.inc
-@@ -27,6 +27,7 @@
+@@ -27,11 +27,16 @@
  }
  
  void PS4_SYSV_ABI BbscMenuQuitConfirmed(u64, const GuestRegisterSnapshot* registers) {
@@ -879,7 +1357,16 @@ diff --git a/emulator/src/core/bbsc_menu_quit.inc b/emulator/src/core/bbsc_menu_
      if (!registers || !ReadablePointer(registers->rax, 0x260)) return;
      LOG_INFO(Debug, "BBSC System menu exit confirmed: session_state={}; releasing persistent-session patches before native exit", GetSessionState());
      // Let the game's existing confirmation/save/title transition do its work.
-@@ -41,6 +42,7 @@
+     // Do not kill the process, alter the save, or invoke a second exit sequence.
++    const auto previous_sequence = bbsc_recovery_sequence;
+     BbscWorldRecoveryQuit(true);
++    if (bbsc_recovery_title_exit && bbsc_recovery_mode == BbscRecoveryQuit &&
++        bbsc_recovery_sequence != previous_sequence)
++        GuestQuitSave::confirm(bbsc_recovery_sequence,bbsc_recovery_slot);
+     InvalidateBbscActiveSave();
+     DiscardBbscIdleQuitWarpTarget();
+     SuspendBbscPersistence("confirmed System menu exit");
+@@ -41,6 +46,7 @@
      const bool ok = InstallGuestCodeHook(
          reinterpret_cast<void*>(image_base + BbscMenuQuitConfirmedOffset),
          std::span<const u8>{BbscMenuQuitConfirmedBytes}, 0, BbscMenuQuitConfirmed);
@@ -914,7 +1401,15 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  #include <vector>
  
  #include "common/logging/log.h"
-@@ -95,6 +105,29 @@
+@@ -56,6 +66,7 @@
+ #include "core/memory.h"
+
+ #include "bbsc_visibility_wire.h"
++#include "bbsc_guest_position_record.h"
+ #ifdef _WIN32
+ #ifndef NOMINMAX
+ #define NOMINMAX
+@@ -95,6 +106,29 @@
  namespace Core::Bloodborne {
  void OnBbscRelayAuthContextChanged(std::uint32_t owner);
  namespace {
@@ -944,7 +1439,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
  enum class TraceKind : u8 {
      SosCondition,
-@@ -836,6 +869,17 @@
+@@ -836,6 +870,17 @@
       TraceKind::WorldStateValidation,
       {0x44, 0x89, 0xE1, 0x41, 0x88, 0xC4},
       6},
@@ -962,7 +1457,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  });
  
  std::array<std::atomic<u64>, Sites.size()> site_hits{};
-@@ -3690,6 +3734,17 @@
+@@ -3690,6 +3735,17 @@
  // At the kept death (guest, state 6): queue the current player type as the respawn override.
  #include "bbsc_retained_join.inc"
  
@@ -980,7 +1475,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  void ArmBbscReinsertV8() {
      CaptureBbscRetainedJoinMembers();
      const s32 type = GetLocalPlayerType();
-@@ -3791,6 +3846,7 @@
+@@ -3791,6 +3847,7 @@
              !HasMemoryAccess(task + 0xED, 1, MemoryProt::CpuWrite)) {
              continue;
          }
@@ -988,7 +1483,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          WriteValue<u8>(task, 0xED, static_cast<u8>(ReadValue<u8>(task, 0xED) | 0x01));
          QueueBbscRetainedJoinLine(task);
          set_state(task, 4);
-@@ -3826,6 +3882,7 @@
+@@ -3826,6 +3883,7 @@
          return;
      }
      last_check_ms = now;
@@ -996,7 +1491,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
      const u64 global = GetGlobalState();
      const u64 multi_play = ReadValue<u64>(image_base + MatchingStatePointerOffset, 0);
-@@ -3854,6 +3911,7 @@
+@@ -3854,6 +3912,7 @@
          }
          auto it = std::ranges::find_if(missing, [task](const MissingSince& m) { return m.task == task; });
          if (RemotePlayerExists(task)) {
@@ -1004,7 +1499,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              if (it != missing.end()) {
                  *it = {};
              }
-@@ -3866,11 +3924,12 @@
+@@ -3866,11 +3925,12 @@
              }
              continue;
          }
@@ -1021,7 +1516,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          set_state(task, 4);
          *it = {};
          LOG_INFO(Debug,
-@@ -3910,14 +3969,25 @@
+@@ -3910,14 +3970,25 @@
  constexpr u64 DeathReloadRequestOffset = 0x013CDE30;
  bool bbsc_request_death_reload = false;
  
@@ -1048,7 +1543,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      LOG_INFO(Debug, "BBSC death: reload requested ({}), result {}", why, result);
  }
  s64 bbsc_spectate_since_ms = 0;
-@@ -4518,7 +4588,7 @@
+@@ -4518,7 +4589,7 @@
               "BBSC {} warp: full reload requested into map {:#x} at ({:.2f}, {:.2f}, {:.2f}), "
               "result {}",
               why, to.packed_region, to.x, to.y, to.z, result);
@@ -1057,7 +1552,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          cancel();
          return false;
      }
-@@ -6780,7 +6850,11 @@
+@@ -6780,7 +6851,11 @@
      std::string_view notice_what;
  };
  BbscCurtainState bbsc_curtain;
@@ -1070,7 +1565,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  void BbscRestockFromStorage(std::string_view why); // below
  s64 bbsc_inplace_respawn_ms = 0; // last BbscRespawnInPlace revive
  
-@@ -6890,7 +6964,11 @@
+@@ -6890,7 +6965,11 @@
      }
      if (bbsc_load_cover.own_screen) {
          bbsc_load_cover.own_screen = false;
@@ -1083,7 +1578,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              reinterpret_cast<void PS4_SYSV_ABI (*)(u32)>(image_base + NowLoadingSetStateOffset)(0);
          }
      }
-@@ -6899,6 +6977,23 @@
+@@ -6899,6 +6978,23 @@
      }
      LOG_INFO(Debug, "BBSC load cover: fading in after {} ms ({}; {})",
               SteadyNowMs() - bbsc_load_cover.started_ms, bbsc_load_cover.why, how);
@@ -1107,7 +1602,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  }
  
  void TickBbscLoadCover() {
-@@ -6923,21 +7018,21 @@
+@@ -6923,21 +7019,21 @@
      // map, so no follow load ran - and only the follow's arrival ended the cover. The loading screen
      // stayed up 75 s ("infinite loading screen unless you teleport"). A wipe cover ends once its
      // load is over and the respawn after it is done (curtain closed, alive), or 20 s after the load.
@@ -1140,7 +1635,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
                  EndBbscLoadCover(respawned ? "wipe reload done, guest respawned"
                                             : "wipe reload done, time limit after the load");
                  return;
-@@ -6962,7 +7057,7 @@
+@@ -6962,7 +7058,7 @@
          }
          if (!bbsc_load_cover.game_screen_seen) {
              WriteValue<s32>(menu, 0x808, 2);
@@ -1149,7 +1644,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              // 2026-10-05 (tester): "it shows me pop in for a second and then it shows me the load
              // screen and then it shows me" - between the summon load and the join's second reload
              // (and after a load, until the guest is placed) the black plate did not hide the map.
-@@ -6974,14 +7069,20 @@
+@@ -6974,14 +7070,20 @@
                  LOG_INFO(Debug, "BBSC load cover: the game's loading screen closed after {} ms ({})",
                           now - bbsc_load_cover.started_ms, bbsc_load_cover.why);
              }
@@ -1172,7 +1667,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
                  if (!bbsc_load_cover.own_screen) {
                      LOG_INFO(Debug, "BBSC load cover: loading screen kept up until the guest is "
                                      "placed ({})",
-@@ -7179,7 +7280,26 @@
+@@ -7179,7 +7281,26 @@
  }
  
  // Revive the local player and teleport it, without any load.
@@ -1200,7 +1695,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      // Replicates the local-player branch of the game's event revive 0x013CBAD0(10000, ...)
      // (CONFIRMED statically), in the same order, WITHOUT its final CSMultiPlayMan::Stop call:
      //   chr+0x208 = (1.0, 1.0); warp chr->vtable[0x5F8](chr, &pos, &rot, 1); chr+0x1E4 |= 2;
-@@ -7230,7 +7350,12 @@
+@@ -7230,7 +7351,12 @@
      // nothing under the guest. The host's position is used only while the host's map is loaded
      // here; otherwise the nearest lamp of OUR map, and the follow then reloads us into the host's.
      bool partner_here = !guest;
@@ -1214,7 +1709,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          s32 host_lamp = -1;
          u32 host_map = 0;
          {
-@@ -7287,7 +7412,7 @@
+@@ -7287,7 +7413,7 @@
      // the step had already zeroed the count at [[0x0553B130]+8]+0xF8).
  
      // 1. opacity / scale back to normal
@@ -1223,7 +1718,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
      // 2. warp
      const u64 vtable = ReadValue<u64>(player, 0);
-@@ -7297,6 +7422,8 @@
+@@ -7297,6 +7423,8 @@
          LOG_WARNING(Debug, "BBSC respawn in place ({}): character vtable unexpected", why);
          return false;
      }
@@ -1232,7 +1727,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      alignas(16) std::array<float, 4> position = target->position;
      alignas(16) std::array<float, 4> rotation = target->rotation;
      position[3] = 1.0f;
-@@ -7311,7 +7438,7 @@
+@@ -7311,7 +7439,7 @@
          }
      }
      using Warp = void PS4_SYSV_ABI (*)(u64 chr, float* position, float* rotation, u32 flag);
@@ -1241,7 +1736,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      const u64 protection_ticket = BbscLoadProtectionTicket();
      reinterpret_cast<Warp>(warp)(player, position.data(), rotation.data(), 1);
      WriteValue<u8>(player, 0x1E4, static_cast<u8>(ReadValue<u8>(player, 0x1E4) | 0x02));
-@@ -7332,18 +7459,15 @@
+@@ -7332,18 +7460,15 @@
          using SetHp = void PS4_SYSV_ABI (*)(u64 chr, s32 hp);
          reinterpret_cast<SetHp>(image_base + 0x018BCD40)(player, ReadValue<s32>(stats, 0xFC));
      }
@@ -1269,7 +1764,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
      // 5. the death handler's globals (normally cleared by the reload this path skips)
      if (const u64 global = GetGlobalState(); ReadablePointer(global, 0x1528)) {
-@@ -7932,8 +8056,68 @@
+@@ -7932,8 +8057,68 @@
      return ReadablePointer(local, PlayerEchoesOffset + 4) ? local : 0;
  }
  
@@ -1339,7 +1834,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      return local == 0 ? -1 : ReadValue<s32>(local, PlayerEchoesOffset);
  }
  
-@@ -8019,7 +8203,10 @@
+@@ -8019,7 +8204,10 @@
      }
      const s32 before = bbsc_echoes_at_death;
      bbsc_echoes_at_death = -1;
@@ -1351,7 +1846,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      if (before < 0 || now < 0) {
          return false; // no snapshot, or the slot data went away with the world
      }
-@@ -8053,6 +8240,10 @@
+@@ -8053,6 +8241,10 @@
      // (reported 2026-09-24). The own-world branch uses the character's own position and map, so
      // the drop runs with the flag set and the flag goes straight back.
      const bool guest = ReadablePointer(global, 0x1593) && ReadValue<u8>(global, 0x1592) == 0;
@@ -1362,7 +1857,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      if (guest) {
          WriteValue<u8>(global, 0x1592, 1);
      }
-@@ -8061,6 +8252,10 @@
+@@ -8061,6 +8253,10 @@
      if (guest) {
          WriteValue<u8>(global, 0x1592, 0);
      }
@@ -1373,7 +1868,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
      const u64 slots = ReadValue<u64>(image_base + PlayerSlotManagerPointerOffset, 0);
      const u64 record = ReadablePointer(slots, 0x38) ? ReadValue<u64>(slots, 0x30) : 0;
-@@ -8073,8 +8268,17 @@
+@@ -8073,8 +8269,17 @@
      if (earned_while_dead > 0 && in_stain >= earned_while_dead) {
          const u64 local = GetPlayerSlotData();
          if (local != 0 && GetBloodEchoes() >= 0) {
@@ -1393,7 +1888,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              in_stain -= earned_while_dead;
              LOG_INFO(Debug, "BBSC death penalty ({}): {} echoes earned while dead (a boss died "
                              "meanwhile) given back - only the {} held at the death are in the stain",
-@@ -8130,15 +8334,25 @@
+@@ -8130,15 +8335,25 @@
      return true;
  }
  
@@ -1420,7 +1915,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          bbsc_late_final_skip[tag] = 1;
          return;
      }
-@@ -8165,16 +8379,20 @@
+@@ -8165,16 +8380,20 @@
          bbsc_request_death_reload = true;
          return;
      }
@@ -1442,7 +1937,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      bbsc_kept_death_this_load = true;
      StashBbscOwnWorldSnapshot();
      bbsc_spectate_name = name;
-@@ -8196,6 +8414,7 @@
+@@ -8196,6 +8415,7 @@
                   name);
          return;
      }
@@ -1450,7 +1945,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      LOG_INFO(Debug, "BBSC death: {} without reload (session state {}, partner alive) -> {}", name,
               session_state,
               bbsc_death_mode == BbscDeathMode::Spectate
-@@ -8205,14 +8424,438 @@
+@@ -8205,14 +8425,438 @@
  
  // Game-thread tick: release the held death once nobody is left alive, the session is over, or the
  // safety limit is reached.
@@ -1892,7 +2387,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          return;
      }
      if (!bbsc_spectate_active || bbsc_spectate_releasing) {
-@@ -8228,6 +8871,19 @@
+@@ -8228,6 +8872,19 @@
          bbsc_spectate_saw_wipe = true;
          LOG_INFO(Debug, "BBSC spectate: a partner said dead and then alive while we were down - "
                          "it reloaded after a wipe, the guest follows");
@@ -1912,7 +2407,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      if (session_alive && LivingPartnerExists()) {
          std::string_view respawn_why;
-@@ -8248,7 +8904,8 @@
+@@ -8248,7 +8905,8 @@
              }
              bbsc_spectate_wipe_warped = true;
              const u64 real_host = FindRemoteHostCharacter();
@@ -1922,7 +2417,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
                                   ? real_host
                                   : FindLivingPartnerCharacter();
              const auto host_transform = ReadCharacterTransform(host);
-@@ -8259,8 +8916,11 @@
+@@ -8259,8 +8917,11 @@
                  to.y = host_transform->position[1];
                  to.z = host_transform->position[2];
                  to.heading = host_transform->rotation[1];
@@ -1936,7 +2431,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
                  }
              }
              LOG_WARNING(Debug, "BBSC spectate: wipe reload could not be requested, respawning "
-@@ -8508,6 +9168,7 @@
+@@ -8508,6 +9169,7 @@
  
  void BbscLeaveItemUsed(std::string_view event) {
      bbsc_leave_event_ms = SteadyNowMs();
@@ -1944,7 +2439,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      const s32 state = GetSessionState();
      if (image_base == 0 || (state != 3 && state != 6)) {
          return;
-@@ -8573,6 +9234,7 @@
+@@ -8573,6 +9235,7 @@
      SuspendBbscPersistence("quit to title");
  }
  
@@ -1952,7 +2447,15 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  #include "bbsc_menu_quit.inc"
  
  
-@@ -11137,6 +11799,7 @@
+@@ -9086,6 +9749,7 @@
+     }
+     InstallBbscMenuQuitHook();
+     InstallBbscActiveSaveHooks();
++    GuestQuitSave::install();
+     InstallBbscSaveProofHook();
+     LOG_INFO(Debug, "BBSC quit to title ends the session for both players (RegistReturnTitle {:#x})",
+              RegistReturnTitleOffset);
+@@ -11137,6 +11801,7 @@
      std::memcpy(packet.id, &player_id, 4);
      packet.dead = dead ? 1 : 0;
      std::memcpy(packet.sequence, &sequence, 4);
@@ -1960,7 +2463,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      Libraries::Np::NpSignaling::Helpers::SendBbscWorldFlagsToPeers(&packet, sizeof(packet));
      if (dead != last_dead) {
          last_dead = dead;
-@@ -11835,7 +12498,10 @@
+@@ -11835,7 +12500,10 @@
      if (tag >= Names.size() || registers == nullptr) {
          return;
      }
@@ -1972,7 +2475,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          bbsc_late_death_skip[tag] = 1;
          return;
      }
-@@ -12032,6 +12698,14 @@
+@@ -12032,6 +12700,14 @@
  // missing, they do not get to stay a corpse.
  #include "bbsc_death_ui.inc"
  
@@ -1987,7 +2490,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  void TickBbscDeadWatchdog() {
      if (!BbscSpectateEnabled()) {
          return;
-@@ -12044,10 +12718,14 @@
+@@ -12044,10 +12720,14 @@
          bbsc_kept_death_this_load = false; // a load re-arms the game's own death script
      }
      const u64 player = GetLocalPlayerCharacter();
@@ -2002,7 +2505,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      if (!session_alive || hp > 0 || hp < 0 || spectating || BbscCurtainActive()) {
          bbsc_dead_since_ms = 0;
          return;
-@@ -12058,7 +12736,9 @@
+@@ -12058,7 +12738,9 @@
          // Record the echoes now: a repeat death gets no death step to do it, and without a
          // snapshot the penalty below drops nothing.
          if (!bbsc_spectate_active) {
@@ -2013,7 +2516,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              // A repeat Boss death has no native final step to initialize its
              // spectator episode. Snapshot on the first dead observation, before
              // the 3.5 s wait, so a real partner revival in that wait is retained.
-@@ -12081,11 +12761,14 @@
+@@ -12081,11 +12763,14 @@
              LOG_WARNING(Debug, "BBSC death text: legacy Lua notice not dispatched; local death UI is independent");
          }
      }
@@ -2028,7 +2531,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      if (repeat && BbscBossFightAtDeath() && LivingPartnerExists()) {
          // Same rule as the death step: in a boss fight the dead player waits for the boss kill or
          // for nobody to be left alive (TickBbscSpectate).
-@@ -13339,6 +14022,8 @@
+@@ -13339,6 +14024,8 @@
      static s64 blank_ms = 0;
      if (now && !was) {
          blank_ms = SteadyNowMs();
@@ -2037,7 +2540,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          LOG_INFO(Debug, "BBSC leave: host leave (Blank, guest leave or session end) - the guests go home, the "
                          "host's room closes on its own timeout (session patches stay on)");
      }
-@@ -13405,6 +14090,8 @@
+@@ -13405,6 +14092,8 @@
          LOG_INFO(Debug, "BBSC leave: the guest's Parting Blank is in use (use running {}, SpEffect 7 "
                          "on {}) - waiting for the game's own leave",
                   item, effect);
@@ -2046,7 +2549,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      was_using = using_blank;
      if (used_ms == 0) {
-@@ -13687,7 +14374,7 @@
+@@ -13687,7 +14376,7 @@
          if (!InstallGuestCodeHook(reinterpret_cast<void*>(image_base + offset), prologue, tag,
                                    BbscDeathStepTraceHook, &bbsc_late_death_skip[tag])) {
              LOG_ERROR(Debug, "BBSC death trace: failed to hook {:#x}", offset);
@@ -2055,7 +2558,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      // 0x0138B2D0: push rbp; mov rbp, rsp; push r15 (same prologue bytes as SoloPlayDeath).
      if (!InstallGuestCodeHook(reinterpret_cast<void*>(image_base + FailedBossAreaMissionOffset),
-@@ -13726,7 +14413,7 @@
+@@ -13726,7 +14415,7 @@
                                    &bbsc_late_final_skip[tag])) {
              LOG_ERROR(Debug, "BBSC spectate: failed to hook {} at {:#x}", name, offset);
              return;
@@ -2064,7 +2567,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      LOG_INFO(Debug, "BBSC spectate enabled (SoloPlayDeath_2 {:#x}, PartyGhostDeath_2 {:#x})",
               SoloPlayDeathFinalOffset, PartyGhostDeathFinalOffset);
-@@ -14242,8 +14929,811 @@
+@@ -14242,8 +14931,811 @@
  
  #include "bbsc_visual_diagnostics.inc"
  #include "bbsc_peer_display.inc"
@@ -2878,7 +3381,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
  // Host-only presentation guard. Read-only; no guest protection state is armed here.
  struct BbscHostRespawnPartner {
-@@ -14347,6 +15837,820 @@
+@@ -14347,6 +15839,820 @@
  // These read-only host witnesses are independent of guest protection tickets.
  void ArmBbscHostReadyPlacement(u64 actor, u32 map, u64 reload, u64 role);
  bool BbscHostNativeReady(u64 actor, u32 map, u64 reload, u64 role);
@@ -3699,7 +4202,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  struct BbscHostRespawnWait {
      bool active{};
      s64 since{}, curtain_started{};
-@@ -14458,12 +16762,796 @@
+@@ -14458,14 +16764,802 @@
  }
  
  
@@ -4495,16 +4998,35 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
 +        ThWipePassive01::stage(site.offset,*registers);
      if (site.kind == TraceKind::LuaSessionEvent) {
          const auto event = ReadGuestAscii(registers->rsi, 64);
++        const bool guest_join = event == "JoinSession_White" && GetSessionState() != 3;
++        const bool fresh_world = guest_join && bbsc_own_world.empty();
++        const auto previous_baseline = bbsc_recovery_sequence;
++        if (guest_join) GuestQuitSave::new_join();
          HandleBbscLuaSessionEvent(event);
-@@ -14481,6 +17569,7 @@
+         if (event == "JoinSession_White") WriteBbscOwnWorldFile();
+         if (event == "JoinSession_White" && GetSessionState() != 3 &&
+@@ -14477,10 +17571,20 @@
+             return;
+         }
+         if (event == "JoinSession_White") {
++            if (fresh_world && bbsc_guest_return_origin.valid && bbsc_recovery_mode == BbscRecoveryCapture &&
++                bbsc_recovery_sequence != previous_baseline) {
++                const auto& origin = bbsc_guest_return_origin;
++                GuestQuitSave::remember(BbscNativeActiveSaveToken(), {origin.map,origin.position,origin.rotation},
++                                        bbsc_recovery_sequence);
++            }
+             if (GetSessionState() != 3) ArmBbscLoadProtection(BbscLoadProtectionKind::Join);
              ArmBbscFirstSpawn();
          }
      }
-+    if (site.offset == 0x00CC5390) ThRepeatGuest::Parting(); // Matching2.LeaveRoom.Begin
++    if (site.offset == 0x00CC5390) { // Matching2.LeaveRoom.Begin
++        GuestQuitSave::parting();
++        ThRepeatGuest::Parting();
++    }
      if (site.offset == BbscFirstSpawnCopyOffset) {
          TryBbscFirstSpawnBeforeCopy(registers->rbx, registers->rax);
          return;
-@@ -14490,6 +17579,9 @@
+@@ -14490,6 +17594,9 @@
      }
      if (summon_build_host_placement_hook_installed && site.offset == SummonBuildEntryOffset) {
          ApplyCrossMapSummonHostPlacement(*registers);
@@ -4514,7 +5036,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      if (cross_map_guest_handoff_hook_installed && site.offset == CrossMapGuestHandoffOffset) {
          ApplyCrossMapSummonGuestPlacement(*registers);
-@@ -14523,6 +17615,7 @@
+@@ -14523,6 +17630,7 @@
          ApplyBbscGuestLootViewAtLoad();
      }
      if (site.offset == 0x01938F65) { // Warp.RespawnPoint.Resolve: a load picks its spawn point
@@ -4522,7 +5044,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          ObserveBbscRetainedHostReload(registers->r13);
          RestoreBbscOwnWorldAtLoad();
          ApplyBbscSharedProgressAtLoad();
-@@ -14531,6 +17624,7 @@
+@@ -14531,6 +17639,7 @@
          GuardBbscStrayForcedWarp(*registers);
      }
      if (site.offset == BbscPersistNoOpOffset) {
@@ -4530,7 +5052,11 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          if (ArmBbscRejoin()) {
              ArmBbscReinsert();
          }
-@@ -14549,6 +17643,7 @@
+@@ -14546,9 +17655,11 @@
+         TickBbscStrandedGuest();
+         TickBbscBossLine();
+         TickBbscProgressBroadcast();
++        GuestQuitSave::observe_guest();
          TickBbscOwnWorld();
          TickBbscEchoCounter();
          TickBbscSharedProgress();
@@ -4538,7 +5064,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          TickBbscSpectate();
          TickBbscFollowBroadcast();
          TickBbscWorldFlagsBroadcast();
-@@ -14568,6 +17663,7 @@
+@@ -14568,6 +17679,7 @@
          TickBbscGuestBlank();
          TickBbscDeadWatchdog();
          TickBbscHostReady();
@@ -4546,7 +5072,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          TickBbscDeathCurtain();
          TickBbscStageWatch();
          TickBbscHostDeathNotice();
-@@ -15187,14 +18283,8 @@
+@@ -15187,14 +18299,8 @@
      const auto image_size = MemoryPatcher::g_eboot_image_size;
      for (const auto& site : Sites) {
          // This optional hook is checked at install. A mismatch must not disable existing hooks.
@@ -4563,7 +5089,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              continue;
          }
          const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
-@@ -15245,10 +18335,29 @@
+@@ -15245,10 +18351,29 @@
  bool BbscVisibilitySupported() { return bbsc_display_hooks && bbsc_load_protection_hooks && bbsc_active_save_hooks; }
  
  void OnBbscVisibilityPacket(const TheHuntVisibility::Context& context, std::uint32_t sender, const std::uint8_t* data, std::size_t size) {
@@ -4594,7 +5120,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  
  void OnBbscHostBossPacket(std::int32_t boss) {
      bbsc_host_boss_id = boss;
-@@ -15298,9 +18407,12 @@
+@@ -15298,9 +18423,12 @@
  }
  
  void OnBbscLifePacket(std::uint32_t player, std::uint8_t dead, std::uint32_t sequence) {
@@ -4607,7 +5133,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      bool changed = false;
      {
          std::scoped_lock lock{bbsc_life_mutex};
-@@ -15314,11 +18426,14 @@
+@@ -15314,11 +18442,14 @@
              ++bbsc_peer_revivals;
          }
          life = {dead, sequence, SteadyNowMs()};
@@ -4623,7 +5149,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  }
  
  void OnBbscScalePacket(const std::uint16_t (&percent)[5]) {
-@@ -15500,13 +18615,7 @@
+@@ -15500,13 +18631,7 @@
          return std::nullopt;
      }
  
@@ -4638,7 +5164,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
  }
  
  bool SetSeamlessHostPlacementHeader(std::string_view value) {
-@@ -15569,6 +18678,7 @@
+@@ -15569,6 +18694,7 @@
  }
  
  void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_id) {
@@ -4646,7 +5172,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      if (image_base == 0 || MemoryPatcher::g_game_serial != "CUSA03173") {
          return;
      }
-@@ -15980,6 +19090,7 @@
+@@ -15980,6 +19106,7 @@
          return;
      }
      summon_build_host_placement_hook_installed = true;
@@ -4654,7 +5180,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      const size_t cross_map_guest_handoff_index =
          static_cast<size_t>(std::distance(Sites.begin(), cross_map_guest_handoff));
      if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + CrossMapGuestHandoffOffset),
-@@ -16082,7 +19193,7 @@
+@@ -16082,7 +19209,7 @@
  }
  
  void InstallReverseEngineeringTrace() {
@@ -4663,7 +5189,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
          return;
      }
      if (MemoryPatcher::g_game_serial != "CUSA03173") {
-@@ -16112,7 +19223,6 @@
+@@ -16112,7 +19239,6 @@
      if (error) {
          LOG_ERROR(Debug, "Could not create Bloodborne RE capture directory {}: {}",
                    Common::FS::PathToUTF8String(capture_dir), error.message());
@@ -4671,7 +5197,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
  
      const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-@@ -16125,7 +19235,6 @@
+@@ -16125,7 +19251,6 @@
      if (!capture_file) {
          LOG_ERROR(Debug, "Could not open Bloodborne RE capture {}",
                    Common::FS::PathToUTF8String(capture_path));
@@ -4679,7 +5205,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      }
      capture_file << "{\"type\":\"header\",\"title\":\"CUSA03173\","
                      "\"app_version\":\"01.09\",\"image_base\":\"0x"
-@@ -16167,21 +19276,19 @@
+@@ -16167,21 +19292,19 @@
                   << (healing_fountain_host_availability_hook_installed ? "true" : "false") << "}\n";
      capture_file.flush();
  
@@ -4707,7 +5233,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
              (site.offset > MemoryPatcher::g_eboot_image_size ||
               site.prologue_size > MemoryPatcher::g_eboot_image_size - site.offset)) continue;
          const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
-@@ -16192,10 +19299,20 @@
+@@ -16192,10 +19315,20 @@
              continue;
          }
          ++hook_count;
@@ -4729,7 +5255,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      LOG_INFO(Debug, "Bloodborne RE trace installed {}/{} hooks; capture={}", hook_count,
               Sites.size(), Common::FS::PathToUTF8String(capture_path));
      InstallBbscSpectateHooks();
-@@ -16210,6 +19327,7 @@
+@@ -16210,6 +19343,7 @@
      InstallBbscEmptyHostCancelHook();
      InstallBbscBlankMenuHook();
      InstallBbscDeathTraceHooks();
@@ -4737,7 +5263,7 @@ diff --git a/emulator/src/core/bloodborne_re_zh_cn.cpp b/emulator/src/core/blood
      InstallBbscBannerHook();
      if (installed) InstallBbscJoinCauseHooks();
  }
-@@ -16219,4 +19337,16 @@
+@@ -16219,4 +19353,16 @@
      return bbsc_presence;
  }
  
