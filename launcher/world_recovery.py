@@ -899,12 +899,12 @@ def begin(root):
 def _begin(root):
     require_stopped()
     if (layout(root)[0]/'review-required.json').exists():
-        raise ReviewRequired('世界恢复记录正在核查，请打开「世界恢复复核」查看标记来源。')
+        raise ReviewRequired('世界恢复记录正在核查，请打开「联机存档检查」查看标记来源。')
     try:
         finalize(root, None)
     except (OSError, ValueError, KeyError, TypeError) as error:
         require_content_error(error)
-        raise ReviewRequired(f'{error} 世界恢复复核尚未结案，请在存档页选择本机处理方式。') from error
+        raise ReviewRequired(f'{error} 联机存档检查尚未结案，请在存档页选择本机处理方式。') from error
     folder, saves = layout(root)
     token = uuid.uuid4().hex
     identities = primary_identities(root)
@@ -1024,7 +1024,7 @@ def require_review_clear_for_transfer(root):
     folder, _ = layout(root)
     if (plain_path(folder/'review-required.json').exists() or
             (not pending_journals(root) and review_items(root))):
-        raise ValueError('有未结案的世界恢复记录，请先打开「世界恢复复核」；已停止存档导入、转换和导出。')
+        raise ValueError('有未结案的世界恢复记录，请先打开「联机存档检查」；已停止存档导入、转换和导出。')
 
 
 def evidence_inventory(root):

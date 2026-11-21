@@ -24,7 +24,7 @@ class ReviewTests(fixture.RecoveryTests):
                                  ('review-required', 0, wr.MODE_NAMES[mode-1], 0xc0000005))
                 self.assertEqual({name: row['state'] for name, row in item['generations'].items()},
                                  {'userdata0000': 'unverified', 'backup0000': 'unverified'})
-                with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+                with self.assertRaisesRegex(ValueError, '联机存档检查'):
                     wr.begin(self.root)
                 self.assertEqual(wr.snapshot(self.root), original)
 
@@ -111,9 +111,9 @@ class ReviewTests(fixture.RecoveryTests):
         self.journal.unlink()
         items = wr.review(self.root)['items']
         self.assertEqual([row['kind'] for row in items], ['orphan-job'])
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.begin(self.root)
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.require_review_clear_for_transfer(self.root)
 
     def test_review_moved_root_and_marker_are_distinct_and_transfer_stays_blocked(self):
@@ -127,17 +127,17 @@ class ReviewTests(fixture.RecoveryTests):
         request = next(row for row in items if row['kind'] == 'request')
         self.assertIn('另一运行环境', request['reason'])
         self.assertEqual(request['generations']['userdata0000']['state'], 'unverified')
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.begin(self.root)
         self.assertEqual(wr.snapshot(self.root), before)
         self.journal.unlink()  # A lost journal cannot clear an unresolved request for transfer.
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.require_review_clear_for_transfer(self.root)
         marker = self.folder/'review-required.json'
         wr.json_file(marker, {'origin': 'isolated-review', 'reason': 'operator retained evidence'})
         self.path.unlink()
         self.assertEqual(wr.review(self.root)['items'][0]['origin']['origin'], 'isolated-review')
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.require_review_clear_for_transfer(self.root)
         self.assertTrue(marker.exists())
 
@@ -163,7 +163,7 @@ class ReviewTests(fixture.RecoveryTests):
         for label, (_, files) in before.items():
             self.assertEqual(wr.content_inventory(wr.snapshot(target/label)), wr.content_inventory(files))
         self.assertEqual(wr.evidence_inventory(self.root), before)
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             wr.begin(self.root)
 
     def test_review_interrupted_copy_has_no_published_manifest_and_can_retry(self):

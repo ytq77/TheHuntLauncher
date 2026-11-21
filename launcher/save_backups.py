@@ -167,7 +167,7 @@ def _restore_ready(root, *, own_import_lock=False):
     if not own_import_lock and (root/'.save-import.lock').exists():
         raise ValueError('存在导入/恢复锁；普通恢复已停止，请先处理对应的未完成操作。')
     if world_recovery.review_items(root):
-        raise ValueError('存在待复核的世界恢复记录，请先打开“世界恢复复核”；未替换存档。')
+        raise ValueError('存在待复核的世界恢复记录，请先打开“联机存档检查”；未替换存档。')
 
 
 def launch_backup(root):

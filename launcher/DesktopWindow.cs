@@ -36,13 +36,15 @@ public sealed class DesktopWindow
     Process worker;
     bool operation, featuresDirty, closed;
     Task<bool> trophyRead;
-    string iconGame, version="0.1.0-preview.17";
+    string iconGame, version="0.1.0-preview.26";
     DateTime startedAt;
     string noticeSession;
     string recoveryDigest;
     int noticeSequence;
     int resolutionGeneration;
     string currentPage;
+    string recoveryStatus="", recoveryError="";
+    bool recoveryChecking;
     bool drawingBackups, resolutionApplying, resolutionNeeded, drawingTimeline, fillingHost;
     public Window Window { get; private set; }
     public bool Busy { get { return operation || worker != null; } }
@@ -117,7 +119,7 @@ public sealed class DesktopWindow
         if(File.Exists(PathAt("BUILD-INFO.json"))) version=Str(ReadJson(PathAt("BUILD-INFO.json")),"version");
         foreach(string n in new [] {"Home","Settings","Feature","Server","Save","Trophy"}) {
             string page=n;
-            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
+            Get<RadioButton>(n+"Nav").Click+=async delegate { Page(page); if(page=="Home") await RefreshRecoveryStatus(); if(page=="Trophy") await RefreshTrophies(); if(page=="Save" && !Busy) { try { await RefreshSaveBackups(); } catch(Exception e) { Error(e.Message); } } };
         }
         Click("HomeTrophies",delegate { Page("Trophy"); RefreshInBackground(); });
         Click("HomeFeatureLink",delegate { Page("Feature"); });
@@ -146,6 +148,7 @@ public sealed class DesktopWindow
         });
         AsyncClick("Launch",Launch);
         AsyncClick("ReviewWorldRecovery",ReviewWorldRecovery);
+        AsyncClick("HomeRecoveryAction",RecoveryAction);
         AsyncClick("CopyWorldRecoveryEvidence",CopyWorldRecoveryEvidence);
         Click("OpenGuide",delegate { Process.Start(new ProcessStartInfo("https://thehunt.iytq.top/") {UseShellExecute=true}); });
         Click("CreateShortcut",CreateDesktopShortcut);
@@ -201,7 +204,7 @@ public sealed class DesktopWindow
         try { HuntUpdates.WatchStartup(Window,Get<Button>("CheckUpdates"),root,"TheHuntLauncher",version); }
         catch { Get<Button>("CheckUpdates").ToolTip="自动检查暂不可用，可手动检查更新。"; }
         Window.Loaded+=async delegate {
-            timer.Start(); await RefreshTrophies(); await RefreshHomeSaves();
+            timer.Start(); await RefreshRecoveryStatus(); await RefreshTrophies(); await RefreshHomeSaves();
         };
     }
     bool Pick(string field,string filter) { if(Busy) return false; var d=new OpenFileDialog {Filter=filter}; if(d.ShowDialog(Window)!=true) return false; Get<TextBox>(field).Text=d.FileName; return true; }
@@ -356,6 +359,7 @@ public sealed class DesktopWindow
     void SetBusy() {
         foreach(string n in new [] {"UseLocalServer","Launch","ReviewWorldRecovery","SaveSettings","RefreshSaves","SaveFeatures","RecommendFeatures","FeatureItems","PublicFields","AdminFields","AdminRefresh","AdminCreate","AdminVerify","PickInstall","PickGame","PickGraphics"}) Get<FrameworkElement>(n).IsEnabled=!Busy;
         Get<Button>("ImportSaves").IsEnabled=!Busy && inspection!=null;
+        Get<Button>("HomeRecoveryAction").IsEnabled=!Busy;
         Get<Button>("PickSaveFolder").IsEnabled=!Busy;
         Get<Button>("ClearSaveFolder").IsEnabled=!Busy;
         Get<Button>("RefreshSaveBackups").IsEnabled=!Busy;
@@ -500,6 +504,7 @@ public sealed class DesktopWindow
         finally {
             operation=false; SetBusy(); Get<Button>("Launch").Content="开始游戏  →";
         }
+        await RefreshRecoveryStatus();
         // The production worker can discover an anomaly after the UI's lightweight check.
         if(resolutionRequired || File.Exists(PathAt(@"data\user\save-resolution-review.json")) || File.Exists(PathAt(".save-import.lock"))) {
             Page("Save"); await RefreshSaveBackups();
@@ -542,7 +547,7 @@ public sealed class DesktopWindow
             string file=Directory.GetFiles(logs,"bbsc-mod-*.log").Where(f=>File.GetLastWriteTime(f)>=startedAt).OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
             if(file==null) return;
             var match=Regex.Match(File.ReadAllText(file),@"BBSC kit initialization: ready after (\d+) ms");
-            if(match.Success) Get<TextBlock>("KitStatus").Text="五件猎具已准备完成 · "+Math.Round(Double.Parse(match.Groups[1].Value)/1000,1)+" 秒";
+            if(match.Success) Get<TextBlock>("KitStatus").Text="五件联机道具已就绪 · 用时 "+Math.Round(Double.Parse(match.Groups[1].Value)/1000,1)+" 秒";
         } catch(IOException) {}
     }
     IntPtr GameHandle() {
@@ -801,7 +806,7 @@ public sealed class DesktopWindow
         bool special=Str(row,"kind")=="resolution-before";
         Get<Button>("RestoreSaveBackup").Content=special ? "换回处理前状态":"恢复到这个备份";
         string characters=CharacterSummary(row);
-        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n会成套换回存档和联机记录；现在的版本会另存，不会合并，换回后须重新选择，不自动启动。":characters;
+        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n换回后需重新选择处理方式，不会自动启动游戏。":characters;
         int drawn=DrawBackupTable(row);
         Get<TextBlock>("SelectedSaveBackup").Visibility=special || drawn==0 || Str(row,"readability_note").Length>0 ? Visibility.Visible:Visibility.Collapsed;
         drawingTimeline=true;
@@ -896,6 +901,41 @@ public sealed class DesktopWindow
     // Home "角色" card: list of verified backups; shows the newest launch/pre-restore snapshot.
     // Startup must stay read-only. With an import/restore lock present, save_backups list may
     // finish the interrupted restore, so leave that to the Save page and skip the read here.
+    // Home recovery notice. world_recovery.py recovery-status is read-only and answers
+    // {ok, status: clear|safe|blocked}; any failure means "not checked", never "damaged".
+    // Launch still rechecks on its own, so this only decides what the home page suggests.
+    async Task RefreshRecoveryStatus() {
+        if(closed || Busy || recoveryChecking) return; // The query requires the game to be closed.
+        recoveryChecking=true;
+        try {
+            var result=await Request("world_recovery.py",null,"recovery-status");
+            string status=Str(result,"status");
+            recoveryStatus=status=="clear" || status=="safe" || status=="blocked" ? status:"unknown";
+            recoveryError=recoveryStatus=="unknown" ? "未知的检查结果："+status:"";
+        } catch(Exception e) { recoveryStatus="unknown"; recoveryError=e.Message; }
+        finally { recoveryChecking=false; }
+        if(!closed) DrawRecoveryNotice();
+    }
+    void DrawRecoveryNotice() {
+        var notice=Get<Border>("HomeRecoveryNotice"); var action=Get<Button>("HomeRecoveryAction"); var icon=Get<TextBlock>("HomeRecoveryIcon");
+        if(recoveryStatus=="clear" || recoveryStatus.Length==0) { notice.Visibility=Visibility.Collapsed; return; }
+        bool safe=recoveryStatus=="safe", blocked=recoveryStatus=="blocked";
+        Get<TextBlock>("HomeRecoveryTitle").Text=safe ? "存档恢复还差最后一步":blocked ? "有存档事项需要处理":"暂时无法检查存档恢复状态";
+        Get<TextBlock>("HomeRecoveryText").Text=safe ? "点「核验并启动」进入游戏，用同一角色正常保存并退出，即可完成恢复。":
+            blocked ? "处理完成前不能开始游戏，具体原因见存档页。":"这不代表存档有问题，可以稍后重试。";
+        action.Content=safe ? "核验并启动":blocked ? "去存档页处理":"重试";
+        notice.ToolTip=recoveryStatus=="unknown" && recoveryError.Length>0 ? recoveryError:null;
+        icon.Text=safe ? "":blocked ? "":"";
+        icon.Foreground=Brush(safe ? "#E0B66E":blocked ? "#D58A80":"#A8A397");
+        notice.BorderBrush=Brush(safe ? "#6E5A38":blocked ? "#6E4A44":"#3A383D");
+        notice.Background=Brush(safe ? "#1D1A16":blocked ? "#1E1716":"#18171A");
+        notice.Visibility=Visibility.Visible;
+    }
+    async Task RecoveryAction() {
+        if(recoveryStatus=="safe") await Launch();
+        else if(recoveryStatus=="blocked") { Page("Save"); if(!Busy) await RefreshSaveBackups(); }
+        else await RefreshRecoveryStatus();
+    }
     async Task RefreshHomeSaves() {
         if(File.Exists(PathAt(".save-import.lock"))) {
             Get<StackPanel>("HomeCharacters").Children.Clear(); Get<TextBlock>("HomeSaveSource").Text="";
@@ -973,7 +1013,7 @@ public sealed class DesktopWindow
         } finally { drawingBackups=false; }
         pendingSaveRestore=result["pending"] as Dictionary<string,object>;
         var warnings=((System.Collections.IEnumerable)result["warnings"]).Cast<object>().Select(x=>Convert.ToString(x)).ToArray();
-        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已读取 "+list.Items.Count+" 份备份。正常恢复普通备份只替换 savedata；异常处理页的整套恢复还会停止旧联机待补记录。处理前存档按专用事务换回联机记录，不代表可直接启动。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
+        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已找到 "+list.Items.Count+" 份备份。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
         Get<TextBlock>("PendingSaveRestore").Text=Str(pendingSaveRestore,"message");
         DrawBackupTimeline();
         ShowSelectedBackup();
