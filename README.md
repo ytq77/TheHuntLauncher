@@ -6,11 +6,9 @@ preview.18 的启动入口为 `TheHuntLauncher.exe`。从 preview.17 或更早�
 
 The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理。客户端、独立 Windows 服务端与 Linux 部署配方在本仓库统一维护。
 
-[下载 Windows 预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.26) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
+[下载 Windows 预览版](https://github.com/ytq77/TheHuntLauncher/releases/tag/v0.1.0-preview.27) · [快速开始](#快速开始) · [本地开服](docs/local-server.md) · [Linux 部署](server/docs/deployment.md) · [当前验收状态](docs/validation-current.md)
 
-![The Hunt preview.17 启动器首页](docs/launcher.png)
-
-当前 Windows 版本为 **0.1.0-preview.26**，基于 **BBport 1.9.7**。两台电脑使用同一客户端，玩家在游戏内摇铃开房或加入。存档页会显示所选备份中角色的姓名、等级和血之回响。旧版启动器可以通过「检查更新」升级。[发布说明](docs/releases/v0.1.0-preview.26.md) · [验收表](docs/validation-current.md) · [使用文档](https://thehunt.iytq.top/)
+当前 Windows 版本为 **0.1.0-preview.27**，基于 **BBport 1.9.7**。两台电脑使用同一客户端，玩家在游戏内摇铃开房或加入。新版首页可查看最近备份的角色和进度。客机在房内从系统菜单保存并退回标题后，首次读回该角色会回到入房前的位置与朝向，保留房内所得的血之回响。正常保存退出后，启动器会核对角色主档、游戏备档和本次个人世界记录。旧版启动器可以通过「检查更新」升级。[发布说明](docs/releases/v0.1.0-preview.27.md) · [验收表](docs/validation-current.md) · [使用文档](https://thehunt.iytq.top/)
 
 ## 功能
 
@@ -32,8 +30,8 @@ The Hunt 为 BBport 提供中文无缝联机入口，并内置本地开服管理
 
 | 用途 | 下载内容 |
 |---|---|
-| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.26-windows-x64.zip`，包含 `server/Server.exe` |
-| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.26.zip`，无需安装客户端引擎 |
+| 玩无缝联机，也可在本机开服 | `TheHuntLauncher-0.1.0-preview.27-windows-x64.zip`，包含 `server/Server.exe` |
+| 专门用一台 Windows 电脑开服 | `TheHuntServer-Windows-v0.1.0-preview.27.zip`，无需安装客户端引擎 |
 | 查阅上一版 Linux / Docker 配方 | [preview.25 的 Linux 配方](https://github.com/ytq77/TheHuntLauncher/releases/download/v0.1.0-preview.25/TheHuntServer-Linux-recipe-v0.1.0-preview.25.zip) 和[部署说明](server/docs/deployment.md) |
 | 查看或构建源码 | `TheHuntLauncher-sources.zip`，以及同版独立服务端源码和图形组件源码附件 |
 

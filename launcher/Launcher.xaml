@@ -29,7 +29,7 @@
         <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Margin="6,0">
           <Border Style="{StaticResource Divider}" Margin="0,0,0,16"/>
           <TextBlock Text="iytq" Style="{StaticResource Display}" FontStyle="Italic" FontSize="19" Foreground="#BDB6A6" Margin="0,0,0,10"/>
-          <TextBlock x:Name="VersionLabel" Text="0.1.0-preview.26" FontSize="11.5" Foreground="#8F8A7F"/>
+          <TextBlock x:Name="VersionLabel" Text="0.1.0-preview.27" FontSize="11.5" Foreground="#8F8A7F"/>
           <TextBlock Text="BBport 1.9.7 · 中文独立环境" FontSize="11.5" Foreground="#6F6B64" Margin="0,4,0,0"/>
           <Button x:Name="OpenGuide" Content="使用文档 ↗" ToolTip="在默认浏览器打开使用文档" Style="{StaticResource LinkButton}"
                   HorizontalAlignment="Left" Margin="0,12,0,0" FontSize="12.5"/>
