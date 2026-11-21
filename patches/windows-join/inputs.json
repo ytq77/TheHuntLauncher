@@ -30,7 +30,7 @@
     },
     "emulator/src/core/bbsc_active_save.inc": {
       "before": "574318e26008101be76bfdc05d9fe38e10303a7c0c08113dd1a47d26a189a817",
-      "after": "3b901ee22aa5606869c5388385415f82264867554e80fb49ae16e0451d399318"
+      "after": "b4ec4471c66ef584b65a16bd8fc74dc0ee054108791e8587df090b23228a529d"
     },
     "emulator/src/core/bbsc_guest_position_record.h": {
       "before": null,
@@ -38,7 +38,7 @@
     },
     "emulator/src/core/bbsc_guest_quit_save.inc": {
       "before": null,
-      "after": "30807ef393a2b539f75c50f15d565f47e15946a038f15dc0df7808e2c947b789"
+      "after": "b6fe7b80b87ef654f90815c5bba9526f071352ccd2be77faa770eceb91e6b0a7"
     },
     "emulator/src/core/bbsc_guest_title_world.h": {
       "before": null,

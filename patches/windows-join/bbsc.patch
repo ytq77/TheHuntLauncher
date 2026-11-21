@@ -871,7 +871,7 @@ new file mode 100644
 diff --git a/emulator/src/core/bbsc_active_save.inc b/emulator/src/core/bbsc_active_save.inc
 --- a/emulator/src/core/bbsc_active_save.inc
 +++ b/emulator/src/core/bbsc_active_save.inc
-@@ -15,19 +15,27 @@
+@@ -15,14 +15,18 @@
      return ReadablePointer(holder, 0x10) ? ReadValue<u64>(holder, 8) : 0;
  }
 
@@ -881,10 +881,7 @@ diff --git a/emulator/src/core/bbsc_active_save.inc b/emulator/src/core/bbsc_act
 +void InvalidateBbscActiveSave(bool new_character = false) {
      std::scoped_lock lock{bbsc_active_save_mutex};
 +    if (new_character || (GuestQuitSave::departure && !GuestQuitSave::departure->quit)) GuestQuitSave::drop_locked();
-+    if (new_character) {
-+        GuestQuitSave::revoke_locked();
-+        GuestQuitSave::title = {};
-+    }
++    if (new_character) GuestQuitSave::character_setup_locked();
      ++bbsc_active_save_generation;
      bbsc_active_save = {};
  }
@@ -895,18 +892,36 @@ diff --git a/emulator/src/core/bbsc_active_save.inc b/emulator/src/core/bbsc_act
  }
 
  void PS4_SYSV_ABI BbscActiveSaveLoadBegin(u64, const GuestRegisterSnapshot* registers) {
-     try {
-         std::scoped_lock lock{bbsc_active_save_mutex};
-+        GuestQuitSave::begin_read_locked();
-         const auto previous = bbsc_active_save;
+@@ -32,13 +36,14 @@
          ++bbsc_active_save_generation;
          bbsc_active_save = {};
-@@ -47,6 +55,7 @@
+         bbsc_active_save_loading = {};
++        const auto caller = registers && ReadablePointer(registers->rsp,8) ? ReadValue<u64>(registers->rsp,0) : 0;
++        GuestQuitSave::begin_read_locked(registers,caller);
+         if (!bbsc_active_save_hooks || !registers) return;
+         const auto manager = GetGlobalState();
+         if (!ReadablePointer(manager, 0x1752) || registers->rdi != manager ||
+             registers->rdx != 0x140000 || !ReadablePointer(registers->rsi, 84) ||
+             !ReadablePointer(registers->rsp, 8) || ReadValue<u8>(manager, 0x1751) < 100)
+             return; // Native debug-file loads are not this launcher's savedata mount.
+-        const auto caller = ReadValue<u64>(registers->rsp, 0);
+         if (caller != image_base+0x0193F823 && caller != image_base+0x01C2B453) return;
+         const auto slot = ReadValue<s32>(manager, 0x1490);
+         if (slot < 0 || slot > 9 || ReadValue<u32>(registers->rsi, 0) != 0x41) return;
+@@ -47,6 +52,7 @@
                                     previous.manager == manager && previous.slot == slot ?
                                         previous.lineage : bbsc_active_save_generation,
                                     slot};
 +        GuestQuitSave::read_input_locked(bbsc_active_save_loading,caller,registers->rsi);
      } catch (...) { /* Missing evidence leaves this load unbound. */ }
+ }
+
+@@ -67,6 +73,7 @@
+         bbsc_active_save.player_data = data;
+         LOG_INFO(Debug, "BBSC active save: native slot {} loaded successfully, generation {}",
+                  load.slot, load.generation);
++        GuestQuitSave::loaded_locked(bbsc_active_save);
+     } catch (...) { /* No exceptions may leave a native load hook. */ }
  }
 
 diff --git a/emulator/src/core/bbsc_guest_position_record.h b/emulator/src/core/bbsc_guest_position_record.h
@@ -1140,7 +1155,7 @@ diff --git a/emulator/src/core/bbsc_guest_quit_save.inc b/emulator/src/core/bbsc
 new file mode 100644
 --- /dev/null
 +++ b/emulator/src/core/bbsc_guest_quit_save.inc
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,445 @@
 +// A confirmed guest exit may finish saving after the active-load token is retired.
 +// Keep this permission only from the accepted summon to the very next character read.
 +std::string BbscSaveProofHash(std::span<const u8> bytes);
@@ -1178,8 +1193,8 @@ new file mode 100644
 +std::atomic<u64> awaiting_baseline{0};
 +std::atomic<bool> hooks_ready{false};
 +
-+// All fields are protected by bbsc_active_save_mutex. The first reader consumes
-+// the pending digest even when it fails, is another slot, or uses the backup.
++// All fields are protected by bbsc_active_save_mutex. Only immutable submitted
++// bytes survive proven menu bookkeeping. They cannot authorize a write or a save receipt.
 +struct TitleProof {
 +    u64 quit{}, generation{}, manager{}, player{};
 +    s32 slot{-1};
@@ -1233,38 +1248,51 @@ new file mode 100644
 +    return true;
 +}
 +
-+bool arm_title(const BbscActiveSaveLoad& active, u64 sequence) try {
-+    std::scoped_lock lock{bbsc_active_save_mutex};
-+    if (title.quit != sequence || title.input.empty() || active.generation != title.generation ||
-+        bbsc_active_save.generation != active.generation || active.slot != title.slot ||
-+        active.manager != title.manager || active.player_data != BbscActivePlayerData()) return false;
-+    const char* token = std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN");
++std::filesystem::path evidence_folder(const char* group, const char* token) {
 +    const auto base = BbscRecoveryFolder();
 +    if (!token || std::strlen(token)!=32 || base.empty() ||
-+        !std::all_of(token,token+32,[](char c){return (c>='0' && c<='9') || (c>='a' && c<='f');})) return false;
-+    const auto folder = base/"title-save-proof"/fmt::format("{}-{}-{}",token,title.slot,sequence);
++        !std::all_of(token,token+32,[](char c){return (c>='0' && c<='9') || (c>='a' && c<='f');})) return {};
++    return base/group/fmt::format("{}-{}-{}",token,title.slot,title.quit);
++}
++
++void loaded_locked(const BbscActiveSaveLoad& active) try {
++    if (title.input.empty() || title.quit != required_sequence || active.generation != title.generation ||
++        active.slot != title.slot || active.manager != title.manager || !active.player_data) return;
++    const char* token = std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN");
++    const auto folder = evidence_folder("title-save-proof",token);
++    if (folder.empty()) return;
 +    std::error_code ec;
 +    std::filesystem::create_directories(folder.parent_path(),ec);
 +    title.bank_hash = BbscSaveProofHash(title.quit_bank);
 +    if (ec || title.bank_hash.empty() || !std::filesystem::create_directory(folder,ec) || ec ||
 +        !BbscRecoveryWriteFile(folder/"quit-bank.bin",title.quit_bank) ||
-+        !BbscRecoveryWriteFile(folder/"input-save.bin",title.input)) return false;
++        !BbscRecoveryWriteFile(folder/"input-save.bin",title.input)) {
++        LOG_WARNING(Debug,"BBSC title world: could not persist first input slot={} exit={}",title.slot,title.quit);
++        return;
++    }
 +    title.folder = folder;
 +    title.token = token;
-+    if (!append_record("title-input",title.output,epoch_ms())) return false;
++    if (!append_record("title-input",title.output,epoch_ms())) return;
 +    title.input.clear();
 +    title.quit_bank.clear();
 +    if (!title.world_complete) {
 +        LOG_WARNING(Debug,"BBSC title world: unexplained event at first load; retained input slot={} load={} exit={}",
-+                    title.slot,title.generation,sequence);
-+        return false;
++                    title.slot,title.generation,title.quit);
++        return;
 +    }
 +    title.player = active.player_data;
 +    LOG_INFO(Debug,"BBSC title world: verified first primary input slot={} load={} exit={} sha256={}",
-+             title.slot,title.generation,sequence,title.output);
-+    return true;
++             title.slot,title.generation,title.quit,title.output);
 +} catch (...) {
-+    return false;
++    LOG_WARNING(Debug,"BBSC title world: first input receipt unavailable");
++}
++
++bool arm_title(const BbscActiveSaveLoad& active, u64 sequence) {
++    std::scoped_lock lock{bbsc_active_save_mutex};
++    return title.records && title.quit == sequence && title.generation == active.generation &&
++           title.generation == bbsc_active_save.generation && title.manager == active.manager &&
++           title.slot == active.slot && title.player && title.player == active.player_data &&
++           title.player == BbscActivePlayerData();
 +}
 +
 +void closing_home() {
@@ -1285,26 +1313,94 @@ new file mode 100644
 +    return enabled;
 +}
 +
++void trace_submitted_locked(std::span<const u8> output) try {
++    if (!trace() || title.output.empty()) return;
++    // Keep the latest candidate for a trace-enabled run even if the next selection
++    // is rejected. No recovery decision reads this diagnostic directory.
++    const auto dir = evidence_folder("title-submit-trace",std::getenv("THEHUNT_WORLD_RECOVERY_TOKEN"));
++    if (dir.empty()) return;
++    if (BbscRecoveryWriteFile(dir/"before-bank.bin",title.quit_bank) &&
++        BbscRecoveryWriteFile(dir/"submitted.bin",output))
++        LOG_INFO(Debug,"BBSC title world: retained ordinary output exit={} sha256={} before_bank_sha256={}",
++                 title.quit,title.output,BbscSaveProofHash(title.quit_bank));
++} catch (...) { /* Tracing cannot affect the driver's save or the recovery decision. */ }
++
 +void drop_locked() {
 +    departure.reset();
 +    awaiting_baseline.store(0);
++}
++
++void discard_title_locked() {
++    if (title.records) {
++        // Retain the first input and every output, but the verifier must not reuse
++        // receipts from a selection or join that has since been interrupted.
++        std::error_code ec;
++        std::filesystem::rename(title.folder/"native.jsonl",title.folder/"interrupted.jsonl",ec);
++        if (ec) {
++            try { append_record("interrupted",title.output,epoch_ms()); } catch (...) {}
++        }
++    }
++    title = {};
 +}
 +
 +void new_join() {
 +    std::scoped_lock lock{bbsc_active_save_mutex};
 +    revoke_locked();
 +    drop_locked();
-+    title = {};
++    discard_title_locked();
 +}
 +
-+void begin_read_locked() {
-+    // Until the native reader commits, even a same-looking record cannot authorize an exit.
++bool pending_locked() {
++    return !title.output.empty() && !title.reading && !title.generation;
++}
++
++void character_setup_locked() {
++    revoke_locked();
++    // This native menu routine also resets the selected slot to -1 without
++    // allocating a character. The allocation path (including a full slot list)
++    // and unavailable metadata still cancel the pending proof.
++    if (pending_locked()) {
++        const auto manager = GetGlobalState();
++        const auto holder = ReadValue<u64>(image_base+0x0553B130,0);
++        if (manager == title.manager && ReadablePointer(manager,0x1579) &&
++            ReadablePointer(holder,0x60) && ReadablePointer(ReadValue<u64>(holder,0x58),0x1a) &&
++            ReadValue<u8>(manager,0x1578) == 0) {
++            LOG_INFO(Debug,"BBSC title world: slot selection reset before first title read exit={}",title.quit);
++            return;
++        }
++    }
++    if (title.quit) LOG_INFO(Debug,"BBSC title world: character setup canceled receipt exit={}",title.quit);
++    discard_title_locked();
++}
++
++bool menu_buffer(const GuestRegisterSnapshot* r, u64 caller) {
++    if (!r || r->rdi != title.manager || r->rdi != GetGlobalState() || !r->rdx ||
++        r->rdx > role_bytes || !ReadablePointer(r->rsi,r->rdx)) return false;
++    // Both callers deserialize a private in-memory buffer, without selecting
++    // a disk slot. Check the actual owner, pointer and length at the call.
++    if (caller == image_base+0x0156D4AF && ReadablePointer(r->rdi,0x16f0))
++        return r->rsi == ReadValue<u64>(r->rdi,0x16e8) && r->rdx == ReadValue<u32>(r->rdi,0x16e0);
++    if (caller == image_base+0x01B3E371 && ReadablePointer(r->rbx,0xc74))
++        return r->rsi == r->r14 && r->rsi == ReadValue<u64>(r->rbx,0xc68) &&
++               r->rdx == ReadValue<u32>(r->rbx,0xc70);
++    return false;
++}
++
++void begin_read_locked(const GuestRegisterSnapshot* r, u64 caller) {
 +    revoke_locked();
 +    input_generation = 0;
 +    input_identity.reset();
 +    if (departure && departure->quit) drop_locked();
-+    if (!title.output.empty() && !title.reading && !title.generation) title.reading = true;
-+    else title = {};
++    if (pending_locked() && caller == image_base+title_reader_return) {
++        title.reading = true; // A failed title read consumes this one opportunity too.
++    } else if (pending_locked() && menu_buffer(r,caller)) {
++        LOG_INFO(Debug,"BBSC title world: temporary buffer before title read caller={:#x} exit={}",
++                 caller-image_base,title.quit);
++    } else {
++        if (title.quit) LOG_INFO(Debug,"BBSC title world: intervening load canceled receipt caller={:#x} exit={}",
++                                 caller > image_base ? caller-image_base : 0,title.quit);
++        discard_title_locked();
++    }
 +}
 +
 +void read_input_locked(const BbscActiveSaveLoad& load, u64 caller, u64 buffer) {
@@ -1464,6 +1560,7 @@ new file mode 100644
 +                        title.manager = manager;
 +                        title.identity = departure->identity;
 +                        title.output = BbscSaveProofHash(bytes);
++                        trace_submitted_locked(bytes);
 +                    }
 +                }
 +            } else if (title.records && frame.baseline == title.quit && frame.frame == r->rbp &&
