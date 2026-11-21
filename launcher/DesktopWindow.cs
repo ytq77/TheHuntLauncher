@@ -542,7 +542,7 @@ public sealed class DesktopWindow
             string file=Directory.GetFiles(logs,"bbsc-mod-*.log").Where(f=>File.GetLastWriteTime(f)>=startedAt).OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
             if(file==null) return;
             var match=Regex.Match(File.ReadAllText(file),@"BBSC kit initialization: ready after (\d+) ms");
-            if(match.Success) Get<TextBlock>("KitStatus").Text="五件猎具已准备完成 · "+Math.Round(Double.Parse(match.Groups[1].Value)/1000,1)+" 秒";
+            if(match.Success) Get<TextBlock>("KitStatus").Text="五件联机道具已就绪 · 用时 "+Math.Round(Double.Parse(match.Groups[1].Value)/1000,1)+" 秒";
         } catch(IOException) {}
     }
     IntPtr GameHandle() {
@@ -801,7 +801,7 @@ public sealed class DesktopWindow
         bool special=Str(row,"kind")=="resolution-before";
         Get<Button>("RestoreSaveBackup").Content=special ? "换回处理前状态":"恢复到这个备份";
         string characters=CharacterSummary(row);
-        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n会成套换回存档和联机记录；现在的版本会另存，不会合并，换回后须重新选择，不自动启动。":characters;
+        Get<TextBlock>("SelectedSaveBackup").Text=special ? Str(row,"label")+"\n"+characters+"\n换回后需重新选择处理方式，不会自动启动游戏。":characters;
         int drawn=DrawBackupTable(row);
         Get<TextBlock>("SelectedSaveBackup").Visibility=special || drawn==0 || Str(row,"readability_note").Length>0 ? Visibility.Visible:Visibility.Collapsed;
         drawingTimeline=true;
@@ -973,7 +973,7 @@ public sealed class DesktopWindow
         } finally { drawingBackups=false; }
         pendingSaveRestore=result["pending"] as Dictionary<string,object>;
         var warnings=((System.Collections.IEnumerable)result["warnings"]).Cast<object>().Select(x=>Convert.ToString(x)).ToArray();
-        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已读取 "+list.Items.Count+" 份备份。正常恢复普通备份只替换 savedata；异常处理页的整套恢复还会停止旧联机待补记录。处理前存档按专用事务换回联机记录，不代表可直接启动。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
+        Get<TextBlock>("SaveBackupStatus").Text=(list.Items.Count==0?"还没有可选备份。存档非空时，启动游戏前会自动创建普通备份。":"已找到 "+list.Items.Count+" 份备份。")+(warnings.Length>0?"\n"+String.Join("\n",warnings):"");
         Get<TextBlock>("PendingSaveRestore").Text=Str(pendingSaveRestore,"message");
         DrawBackupTimeline();
         ShowSelectedBackup();

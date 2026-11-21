@@ -39,7 +39,7 @@ class ResolutionTests(unittest.TestCase):
 
     def test_old_deadlock_and_accept_all_real_functions(self):
         before = self.content()
-        with self.assertRaisesRegex(ValueError, '世界恢复复核'):
+        with self.assertRaisesRegex(ValueError, '联机存档检查'):
             w.begin(self.root)
         with self.assertRaisesRegex(ValueError, '复核'):
             s.backups._restore_ready(self.root)
